@@ -22,17 +22,20 @@ QString megabytes(qint64 bytes) {
     return QString::number(double(bytes) / (1024.0 * 1024.0), 'f', 1);
 }
 
-// Строка фактов — две строки на рамку (п.5 брифа): суммы, под ними последняя
-// правка ISO-8601 с офсетом (правило времён проекта; сравнения — по UTC).
-QString countsLine(const char* lead, const ZStorage::Summary& stats) {
-    QString out = QStringLiteral("%1: %2 notes, %3 attachments, %4 MB")
-                      .arg(QLatin1String(lead))
+// Строка фактов — две строки (п.5 брифа): суммы, под ними последняя правка.
+// БЕЗ префикса «Local:»/«Cloud:» — с 31.08 факт живёт в своей секции формы, и
+// секция уже сказала, чей он (замечание владельца: дубль). Дата — местная и
+// ЧЕЛОВЕЧЕСКАЯ, без «T» посередине (замечание владельца 31.08): ISO-8601 с
+// офсетом — правило шапок файлов, а здесь показ; сравнения всё равно по UTC.
+QString countsLine(const ZStorage::Summary& stats) {
+    QString out = QStringLiteral("%1 notes, %2 attachments, %3 MB")
                       .arg(stats.notes)
                       .arg(stats.attachments)
                       .arg(megabytes(stats.bytes));
     if (stats.lastModified.isValid())
         out += QStringLiteral("\nmodified %1")
-                   .arg(stats.lastModified.toLocalTime().toString(Qt::ISODate));
+                   .arg(stats.lastModified.toLocalTime().toString(
+                       QStringLiteral("yyyy-MM-dd HH:mm")));
     return out;
 }
 
@@ -506,56 +509,56 @@ ZStorageManager::Snapshot ZStorageManager::snapshot() const {
                     seenNow.state == CloudSeen::State::Empty)))
         out.open.label = QStringLiteral("Create");
 
-    // --- строка «Local:» ----------------------------------------------------
+    // --- факт про папку (секция Local) --------------------------------------
     switch (f.kind) {
         case ZStorage::DirKind::Store:
-            out.local = Line{countsLine("Local", f.stats), false};
+            out.local = Line{countsLine(f.stats), false};
             break;
         case ZStorage::DirKind::Empty:
-            out.local = Line{QStringLiteral("Local: empty folder"), false};
+            out.local = Line{QStringLiteral("empty folder"), false};
             break;
         case ZStorage::DirKind::Missing:
-            out.local = Line{QStringLiteral("Local: missing directory"), true};
+            out.local = Line{QStringLiteral("missing directory"), true};
             break;
         case ZStorage::DirKind::Foreign:
             // Формулировка владельца (п.4 брифа): супер-компактно, в две
-            // строки рамки укладывается с запасом.
-            out.local = Line{QStringLiteral("Local: not a valid storage nor empty dir"),
+            // строки укладывается с запасом.
+            out.local = Line{QStringLiteral("not a valid storage nor empty dir"),
                              true};
             break;
     }
 
-    // --- строка «Cloud:» ----------------------------------------------------
+    // --- факт про облако (секция Cloud synchronization) ---------------------
     const CloudSeen& s = seen();
     const QString address = cfgFromDraft().cloudAddressText();
     if (!named) {
-        out.cloud = Line{QStringLiteral("Cloud: not set"), false};
+        out.cloud = Line{QStringLiteral("not set"), false};
     } else if (relativeCloudDir) {
-        out.cloud = Line{QStringLiteral("Cloud: the folder must be an absolute path"),
+        out.cloud = Line{QStringLiteral("the folder must be an absolute path"),
                          true};
     } else if (s.address != address || s.state == CloudSeen::State::NotChecked) {
-        out.cloud = Line{QStringLiteral("Cloud: not checked"), false};
+        out.cloud = Line{QStringLiteral("not checked"), false};
     } else {
         switch (s.state) {
             case CloudSeen::State::Empty:
                 // ПУСТОЕ ОБЛАКО — НЕ БЕДА, а законный старт: сюда и зальёмся
                 // (поправка владельца). Поэтому обычным шрифтом.
-                out.cloud = Line{QStringLiteral("Cloud: empty"), false};
+                out.cloud = Line{QStringLiteral("empty"), false};
                 break;
             case CloudSeen::State::Ours:
-                out.cloud = Line{countsLine("Cloud", s.stats), false};
+                out.cloud = Line{countsLine(s.stats), false};
                 break;
             case CloudSeen::State::Foreign:
-                out.cloud = Line{QStringLiteral("Cloud: another storage"), true};
+                out.cloud = Line{QStringLiteral("another storage"), true};
                 break;
             case CloudSeen::State::Incomplete:
-                out.cloud = Line{QStringLiteral("Cloud: incomplete — no keyfile"), true};
+                out.cloud = Line{QStringLiteral("incomplete — no keyfile"), true};
                 break;
             case CloudSeen::State::NoAnswer:
-                out.cloud = Line{QStringLiteral("Cloud: no answer"), true};
+                out.cloud = Line{QStringLiteral("no answer"), true};
                 break;
             case CloudSeen::State::LoginRefused:
-                out.cloud = Line{QStringLiteral("Cloud: login refused"), true};
+                out.cloud = Line{QStringLiteral("login refused"), true};
                 break;
             case CloudSeen::State::WrongPassword:
                 // СТРОКА ФАКТОВ — ПРО ОБЛАКО, А НЕ ПРО ИСХОД ПОПЫТКИ. Неверный
@@ -564,8 +567,8 @@ ZStorageManager::Snapshot ZStorageManager::snapshot() const {
                 // заметок. Прежде обе строки говорили одно и то же слово в
                 // слово (жалоба владельца 30.08.2026).
                 out.cloud = !s.stats.isEmpty()
-                                ? Line{countsLine("Cloud", s.stats), false}
-                                : Line{QStringLiteral("Cloud: sealed"), false};
+                                ? Line{countsLine(s.stats), false}
+                                : Line{QStringLiteral("sealed"), false};
                 break;
             case CloudSeen::State::NotChecked:
                 break;   // разобрано выше
