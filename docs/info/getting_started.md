@@ -1,17 +1,16 @@
-# README
+# Getting Started
 
-take notes, organize 'em, encrypt, sync via cloud
+Zametti is a note taking program that uses Markdown (.md) format. For images it primarily uses JpegXL (.jxl) format.
+The notes are organized in 'flat' storages, see the [Zametti storage organization](zametti-storage.md) for details.
 
-Notes on disk are plain markdown: they can be edited with any tools and kept in git. The application does not own the format — it only reads and writes it.
+Briefly, Zametti does not only keep all the notes, it also keeps the editing history of the notes, so you can get back to the past revisions and possibly find some later-removed fragments there.
 
-## License
-
-The project is licensed under GPL-3.0, see [LICENSE](LICENSE). The vendored or linked 3rdparty packages are distributed under their
-respective licenses, see `3rdparty/*` and **How to build** below.
+Notes on the local disk are stored as plain markdown, so they can be edited or grepped with your favorite tools; notes in the cloud (currently, you can use any WebDAV server) are stored in a compressed and encrypted form, nobody could read them as long as they don't know 2 passwords: your WebDAV login password and the storage encryption password - you can have multiple storages and for each of them you can have an individual encryption password.
 
 ## Disclaimer
 
-The license and the fact that we use open formats and open libraries, open standards (markdown, json, jpegxl, zstd, webdav ...) implies that the program will always stay open-source and you can always access your notes from virtually any computer, so don't worry about being locked-in or separated from your content.
+The program is distributed under GPL license and uses just open standards, open formats and open-source components.
+This implies that the program will always stay open-source and you can always access your notes from virtually any computer, so don't worry about being locked-in or separated from your content.
 
 On the other hand, use the software at your own risk (or don't use it at all). We don't provide any guarantees and will not be responsible for any damage that the software can make. Do periodical backups, it's always a good practice.
 
@@ -93,7 +92,7 @@ zametti --root <storage_dir>  # switch to another storage;
 The program uses a popular 3-panel interface:
 - the left panel displays a tree of folders, initially it's just the root, more folders can be added by pressing `New folder` button.
 - the middle panel displays all notes that belong to the selected folder and its subfolders.
-  - the notes can be sorted in alphabetic order, by modification time (edit order) or by creation time (chronological order), press the corresponding button to change the order. The program remembers sorting order of each folder (it's highlighted with magenta color) _if_ you set it explicitly. You can reset the sorting order of the folder to the default order. The default order is defined by the current sorting order of the root folder. If a directory has custom sorting order, it's highlighted with magenta color. If the sorting order is the default one (matches the root folder sorting mode), it's highlighted with blue. For example, in your storage you may create a folder 'Diary' (probably with subfolders) for your daily notes and use chronological order so the notes stay in the same order as you created them, no matter if you get back to your older notes and fix some typos or add retrospective comments. Then, if you select all notes, you will see all notes in the root-sorted order (usually the 'edit order': most recently edited go first). But when you select Diary, the notes in the middle panel will be sorted in the chronological order - convenient!
+  - the notes can be sorted in alphabetic order, by modification time (edit order) or by creation time (chronological order), press the corresponding button to change the order. The program remembers sorting order of each folder (it's highlighted with magenta color) _if_ you set it explicitly. You can reset the sorting order of the folder to the default order. The default order is defined by the current sorting order of the root folder. If a folder has custom sorting order, it's highlighted with magenta color. If the sorting order is the default one (matches the root folder sorting mode), it's highlighted with blue. For example, in your storage you may create a folder 'Diary' (probably with subfolders) for your daily notes and use chronological order so the notes stay in the same order as you created them, no matter if you get back to your older notes and fix some typos or add retrospective comments. Then, if you select all notes, you will see all notes in the root-sorted order (usually the 'edit order': most recently edited go first). But when you select Diary, the notes in the middle panel will be sorted in the chronological order - convenient!
 - the right panel usually displays the viewed/edited note, however it can also display the currently observed snapshot when navigating through the note history, or the program config when you edit it (`Settings` button)
 
 The left and middle panel can be hidden and then shown again by pressing `Hide side panels/Show side panels` button.
@@ -129,7 +128,7 @@ Here is the list of keyboard shortcuts that are supported (mac users: read `Cmd+
 | Ctrl+Shift+F | start search over all notes |
 | F3/Ctrl+G | find next |
 | F4 | find the next difference in the history diff view |
-| F5/Ctrl+R | re-read the storage directory and update the note, optionally run cloud sync |
+| F5/Ctrl+R | re-read the storage folder and update the note, optionally run cloud sync |
 | Ctrl+A | select all |
 | Ctrl+C | copy |
 | Ctrl+X | cut |
@@ -162,82 +161,26 @@ Those 'completely erased' notes that then be restored using command line `zamett
 
 Now, suppose that someone sent you his/her notes from their storage (maybe together with images) and you directly copied the notes into your storage. Once you relaunched your application or pressed `F5`/(`Ctrl+R`), the program will find those notes and will place them into 'lost-and-found' folder in your storage. You can find them there and move to another folder.
 
-## Project structure
+## Managing storages and setting up cloud Synchronization
 
-```
-3rdparty/          everything third-party:
-                   md4c, blake3, zstd, dtl, zlib, libtiff, highway,
-                   libjxl, jpegli, libwebp, microtex, googletest
-zametti-core/      the core as one target:
-                     format/  markdown parsing and writing, hashes, ids
-                     store/   the store, the edit journal, archive, times
-                     image/   image reading and writing, color, import
-                     doc/     the live document model, search, counting, diff
-app/               zametti-ui: the window, the note tree, rendering,
-                   and `zametti store ...`: the store from the command line
-tests/             test suites (one process) and benches
-packaging/         .desktop for the menu and the dock
-docs/              stage briefs, reports and decision notes
-```
+Click the left-most button on the toolbar to open the storage manager.
 
-## How to build and install
+Using this dialog you can:
+- Create new or add existing local storages to the program - press '+'
+- Remove storages from the list, press '-'
+- Locate your storages if you moved them to another location, press '...' (browse) button
+- Setup WebDAV synchronization parameters:
+  - provide url, login, password and optionally a custom folder to store your notes.
+    - press 'Check' to confirm that the credentials you entered are valid.
+  - provide encryption password for your storage.
+  - there can be different cases:
+    - if both the local folder and WebDAV folders are empty, the program (after getting confirmation from you) will create a brand new storage that you will gradually fulfill with notes.
+    - if there is a valid zametti storage in the cloud and you created a new empty folder on the local disk, the cloud storage content will be downloaded as soon as you press 'Open'.
+    - if there is empty folder on WebDAV server, your storage will be encrypted and uploaded to the cloud after you press 'Open'.
+    - if both the local folder and WebDAV folder are valid zametti storages, the program will verify that they represent the same storage (of the same or different revisions) and the fresh content will be synchronized in both locations.
+    - otherwise (different storages or non-empty folders that do not contain zametti storages) you will get an error.
+  - if you happen to forget your encryption password, but you have at least one local copy with your notes, don't worry, you can reset the password, then your local content will be re-uploaded to the server. Press 'reset cloud for that'. That button can also be used if you want to change a provider, i.e. use another server for the same storage. On all the other computers you will have to enter the same encryption password.
 
-The application supports and was tested on Linux (Ubuntu), Windows and macos. Support for Android is planned.
+---
 
-You need to have development environment with Qt6 and a few other libraries. Many of the dependencies the application brings with itself (see 3rdparty), but not everything.
-
-- On Debian/Ubuntu use something like:
-
-  ```bash
-  sudo apt update
-  sudo apt install build-essential git cmake qt6-base-dev \
-       qt6-base-dev-tools qt6-svg-dev
-  ```
-
-- On macos you will need Xcode and brew,
-  install necessary packages (Qt6 etc.) using brew.
-
-- On windows: TBD
-
-After everything is installed, use
-
-```
-cmake -S . -B build
-cmake --build build -j16
-cd build && ctest
-```
-
-To make the application appear in the menu and with an icon in the dock:
-
-```
-cmake --install build --prefix ~/.local
-```
-
-The shell takes the icon not from the window but from the `.desktop` file, so without installing, the dock shows a placeholder. If you edit the code and want the edits to take effect at once, replace the installed copy with a symlink to the build — otherwise `cmake --install` has to be repeated after every rebuild:
-
-```
-ln -sf "$PWD/build/app/zametti" ~/.local/bin/zametti
-```
-
-## Tests
-
-All suites live in ONE executable and run as one process. This is not for convenience: a suite that corrupts memory or the current directory will now affect the next one — a reason to investigate, not to shrug.
-
-```
-ctest                                       everything at once
-build/tests/zametti-tests                   the same, directly
-build/tests/zametti-tests --gtest_filter='Journal.*'   one suite
-build/tests/zametti-tests --gtest_list_tests           what exists at all
-```
-
-Corpora are not checked into the repository: they are taken from `.testdata/` next to the sources or from the directory named in `ZAMETTI_TESTDATA`. No
-corpus — the suite loudly reports the skip and passes empty.
-
-Benches and probes are a separate program: they measure, they do not verify.
-
-```
-build/tests/zametti-bench                   the list of benches
-build/tests/zametti-bench zoom              what Ctrl+= does to a document
-```
-
-Enjoy the program! :)
+That's the basic info about using the program. Enjoy it! :)

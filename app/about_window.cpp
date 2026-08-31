@@ -53,36 +53,41 @@ QString aboutMarkdown() {
     // приходят, — узнать версию и условия; второе — приложить сводку сборки к
     // письму об ошибке. Поэтому и то и другое здесь, и копируется как есть.
     QString out;
-    out += QStringLiteral("# zametti\n\n");
-    out += QStringLiteral("take notes, organize 'em, encrypt, sync via cloud\n\n");
     out += QStringLiteral(
-        "Notes on disk are plain markdown: they can be edited with any tools and kept in git. "
-        "The application does not own the format — it only reads and writes it.\n\n");
-    // Год и имя — не сочинённые: год берётся из истории репозитория, имя — из
-    // подписи её автора. Владельцу проверить эту строку глазами.
-    out += QStringLiteral(
-        "Copyright © 2026 Vadim Pisarevsky. Licensed under GPL-3.0; the full text, and the terms "
-        "of everything bundled with it, are on the **Licenses** tab.\n\n");
-    // Дверь к документации названа прямо: иначе человек будет искать её здесь,
-    // где она была четырьмя вкладками, и не найдёт.
-    out += QStringLiteral(
-        "The manual lives in the note tree: the **Info** folder at the bottom of the left "
-        "column — it is read there like any other note.\n\n");
+R"__about__(# Zametti 0.9.0
+
+Copyright © 2026 Vadim Pisarevsky.
+Vibe-coded with a help from Claude Code.
+
+Licensed under GPL-3.0. For the full text and the terms of
+everything bundled with it, see the **Licenses** tab.
+
+The program helps you to take notes, organize 'em,
+encrypt & sync via cloud. Notes on disk are plain markdown;
+their copies on the cloud are encrypted and compressed
+together with the respective journals (editing history) -
+no git is needed.
+
+Pictures mostly use JpegXL (.jxl) format,
+but jpeg's and webp's are also supported.
+
+In the left pane check '(i) Info' folder with
+some more documentaion on the program.
+)__about__");
+
     out += buildFactsMarkdown();
     return out;
 }
 
 QString buildFactsMarkdown() {
     QString out;
-    out += QStringLiteral("# What it is built from\n\n");
+    out += QStringLiteral("\n## Build info:\n\n");
     for (const BuildFact& fact : kBuildFacts) {
         out += QStringLiteral("- **%1:** %2\n")
                    .arg(QString::fromUtf8(fact.name), QString::fromUtf8(fact.value));
     }
-    out += QStringLiteral("- **extra image readers:** %1\n")
-               .arg(QString::fromUtf8(kImageReaders));
 
-    out += QStringLiteral("\n## Bundled libraries\n\n");
+    out += QStringLiteral("\n## Bundled libraries:\n\n");
     for (const VendoredFact& fact : kVendoredFacts) {
         out += QStringLiteral("- **%1 %2** — %3\n")
                    .arg(QString::fromUtf8(fact.name), QString::fromUtf8(fact.version),
@@ -105,10 +110,6 @@ QString buildFactsMarkdown() {
     out += QStringLiteral("- **%1** — %2 styles, OFL 1.1\n")
                .arg(families.join(QStringLiteral(" and ")))
                .arg(embeddedFaces().size());
-    out += QStringLiteral(
-        "\nThe fonts are bundled on purpose: the family name in settings is a request, "
-        "not a promise. If the font is missing from the system, Qt silently substitutes "
-        "whatever it finds, and the layout drifts on the first foreign machine.\n");
     return out;
 }
 
