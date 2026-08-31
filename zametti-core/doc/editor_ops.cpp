@@ -2770,13 +2770,17 @@ static void setLeftMarginTo(QTextCursor& cursor, const QTextBlock& block, qreal 
 
 void applyListGeometry(QTextDocument& doc, BlockRange range) {
     const BlockRange full = expandToRuns(doc, range);
-    const ZDocStyle& style = styleOf(doc);
-    const QFont base = layoutBaseFont(style);
+    // Имя look, а не style: ниже в цикле живёт MarkerStyle style, и под старым
+    // именем стиль документа был затенён — markerColumn звался с умолчанием
+    // settings().style(), и документ со своим стилем (вывоз PDF) получал
+    // колонку по чужим зазорам.
+    const ZDocStyle& look = styleOf(doc);
+    const QFont base = layoutBaseFont(look);
     // Единицы — те же, что у сборщика: геометрия строится в базовом шрифте и
     // за зумом не идёт (см. layoutCharUnit).
-    const qreal charUnit = layoutCharUnit(style);
-    const qreal indent = style.listIndent() * charUnit;
-    const CodePlate plate = codePlate(style);
+    const qreal charUnit = layoutCharUnit(look);
+    const qreal indent = look.listIndent() * charUnit;
+    const CodePlate plate = codePlate(look);
 
     // Первый проход: к какой колонке принадлежит каждый блок и какой маркер в
     // ней самый широкий. Задаёт колонку именно он: иначе под "10." текст
@@ -2836,7 +2840,7 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
             const int run = currentRun[size_t(level)];
             runOf.push_back(run);
             widest[size_t(run)] =
-                qMax(widest[size_t(run)], markerColumn(style, ordinal, level, base));
+                qMax(widest[size_t(run)], markerColumn(style, ordinal, level, base, look));
         }
     }
 
