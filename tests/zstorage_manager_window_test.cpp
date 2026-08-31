@@ -572,6 +572,7 @@ void checkStubsNeverRead() {
     const QString storeId = ZStorage(store).identity().storeId();
     secrets->pretendKey(storeId);
     secrets->setServerPassword(storeId, QStringLiteral("пароль"), nullptr);
+    secrets->setEncryptionPassword(storeId, QStringLiteral("тайна"), nullptr);
     secrets->reads = 0;
 
     stores.beginSession();
@@ -580,8 +581,11 @@ void checkStubsNeverRead() {
     model.edit(Model::FieldId::Server, QStringLiteral("https://host/dav"));
     const Model::Snapshot snap = model.snapshot();
     ZT_TRUE("кружочки у пароля сервера", snap.serverPassword.stub);
-    ZT_TRUE("кружочки у пароля шифрования (ключ)", snap.encryptionPassword.stub);
+    // Кружочки — от записи ПАРОЛЯ, не ключа: обещают ровно то, что глаз
+    // умеет показать (правка 31.08).
+    ZT_TRUE("кружочки у пароля шифрования", snap.encryptionPassword.stub);
     ZT_TRUE("глаз пароля сервера жив", snap.serverPassword.eyeEnabled);
+    ZT_TRUE("глаз пароля шифрования жив", snap.encryptionPassword.eyeEnabled);
     ZT_TRUE("красных требований нет", !snap.serverPassword.placeholderAlarm &&
                 !snap.encryptionPassword.placeholderAlarm);
     ZT_EQ("секретов не читали ни разу", std::string("0"),
@@ -602,6 +606,38 @@ void checkStubsNeverRead() {
             !model.checkPressed().job.serverPasswordFromKeyring);
 }
 
+void checkOldKeyWithoutPassword() {
+    // Хранилище, подключённое ДО того, как пароль стал третьей записью связки:
+    // ключ есть, пароля нет. Кружочков и глаза нет (показывать нечего), красной
+    // тревоги нет (облаку хватает ключа), а в работу по-прежнему уходит «возьми
+    // ключ из связки» — старые хранилища синкаются без вопросов.
+    zt::MiniStore home;
+    auto secrets = std::make_shared<zt::FakeSecrets>();
+    ZStorageManager stores(secrets);
+    const QString store = home.root() + QStringLiteral("/старое");
+    ZT_TRUE("хранилище завелось", makeStore(store).isEmpty());
+    const QString storeId = ZStorage(store).identity().storeId();
+    secrets->pretendKey(storeId);
+    // Пароль сервера у старого хранилища в связке ЕСТЬ — исторически он там
+    // с самого начала; нет только третьей записи, самого пароля шифрования.
+    secrets->setServerPassword(storeId, QStringLiteral("пароль"), nullptr);
+
+    stores.beginSession();
+    Model& model = stores;
+    model.addFolder(store);
+    model.edit(Model::FieldId::Server, QStringLiteral("https://host/dav"));
+    const Model::Snapshot snap = model.snapshot();
+    ZT_TRUE("кружочков нет — пароль негде взять", !snap.encryptionPassword.stub);
+    ZT_TRUE("глаз погашен честно", !snap.encryptionPassword.eyeEnabled);
+    ZT_TRUE("placeholder серый, не красный",
+            !snap.encryptionPassword.placeholderAlarm);
+    ZT_TRUE("placeholder говорит словами",
+            !snap.encryptionPassword.placeholder.isEmpty());
+    const Model::Job job = model.checkPressed().job;
+    ZT_TRUE("работа едет с ключом из связки",
+            job.encryptionPassword.isEmpty() && job.encryptionFromKeyring);
+}
+
 }  // namespace
 
 static int ztRunSuite(int, char**) {
@@ -616,6 +652,7 @@ static int ztRunSuite(int, char**) {
     checkSclerosisCured();
     checkDraftsNeverSerialized();
     checkStubsNeverRead();
+    checkOldKeyWithoutPassword();
     return zt::report("zstorage_manager_window");
 }
 

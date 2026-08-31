@@ -54,6 +54,8 @@ public:
     using StoreManagerDialog::render;
     using StoreManagerDialog::browseButton_;
     using StoreManagerDialog::formFrame_;
+    using StoreManagerDialog::serverEye_;
+    using StoreManagerDialog::passwordEye_;
 
     int nextAnswer = -1;   // -1 — отказ (последняя кнопка)
     ZStorageManager::Question lastQuestion;
@@ -405,6 +407,56 @@ void checkSealFreshCloudAndChangePassword() {
 
 }  // namespace
 
+void checkEyeToggles() {
+    // Глаз пароля: заглушка из связки наполняется НАСТОЯЩИМ паролем по явному
+    // жесту; набранное показывается как есть, без чтения связки; отказ связки
+    // не показывает литеральные кружочки заглушки как «текст пароля».
+    zt::MiniStore home;
+    auto secrets = std::make_shared<FakeSecrets>();
+    ZStorageManager stores(secrets, kTiny);
+    const QString store = home.root() + QStringLiteral("/хранилище");
+    QString err;
+    ZT_TRUE("хранилище завелось", ZStorage(store).init(&err));
+    const QString id = ZStorage(store).identity().storeId();
+    secrets->pretendKey(id);
+    secrets->setServerPassword(id, QStringLiteral("север"), nullptr);
+    secrets->setEncryptionPassword(id, QStringLiteral("тайна"), nullptr);
+
+    ZStorage::Config cfg;
+    cfg.root = store;
+    stores.remember(cfg);
+    TestDialog dialog(nullptr, stores, secrets);
+    auto* password = dialog.findChild<QLineEdit*>(QStringLiteral("password"));
+    ZT_TRUE("кружочки на месте", dialog.stores_.snapshot().encryptionPassword.stub);
+    ZT_TRUE("глаз жив", dialog.passwordEye_->isEnabled());
+    secrets->reads = 0;
+
+    dialog.passwordEye_->setChecked(true);
+    ZT_EQ("глаз показал настоящий пароль", std::string("тайна"), s(password->text()));
+    ZT_TRUE("пароль виден", password->echoMode() == QLineEdit::Normal);
+    ZT_EQ("одно чтение связки", std::string("1"), std::to_string(secrets->reads));
+    dialog.passwordEye_->setChecked(false);
+    ZT_TRUE("кружочки вернулись", password->echoMode() == QLineEdit::Password);
+
+    // Набранное показывается как есть — связка не читается и не затирает.
+    dialog.type(ZStorageManager::FieldId::EncryptionPassword, QStringLiteral("своё"));
+    secrets->reads = 0;
+    dialog.passwordEye_->setChecked(true);
+    ZT_EQ("показано набранное", std::string("своё"), s(password->text()));
+    ZT_EQ("связку не читали", std::string("0"), std::to_string(secrets->reads));
+    dialog.passwordEye_->setChecked(false);
+
+    // Связка отказала (изменилась за спиной окна): глаз не открывается — иначе
+    // литеральные «•» заглушки показались бы как текст пароля. Заглушка вправе
+    // остаться в поле, но только ПОД МАСКОЙ (echo Password).
+    auto* server = dialog.findChild<QLineEdit*>(QStringLiteral("serverPassword"));
+    ZT_TRUE("кружочки у пароля сервера", dialog.stores_.snapshot().serverPassword.stub);
+    secrets->clearServerPassword(id, nullptr);
+    dialog.serverEye_->setChecked(true);
+    ZT_TRUE("глаз остался закрыт", !dialog.serverEye_->isChecked());
+    ZT_TRUE("echo остался паролем", server->echoMode() == QLineEdit::Password);
+}
+
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -414,6 +466,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkCheckOnMissingCloudFolder();
     checkOpenAppliesPendingCloud();
     checkSealFreshCloudAndChangePassword();
+    checkEyeToggles();
     return zt::report("store_manager_dialog");
 }
 
