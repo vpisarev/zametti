@@ -607,6 +607,47 @@ void checkStubsNeverRead() {
             !model.checkPressed().job.serverPasswordFromKeyring);
 }
 
+void checkAutoCheck() {
+    // Авто-Check (владелец, 31.08): пароль сервера В СВЯЗКЕ + названное облако
+    // + «в этом окне ещё не ходили» → Check выполняется сам. Набранный пароль
+    // и уже проверенный адрес авто-проверку не дёргают.
+    zt::MiniStore home;
+    auto secrets = std::make_shared<zt::FakeSecrets>();
+    ZStorageManager stores(secrets);
+    const QString store = home.root() + QStringLiteral("/хранилище");
+    ZT_TRUE("хранилище завелось", makeStore(store).isEmpty());
+    const QString storeId = ZStorage(store).identity().storeId();
+    secrets->pretendKey(storeId);
+    secrets->setServerPassword(storeId, QStringLiteral("пароль"), nullptr);
+
+    stores.beginSession();
+    Model& model = stores;
+    model.addFolder(store);
+    ZT_TRUE("без адреса — тишина",
+            model.maybeAutoCheck().job.kind == Model::Job::Kind::None);
+
+    model.edit(Model::FieldId::Server, QStringLiteral("https://host/dav"));
+    const Model::Reaction fired = model.maybeAutoCheck();
+    ZT_TRUE("пароль в связке, не ходили — Check сам",
+            fired.job.kind == Model::Job::Kind::Check);
+    ZT_TRUE("работа едет с паролем из связки",
+            fired.job.serverPassword.isEmpty() && fired.job.serverPasswordFromKeyring);
+
+    // Сходили — больше не дёргаемся: факт уже на экране.
+    Model::CloudSeen seen;
+    seen.state = Model::CloudSeen::State::Empty;
+    seen.address = fired.job.cfg.cloudAddressText();
+    model.noteSeen(seen);
+    ZT_TRUE("после проверки — тишина",
+            model.maybeAutoCheck().job.kind == Model::Job::Kind::None);
+
+    // Набранный пароль — тишина: набранное человек посылает сам.
+    model.edit(Model::FieldId::Server, QStringLiteral("https://other/dav"));
+    model.edit(Model::FieldId::ServerPassword, QStringLiteral("руками"));
+    ZT_TRUE("набранный пароль не дёргает авто-Check",
+            model.maybeAutoCheck().job.kind == Model::Job::Kind::None);
+}
+
 void checkOldKeyWithoutPassword() {
     // Хранилище, подключённое ДО того, как пароль стал третьей записью связки:
     // ключ есть, пароля нет. Кружочков и глаза нет (показывать нечего), красной
@@ -653,6 +694,7 @@ static int ztRunSuite(int, char**) {
     checkSclerosisCured();
     checkDraftsNeverSerialized();
     checkStubsNeverRead();
+    checkAutoCheck();
     checkOldKeyWithoutPassword();
     return zt::report("zstorage_manager_window");
 }
