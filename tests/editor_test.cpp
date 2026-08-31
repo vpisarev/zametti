@@ -1951,8 +1951,8 @@ void checkColumnAcrossMargins() {
     editor.openFile(path);
     QTest::qWait(20);
 
-    check(editor.document()->firstBlock().blockFormat().leftMargin() >
-              editor.document()->findBlockByNumber(1).blockFormat().leftMargin(),
+    check(zametti::blockLeftPad(editor.document()->firstBlock()) >
+              zametti::blockLeftPad(editor.document()->findBlockByNumber(1)),
           "у пункта поле шире, чем у абзаца");
 
     QTextCursor cursor = editor.textCursor();

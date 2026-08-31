@@ -11,18 +11,17 @@
 //
 //   1. РАСТЁТ ЛИ ТЕКСТ. Шрифт документа и высота вёрстки — от них зависит
 //      всё остальное, и мерить надо их, а не наши намерения.
-//   2. МАРКЕР ПРИ ЗУМЕ НЕПОДВИЖЕН ЦЕЛИКОМ (владелец, две живые пробы 31.08:
-//      сначала «буллеты съезжают по горизонтали», затем — про первую починку,
-//      прибившую только правый край растущего глифа, — «пять раз Ctrl+− — и
-//      уезжают вправо, Ctrl+= — влево»). Левый край текста при зуме
-//      неподвижен в пикселях (leftMargin не переписывается), значит
-//      неподвижен и маркер — ВСЕМ ТЕЛОМ: левый край, правый край, ширина —
-//      для всех родов: буллеты трёх уровней, номер, буква, скобка, чекбокс.
-//      Меряется дважды: своей геометрией (markerBoxOf) и ЧУЖИМ СУДЬЁЙ —
-//      пикселями снимка (левейший столбец чернил строки пункта — это маркер).
-//      Прежние редакции вопроса не могли покраснеть на живой беде: отношение
-//      markerColumn/высота строки константно по построению, а «зазор
-//      постоянен» молчал о теле глифа, ездившем вокруг прибитого края.
+//   2. ПУНКТ МАСШТАБИРУЕТСЯ ЦЕЛИКОМ: отступ текста, зазор и глиф маркера —
+//      всё ∝ масштабу (третья живая проба владельца 31.08: маркер обязан и
+//      НЕ СЪЕЗЖАТЬ относительно текста, и РАСТИ с ним; вместе это возможно
+//      только когда масштабируется вся строка пункта — списочный отступ
+//      хранится квантами в indent, и setIndentWidth двигает его без записи
+//      форматов, см. kListIndentQuantum). Для всех родов: буллеты трёх
+//      уровней, номер, буква, скобка, чекбокс. Меряется дважды: своей
+//      геометрией (markerBoxOf) и ЧУЖИМ СУДЬЁЙ — пикселями снимка
+//      (расстояние маркер→текст в чернилах). Две прежние починки владелец
+//      отверг живьём: прибитый край с растущим глифом — тело ездило; полная
+//      заморозка — маркер на крупном кегле кроха, на мелком наползал.
 //   3. МАСШТАБ — НЕ ПЕРЕСБОРКА. Содержимое и строение обязаны остаться теми же
 //      до последнего блока: масштаб это облик, а не правка.
 //
@@ -78,9 +77,10 @@ qreal textUnit(const zametti::NoteEditor& editor) {
 // Чернила маркера каждого списочного блока — той геометрией, какой маркер
 // нарисован (markerBoxOf), относительно левого края текста своего блока.
 struct MarkerInk {
-    qreal gap = 0;     // текст.left − маркер.right: прибитый зазор
+    qreal gap = 0;     // текст.left − маркер.right
     qreal width = 0;   // ширина чернил
     qreal left = 0;    // левый край чернил в координатах документа
+    qreal pad = 0;     // полный отступ текста пункта (blockLeftPad)
 };
 
 std::vector<MarkerInk> markerInks(const zametti::NoteEditor& editor) {
@@ -91,8 +91,9 @@ std::vector<MarkerInk> markerInks(const zametti::NoteEditor& editor) {
         const QRectF box = zametti::markerBoxOf(block);
         if (box.isNull()) continue;
         const qreal textLeft =
-            block.layout()->position().x() + block.blockFormat().leftMargin();
-        out.push_back({textLeft - box.right(), box.width(), box.left()});
+            block.layout()->position().x() + zametti::blockLeftPad(block);
+        out.push_back({textLeft - box.right(), box.width(), box.left(),
+                       zametti::blockLeftPad(block)});
     }
     return out;
 }
@@ -242,28 +243,33 @@ static int ztRunSuite(int argc, char** argv) {
                 std::to_string(taskInk100),
             bulletInk100 > 0 && taskInk100 > 0);
 
-    // Неподвижность маркера ЦЕЛИКОМ на масштабе z против 100 %: зазор, ширина
-    // и левый край — одни и те же В ПИКСЕЛЯХ. Допуск 0.1 px новый, мой:
-    // величины аналитические (один и тот же базовый шрифт), запас — на float.
-    const auto checkPinned = [&](qreal, const char* label) {
+    // Пропорциональность на масштабе z против 100 %: отступ текста пункта —
+    // точно ×z (кванты аналитические, допуск на float), зазор и ширина глифа —
+    // ×z с допуском max(2 px, 5 %): их меряет зумленный шрифт, а хинтинг
+    // квантует метрики. Допуски новые, мои. Замороженный или прибитый маркер
+    // здесь краснеет: у них ширина и/или зазор от z не зависят.
+    const auto checkScaled = [&](qreal zoom, const char* label) {
         const std::vector<MarkerInk> inks = markerInks(editor);
         ZT_EQ(std::string(label) + ": маркеров столько же",
               std::to_string(inks100.size()), std::to_string(inks.size()));
         if (inks.size() != inks100.size()) return;
+        const auto near = [zoom](qreal now, qreal was) {
+            const qreal wanted = was * zoom;
+            return std::fabs(now - wanted) < qMax<qreal>(2.0, 0.05 * wanted);
+        };
         for (size_t i = 0; i < inks.size(); ++i) {
+            ZT_TRUE(std::string(label) + ": отступ пункта #" + std::to_string(i) +
+                        " ×z: " + std::to_string(inks100[i].pad) + " → " +
+                        std::to_string(inks[i].pad),
+                    std::fabs(inks[i].pad - inks100[i].pad * zoom) < 0.05);
             ZT_TRUE(std::string(label) + ": зазор маркера #" + std::to_string(i) +
-                        " неподвижен: " + std::to_string(inks100[i].gap) + " → " +
+                        " ×z: " + std::to_string(inks100[i].gap) + " → " +
                         std::to_string(inks[i].gap),
-                    std::fabs(inks[i].gap - inks100[i].gap) < 0.1);
+                    near(inks[i].gap, inks100[i].gap));
             ZT_TRUE(std::string(label) + ": ширина глифа #" + std::to_string(i) +
-                        " неподвижна: " + std::to_string(inks100[i].width) +
-                        " → " + std::to_string(inks[i].width),
-                    std::fabs(inks[i].width - inks100[i].width) < 0.1);
-            ZT_TRUE(std::string(label) + ": левый край глифа #" +
-                        std::to_string(i) + " неподвижен: " +
-                        std::to_string(inks100[i].left) + " → " +
-                        std::to_string(inks[i].left),
-                    std::fabs(inks[i].left - inks100[i].left) < 0.1);
+                        " ×z: " + std::to_string(inks100[i].width) + " → " +
+                        std::to_string(inks[i].width),
+                    near(inks[i].width, inks100[i].width));
         }
     };
 
@@ -277,12 +283,8 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_TRUE("Ctrl+=: шрифт документа стал крупнее", unitBig > unitAt100 * 1.02);
     ZT_TRUE("Ctrl+=: документ стал выше", heightBig > heightAt100 * 1.02);
 
-    // --- 2. МАРКЕР ПРИ ЗУМЕ НЕПОДВИЖЕН ЦЕЛИКОМ ------------------------------
-    //
-    // Обе прежние редакции вопроса не краснели на живой беде (см. шапку);
-    // честная редакция: всё тело маркера — зазор, ширина, левый край — стоит
-    // на месте в пикселях, и это же подтверждают чернила снимка.
-    checkPinned(step, "110 %");
+    // --- 2. ПУНКТ МАСШТАБИРУЕТСЯ ЦЕЛИКОМ ------------------------------------
+    checkScaled(step, "110 %");
 
     // --- 3. МАСШТАБ — НЕ ПЕРЕСБОРКА ---------------------------------------
     ZT_EQ("масштаб не тронул строение", skeleton, skeletonOf(editor));
@@ -307,29 +309,33 @@ static int ztRunSuite(int argc, char** argv) {
     // Крайние ступени — прибивка числом и снимок глазам.
     editor.applyZoom(1.5);
     QTest::qWait(20);
-    checkPinned(1.5, "150 %");
+    checkScaled(1.5, "150 %");
     shoot(editor, dir, QStringLiteral("масштаб-150.png"));
     editor.applyZoom(2.0);
     QTest::qWait(20);
-    checkPinned(2.0, "200 %");
+    checkScaled(2.0, "200 %");
     shoot(editor, dir, QStringLiteral("масштаб-200.png"));
 
-    // Пиксельный судья на 200 %: маркер стоит от текста там же, где на 100 %.
-    // Допуск 3 px: чернила первой буквы начинаются с её бокового выноса, а он
-    // растёт с кеглем (замер: 2 px на 200 %); прежний съезд был 8–9 px и в
-    // 3 px не спрячется. Ровно жест владельца «нажать Ctrl+= и смотреть».
-    // Окно на время замера выше: на 200 % чекбокс не влезает в 600 px.
+    // Пиксельный судья на 200 %: расстояние маркер→текст УДВОИЛОСЬ — маркер
+    // растёт вместе с пунктом и стоит при нём. Допуск max(4 px, 8 %): боковые
+    // выносы букв и хинтинг. И заморозка (×1), и старый съезд якоря дают
+    // расхождение с ×2 в разы больше допуска. Ровно жест владельца «нажать
+    // Ctrl+= и смотреть». Окно на время замера выше: на 200 % чекбокс не
+    // влезает в 600 px.
     {
         editor.resize(800, 1300);
         QTest::qWait(40);
         const int bulletInk = markerToTextPx(editor, bulletBlock);
         const int taskInk = markerToTextPx(editor, taskBlock);
-        ZT_TRUE("буллет на 200 % не съехал от текста: " +
+        const auto doubled = [](int now, int was) {
+            return std::abs(now - was * 2) <= qMax(4, was * 2 * 8 / 100);
+        };
+        ZT_TRUE("буллет→текст на 200 % удвоилось: " +
                     std::to_string(bulletInk100) + " → " + std::to_string(bulletInk),
-                std::abs(bulletInk - bulletInk100) <= 3);
-        ZT_TRUE("чекбокс на 200 % не съехал от текста: " +
+                doubled(bulletInk, bulletInk100));
+        ZT_TRUE("чекбокс→текст на 200 % удвоилось: " +
                     std::to_string(taskInk100) + " → " + std::to_string(taskInk),
-                std::abs(taskInk - taskInk100) <= 3);
+                doubled(taskInk, taskInk100));
         editor.resize(800, 600);
         QTest::qWait(40);
     }
@@ -354,7 +360,8 @@ static int ztRunSuite(int argc, char** argv) {
     }
 
     // Узкое окно + 200 %: маркер не выходит ни за левый край колонки, ни на
-    // текст своего пункта (базовый глиф в базовой колонке — по построению).
+    // текст своего пункта (отступ и глиф растут от одного масштаба — влезает
+    // по построению).
     editor.resize(500, 600);
     QTest::qWait(40);
     {

@@ -154,7 +154,8 @@ void checkLevelNormalisation() {
 }
 
 qreal marginOf(const QTextDocument& doc, int block) {
-    return doc.findBlockByNumber(block).blockFormat().leftMargin();
+    // Полный отступ: списочная часть с 31.08 живёт квантами в indent.
+    return zametti::blockLeftPad(doc.findBlockByNumber(block));
 }
 
 // Колонку текста задаёт самый широкий маркер прогона: иначе под "10." текст

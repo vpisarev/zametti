@@ -159,16 +159,16 @@ void checkRoundTripAndLevels() {
               n(zametti::levelOf(block)));
         // Полоса объекта отступает вместе с пунктом: чем глубже, тем правее.
         ZT_TRUE(std::string("объект «") + want.mark + "» отступает как пункт (поле " +
-                    n(int(block.blockFormat().leftMargin())) + ")",
-                block.blockFormat().leftMargin() > 0.0);
+                    n(int(zametti::blockLeftPad(block))) + ")",
+                zametti::blockLeftPad(block) > 0.0);
         (void)previousMargin;
     }
     const int deep = editor.objectBlock(zametti::ObjectKind::Formula, QStringLiteral("$$y$$"));
     const int shallow = editor.objectBlock(zametti::ObjectKind::Formula, QStringLiteral("$$z$$"));
     if (deep >= 0 && shallow >= 0)
         ZT_TRUE("объект глубже — правее",
-                editor.document()->findBlockByNumber(deep).blockFormat().leftMargin() >
-                    editor.document()->findBlockByNumber(shallow).blockFormat().leftMargin());
+                zametti::blockLeftPad(editor.document()->findBlockByNumber(deep)) >
+                    zametti::blockLeftPad(editor.document()->findBlockByNumber(shallow)));
     // Снимок — артефакт приёмки: маркеры рядом с полосами объектов, отступы по
     // глубине — на него смотрит владелец.
     editor.grab().toImage().save(QDir(g_dir).filePath(QStringLiteral("объекты-в-пунктах.png")));

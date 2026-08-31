@@ -201,7 +201,7 @@ void checkPlateGeometry(Peek& editor) {
         // Левый край плашки — на codeIndent правее абзаца, а код — ещё на
         // codePadLeft правее плашки.
         const QRectF rect = layout->blockBoundingRect(block);
-        const qreal codeLeft = rect.left() + block.blockFormat().leftMargin();
+        const qreal codeLeft = rect.left() + zametti::blockLeftPad(block);
         check(std::fabs(band.rect.left() - (codeLeft - plate.padLeft)) < 0.5,
               "код отступает от левого края плашки на padLeft");
         const QTextBlock paragraph = editor.document()->firstBlock();
