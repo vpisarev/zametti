@@ -197,7 +197,7 @@ void runScenarios(const Live& live) {
         Model::Reaction first = execute(model, *secrets, model.openPressed());
         ZT_TRUE("после разведки просят повтор", model.snapshot().repeatVisible);
         ZT_TRUE("облако увидено пустым",
-                model.snapshot().cloud.text == QStringLiteral("Cloud: empty"));
+                model.snapshot().cloud.text == QStringLiteral("empty"));
         Q_UNUSED(first);
         model.edit(Model::FieldId::Repeat, password);
         Model::Reaction opened = execute(model, *secrets, model.openPressed());

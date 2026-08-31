@@ -205,7 +205,7 @@ void checkButtonsTableA() {
         ZT_TRUE("XW: строка фактов красная и словами владельца",
                 snap.local.alarm &&
                     snap.local.text ==
-                        QStringLiteral("Local: not a valid storage nor empty dir"));
+                        QStringLiteral("not a valid storage nor empty dir"));
     }
 }
 
@@ -256,11 +256,12 @@ void checkFactLines() {
                     !snap.local.alarm);
         ZT_TRUE("Local: дата второй строкой",
                 snap.local.text.contains(QStringLiteral("\nmodified ")));
-        ZT_TRUE("Cloud: not set", snap.cloud.text == QStringLiteral("Cloud: not set"));
+        // Без префикса «Cloud:» — секция формы уже сказала, чей факт (31.08).
+        ZT_TRUE("Cloud: not set", snap.cloud.text == QStringLiteral("not set"));
     }
     model.edit(Model::FieldId::Server, QStringLiteral("/mnt/облако"));
     ZT_TRUE("Cloud: not checked",
-            model.snapshot().cloud.text == QStringLiteral("Cloud: not checked"));
+            model.snapshot().cloud.text == QStringLiteral("not checked"));
 
     // Пустое облако — НЕ беда (беда R): обычным шрифтом.
     Model::CloudSeen seen;
@@ -270,7 +271,7 @@ void checkFactLines() {
     {
         const Model::Snapshot snap = model.snapshot();
         ZT_TRUE("Cloud: empty не красным",
-                snap.cloud.text == QStringLiteral("Cloud: empty") && !snap.cloud.alarm);
+                snap.cloud.text == QStringLiteral("empty") && !snap.cloud.alarm);
         // Совет словами: следующий шаг — запечатать.
         ZT_TRUE("совет про запечатывание",
                 snap.message.text.contains(QStringLiteral("seal")));
@@ -302,7 +303,7 @@ void checkFactLines() {
     // Смена адреса забывает свежесть: снова «not checked».
     model.edit(Model::FieldId::Server, QStringLiteral("/mnt/другое"));
     ZT_TRUE("смена адреса забывает увиденное",
-            model.snapshot().cloud.text == QStringLiteral("Cloud: not checked"));
+            model.snapshot().cloud.text == QStringLiteral("not checked"));
 }
 
 void checkFreshnessAutomaton() {
@@ -433,7 +434,7 @@ void checkResetRoads() {
     ZT_TRUE("строка менеджера без облака",
             !stores.storeFor(store).hasCloudAddress());
     ZT_TRUE("облако снова not set",
-            model.snapshot().cloud.text == QStringLiteral("Cloud: not set"));
+            model.snapshot().cloud.text == QStringLiteral("not set"));
 }
 
 void checkAddressNeverBitten() {
