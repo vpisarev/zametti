@@ -407,10 +407,11 @@ ZStorageManager::Snapshot ZStorageManager::snapshot() const {
     // состояния, что у пароля шифрования (набран, лежит в связке, нет нигде), и
     // человеку незачем держать в голове две разные грамматики.
     //
-    // Глаз показывает НАСТОЯЩИЙ пароль, а он лежит отдельной записью связки.
-    // Поэтому у поля шифрования кружочки говорят про КЛЮЧ, а глаз — про ПАРОЛЬ:
-    // ключ без пароля бывает (пароль набрали на другом устройстве), и глазу
-    // тогда показывать нечего.
+    // КРУЖОЧКИ ОБЕЩАЮТ РОВНО ТО, ЧТО ГЛАЗ УМЕЕТ ПОКАЗАТЬ: и заглушка, и глаз
+    // считаются от ОДНОЙ записи связки — той, где лежит сам пароль. Прежняя
+    // грамматика «кружочки про ключ, глаз про пароль» дала мёртвый глаз при
+    // нарисованных кружочках у всякого хранилища, подключённого до того, как
+    // пароль стал третьей записью связки (жалоба владельца 31.08).
     out.serverPassword.enabled = !folderCloud;
     out.serverPassword.text = d.serverPassword;
     out.serverPassword.stub = !d.serverPasswordTouched && d.serverPassword.isEmpty() &&
@@ -427,20 +428,22 @@ ZStorageManager::Snapshot ZStorageManager::snapshot() const {
         out.serverPassword.placeholderAlarm = f.serverPassword == Known::No;
     }
 
-    // Кружочки у пароля шифрования говорят про КЛЮЧ: он и есть то, чем облако
-    // открывается. Сам пароль — отдельная запись, и он нужен лишь глазу.
+    // Кружочки — от записи ПАРОЛЯ, не ключа: у старого хранилища ключ в связке
+    // есть (синк работает им и дальше), а пароля нет — поле честно пустое с
+    // серым «not on this device» (решение владельца 31.08).
     out.encryptionPassword.text = d.encryptionPassword;
     out.encryptionPassword.stub = !d.encryptionTouched && d.encryptionPassword.isEmpty() &&
-                                  f.key == Known::Yes;
+                                  f.encryptionPassword == Known::Yes;
     out.encryptionPassword.eyeEnabled =
-        !d.encryptionPassword.isEmpty() || f.encryptionPassword == Known::Yes;
+        !d.encryptionPassword.isEmpty() || out.encryptionPassword.stub;
     // ТРЕБОВАТЬ ПАРОЛЬ ТАМ, ГДЕ ОБЛАКА НЕТ, — шум: шифровать нечего и незачем.
     // Красное на пустом месте приучает не замечать красного вообще.
     const bool cloudNamed = cfgFromDraft().hasCloudAddress();
     if (cloudNamed && d.encryptionPassword.isEmpty() && !out.encryptionPassword.stub) {
         out.encryptionPassword.placeholder = QStringLiteral("not on this device");
-        // КРАСНЫМ — только когда связка ТОЧНО сказала «нет». Красное требование
-        // там, где никто не искал, — враньё (беда J разбора).
+        // КРАСНЫМ — только когда связка ТОЧНО сказала, что нет КЛЮЧА: облаку
+        // нужен ключ, не пароль. Ключ есть, пароля нет — серое, не красное.
+        // Красное требование там, где никто не искал, — враньё (беда J).
         out.encryptionPassword.placeholderAlarm = f.key == Known::No;
     }
 

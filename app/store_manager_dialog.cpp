@@ -691,25 +691,47 @@ QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, ZStorageManager::Fie
     QAction* eye = field->addAction(icon, QLineEdit::TrailingPosition);
     eye->setCheckable(true);
     eye->setToolTip(QStringLiteral("Show the password"));
-    connect(eye, &QAction::toggled, this, [this, field, which](bool on) {
-        field->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password);
-        if (!on) return;
+    connect(eye, &QAction::toggled, this, [this, field, which, eye](bool on) {
+        if (!on) {
+            field->setEchoMode(QLineEdit::Password);
+            return;
+        }
+        // НАБРАННОЕ ПРОСТО ПОКАЗЫВАЕМ. Подменять его хранимым нельзя: человек
+        // видит не то, что набрал, а модель — не то, что видит человек.
+        const ZStorageManager::Snapshot snap = stores_.snapshot();
+        const ZStorageManager::Field& state =
+            which == ZStorageManager::FieldId::ServerPassword ? snap.serverPassword
+                                                              : snap.encryptionPassword;
+        if (!state.stub) {
+            field->setEchoMode(QLineEdit::Normal);
+            return;
+        }
         // ГЛАЗ ДОСТАЁТ НАСТОЯЩИЙ ПАРОЛЬ ИЗ СВЯЗКИ — ради этого связка и
         // хранит его третьей записью (решение владельца): подсмотреть и
         // скопировать свой пароль больше негде. Спрашиваем ЯВНЫМ жестом и в
         // главном потоке: на маке чтение секрета вправе поднять системный
         // вопрос, и на переключение строки его звать нельзя.
+        //
+        // ОТКАЗ СВЯЗКИ НЕ ОТКРЫВАЕТ ГЛАЗ: в поле стоит заглушка из литеральных
+        // кружочков, и показать её как текст значило бы выдать плейсхолдер за
+        // пароль. Галка снимается — тот же toggled вернёт echo назад.
+        const auto refuse = [eye](const char* why) {
+            qWarning("store window: eye kept shut — %s", why);
+            eye->setChecked(false);
+        };
         const QString root = ZStorageManager::canonicalRoot(folder_->text().trimmed());
-        if (ZStorage::inspect(root) != ZStorage::DirKind::Store) return;
+        if (ZStorage::inspect(root) != ZStorage::DirKind::Store)
+            return refuse("the folder is not a storage");
         const QString id = ZStorage(root).identity().storeId();
-        if (id.isEmpty()) return;
+        if (id.isEmpty()) return refuse("the storage has no id");
         const QString kept = which == ZStorageManager::FieldId::ServerPassword
                                  ? secrets_->serverPassword(id)
                                  : secrets_->encryptionPassword(id);
-        if (kept.isEmpty()) return;
+        if (kept.isEmpty()) return refuse("the keyring gave no password");
         // Показанное становится набранным: поле и модель обязаны говорить об
         // одном, иначе следующая работа поедет с заглушкой.
         stores_.edit(which, kept);
+        field->setEchoMode(QLineEdit::Normal);
         render();
     });
     return eye;
