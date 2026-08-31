@@ -209,6 +209,30 @@ void checkGeometry() {
           "пересчёт по одному блоку не сдвигает колонку прогона");
 }
 
+// Документ со СВОИМ стилем (так делает вывоз PDF): колонку считает ЕГО зазор,
+// а не глобальные настройки. Ловит затенение look в applyListGeometry —
+// без починки markerColumn звался с умолчанием settings().style().
+void checkGeometryWithOwnStyle() {
+    auto custom =
+        std::make_shared<zametti::ZDocStyle>(zametti::settings().style());
+    // Против умолчания 0.75: расхождение с чужим зазором ≫ допуска сравнения.
+    custom->setOrderedTextGap(2.0);
+
+    QTextDocument text;
+    zametti::BuildOptions options;
+    options.style = custom;
+    zametti::buildDocument(docOf({listItem(Marker::Ordered, 0, "пункт")}), text,
+                           options);
+
+    const QFont base = zametti::layoutBaseFont(*custom);
+    const qreal wanted =
+        custom->listIndent() * zametti::layoutCharUnit(*custom) +
+        zametti::markerColumn(zametti::markerOf(text.findBlockByNumber(0)), 1, 0,
+                              base, *custom);
+    check(std::fabs(marginOf(text, 0) - wanted) < 0.01,
+          "колонка списка считается зазором стиля документа, не настроек");
+}
+
 // Номер пункта считается двумя способами: обходом назад (для отрисовки) и
 // прогоном вперёд (для геометрии). Расходиться они не имеют права.
 void checkOrdinalAgreement(const std::string& source, const std::string& label) {
@@ -921,6 +945,7 @@ static int ztRunSuite(int argc, char** argv) {
 
     checkLevelNormalisation();
     checkGeometry();
+    checkGeometryWithOwnStyle();
     checkLiteralOneBlock();
     using Z = zametti::ZDocument;
     const NoteOp enter = [](Z& n, QTextCursor& at) { return n.breakBlock(at, Z::BreakKind::Plain); };
