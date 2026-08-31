@@ -696,6 +696,15 @@ QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, ZStorageManager::Fie
             field->setEchoMode(QLineEdit::Password);
             return;
         }
+        // ОТКАЗ НЕ ОТКРЫВАЕТ ГЛАЗ: в поле может стоять заглушка из литеральных
+        // кружочков, и показать её как текст значило бы выдать плейсхолдер за
+        // пароль. Галка снимается — тот же toggled вернёт echo назад, а
+        // render() пересинхронизирует поле со свежим снимком.
+        const auto refuse = [this, eye](const char* why) {
+            qWarning("store window: eye kept shut — %s", why);
+            eye->setChecked(false);
+            render();
+        };
         // НАБРАННОЕ ПРОСТО ПОКАЗЫВАЕМ. Подменять его хранимым нельзя: человек
         // видит не то, что набрал, а модель — не то, что видит человек.
         const ZStorageManager::Snapshot snap = stores_.snapshot();
@@ -703,6 +712,10 @@ QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, ZStorageManager::Fie
             which == ZStorageManager::FieldId::ServerPassword ? snap.serverPassword
                                                               : snap.encryptionPassword;
         if (!state.stub) {
+            // Пустое поле без заглушки показывать нечего; сюда попадаем только
+            // при рассинхроне (связка изменилась за спиной окна) — глаз у
+            // пустого поля обычно погашен снимком.
+            if (state.text.isEmpty()) return refuse("nothing to show");
             field->setEchoMode(QLineEdit::Normal);
             return;
         }
@@ -711,14 +724,6 @@ QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, ZStorageManager::Fie
         // скопировать свой пароль больше негде. Спрашиваем ЯВНЫМ жестом и в
         // главном потоке: на маке чтение секрета вправе поднять системный
         // вопрос, и на переключение строки его звать нельзя.
-        //
-        // ОТКАЗ СВЯЗКИ НЕ ОТКРЫВАЕТ ГЛАЗ: в поле стоит заглушка из литеральных
-        // кружочков, и показать её как текст значило бы выдать плейсхолдер за
-        // пароль. Галка снимается — тот же toggled вернёт echo назад.
-        const auto refuse = [eye](const char* why) {
-            qWarning("store window: eye kept shut — %s", why);
-            eye->setChecked(false);
-        };
         const QString root = ZStorageManager::canonicalRoot(folder_->text().trimmed());
         if (ZStorage::inspect(root) != ZStorage::DirKind::Store)
             return refuse("the folder is not a storage");
