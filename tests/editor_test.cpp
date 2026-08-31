@@ -1582,7 +1582,7 @@ void checkCheckboxClick() {
     };
 
     const QRectF box =
-        zametti::checkboxRect(editor.document()->firstBlock(), editor.baseFont());
+        zametti::checkboxRect(editor.document()->firstBlock());
     check(!box.isNull(), "у задачи должна быть рамка чекбокса");
 
     clickAt(box.center());
@@ -1784,8 +1784,7 @@ void checkCheckboxClickWithSelection() {
             markdownOf(blocksOf(*editor.document())));
     };
     auto clickBox = [&editor](int number, bool twice) {
-        const QRectF box = zametti::checkboxRect(
-            editor.document()->findBlockByNumber(number), editor.baseFont());
+        const QRectF box = zametti::checkboxRect(editor.document()->findBlockByNumber(number));
         const QPoint at(int(box.center().x()) - editor.horizontalScrollBar()->value(),
                         int(box.center().y()) - editor.verticalScrollBar()->value());
         QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, at);
