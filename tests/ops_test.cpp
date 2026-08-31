@@ -230,7 +230,9 @@ void checkGeometryWithOwnStyle() {
         custom->listIndent() * zametti::layoutCharUnit(*custom) +
         zametti::markerColumn(zametti::markerOf(text.findBlockByNumber(0)), 1, 0,
                               base, *custom);
-    check(std::fabs(marginOf(text, 0) - wanted) < 0.01,
+    // Допуск — половина кванта: списочный отступ пишется квантами
+    // kListIndentQuantum, и точнее округления он не бывает.
+    check(std::fabs(marginOf(text, 0) - wanted) <= zametti::kListIndentQuantum / 2 + 0.01,
           "колонка списка считается зазором стиля документа, не настроек");
 }
 
