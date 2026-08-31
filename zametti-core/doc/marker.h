@@ -47,6 +47,16 @@ QString markerText(MarkerStyle style, int ordinal, int level,
 // должно.
 QRectF checkboxRect(const QTextBlock& block, const QFont& base);
 
+// Чернильная рамка маркера любого рода в координатах документа — той же
+// геометрией, какой маркер нарисован. Наружу — для тестов: прибивку якоря к
+// тексту и рост глифа с зумом иначе не измерить.
+QRectF markerBoxOf(const QTextBlock& block, const QFont& base);
+
+// Шрифт знакового маркера (без отсечки у края). Наружу — для тестов: гарнитура
+// нумерованных прибита к основному шрифту заметки (решение владельца 31.08).
+QFont markerFontFor(MarkerStyle style, const QFont& base,
+                    const ZDocStyle& look = settings().style());
+
 // Фигура буллета по уровню вложенности: так вложенность видна сразу, без счёта
 // отступов глазом. Последняя из настроенных фигур достаётся всем уровням
 // глубже — перечислять их до бесконечности незачем.
