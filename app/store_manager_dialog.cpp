@@ -682,9 +682,11 @@ QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, ZStorageManager::Fie
     const int points = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
     const QColor color = palette().color(QPalette::Text);
     const qreal dpr = devicePixelRatioF();
+    // Кружочки в поле — глаз ЗАКРЫТ (eye-closed); нажали — пароль виден, глаз
+    // открыт (решение владельца 31.08).
     icon.addPixmap(toolbarIcon(QStringLiteral("eye"), points, color, dpr), QIcon::Normal,
                    QIcon::On);
-    icon.addPixmap(toolbarIcon(QStringLiteral("eye-off"), points, color, dpr), QIcon::Normal,
+    icon.addPixmap(toolbarIcon(QStringLiteral("eye-closed"), points, color, dpr), QIcon::Normal,
                    QIcon::Off);
     QAction* eye = field->addAction(icon, QLineEdit::TrailingPosition);
     eye->setCheckable(true);

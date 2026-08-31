@@ -52,7 +52,7 @@ constexpr const char* kIcons[] = {
     "clock-arrow-down",    "clock-arrow-up",       "cloud-sync",
     "columns-3",           "copy",                 "database",
     "database-search",     "ellipsis",             "eye",
-    "eye-off",
+    "eye-closed",
     "fast-forward",        "file-plus-corner",
     "folder",
     "folder-input",        "folder-open",          "folder-plus",
