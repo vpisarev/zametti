@@ -42,6 +42,8 @@
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QFontDatabase>
+#include <QFontInfo>
 #include <QFontMetricsF>
 #include <QScrollBar>
 #include <QTest>
@@ -391,6 +393,36 @@ static int ztRunSuite(int argc, char** argv) {
                 zoomTargetFor(true, false, true) == ZoomTarget::Plain);
         ZT_TRUE("история поверх исходника",
                 zoomTargetFor(false, true, true) == ZoomTarget::History);
+    }
+
+    // --- 5. ГАРНИТУРА НОМЕРА ПРИБИТА К ОСНОВНОМУ ШРИФТУ ЗАМЕТКИ ------------
+    //
+    // В base может приехать шрифт другого режима (у основного и markdown-
+    // режимов шрифты разные — слова владельца 31.08); цифры номера обязаны
+    // остаться шрифтом заметки. base нарочно ЖИВОЙ другой гарнитуры: на
+    // выдуманной подделку не отличить от честного фолбэка.
+    {
+        const zametti::ZDocStyle& look = zametti::settings().style();
+        const QString wanted = QFontInfo(QFont(look.fontFamily())).family();
+        QString other;
+        for (const QString& family : QFontDatabase::families()) {
+            if (QFontInfo(QFont(family)).family() == wanted) continue;
+            other = family;
+            break;
+        }
+        ZT_TRUE("нашлась другая живая гарнитура: " + other.toStdString(),
+                !other.isEmpty());
+        QFont base(other);
+        base.setPointSizeF(23.5);
+        zametti::MarkerStyle ordered;
+        ordered.marker = zametti::Marker::Ordered;
+        const QFont font = zametti::markerFontFor(ordered, base, look);
+        ZT_EQ("гарнитура номера — основной шрифт заметки", wanted.toStdString(),
+              QFontInfo(font).family().toStdString());
+        ZT_TRUE("кегль номера идёт за base (зумом)",
+                std::fabs(font.pointSizeF() - 23.5) < 0.01);
+        // Буллет-глиф и чекбокс здесь не проверяются: кружочки и рамки
+        // рисуются вручную намеренно (решение владельца, CLAUDE.md).
     }
 
     return zt::report("zoom");
