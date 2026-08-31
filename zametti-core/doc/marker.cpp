@@ -85,10 +85,9 @@ QFont markerFont(MarkerStyle style, const QFont& base, const ZDocStyle& look) {
 // Метрики базового шрифта, считанные один раз на шрифт.
 //
 // Зовут их на КАЖДЫЙ маркер в кадре, а tightBoundingRect строит контуры глифов
-// — самая дорогая из трёх. Шрифтов за кадр теперь ДВА, и оба постоянны:
-// зумленный шрифт документа (глиф) и незумленный шрифт вёрстки (зазор якоря,
-// см. anchorOf). Отсюда кэш на две записи: однозаписный промахивался бы на
-// каждом маркере, а сравнить QFont дёшево, посчитать заново — нет.
+// — самая дорогая из трёх. Кэш на две записи (шрифт вёрстки — вся геометрия
+// маркеров, плюс возможный чужой base у публичных markerColumn/markerFontFor):
+// сравнить QFont дёшево, посчитать заново — нет.
 struct BaseMetrics {
     qreal charUnit = 0;      // ширина "A"
     qreal xHeight = 0;
@@ -152,8 +151,22 @@ struct Anchor {
     bool valid = false;
 };
 
-Anchor anchorOf(const QTextBlock& block, MarkerStyle style, const QFont&,
-                const ZDocStyle& look) {
+// МАРКЕР ЗАМОРОЖЕН ЦЕЛИКОМ — И ПОЗИЦИЯ, И РАЗМЕР (владелец, вторая живая
+// проба 31.08: «пять раз Ctrl+− — буллеты уезжают вправо, Ctrl+= — влево»).
+// Левый край текста при зуме неподвижен в пикселях (leftMargin испечён в
+// базовом шрифте и при зуме не переписывается — каждая запись формата была бы
+// шагом отмены, см. known_bugs.md); первая починка прибивала только ПРАВЫЙ
+// край глифа, а тело растила влево — и тело ездило на глазах. Неподвижным
+// маркер бывает только весь: ВСЯ его геометрия — зазор, ширина, диаметр,
+// сторона рамки, кегль знака — меряется одним шрифтом вёрстки rulerOf(), тем
+// же, каким испечён leftMargin. Долг, названный вслух: маркер НЕ растёт с
+// зумом (как и вся горизонтальная геометрия полей — плашка кода той же
+// судьбы, known_bugs.md); лечение — масштабируемая геометрия полей, отдельная
+// работа. Отсечки у края окна не нужно: базовый глиф в базовой колонке
+// leftMargin помещается по построению.
+QFont rulerOf(const ZDocStyle& look) { return layoutBaseFont(look); }
+
+Anchor anchorOf(const QTextBlock& block, MarkerStyle style, const ZDocStyle& look) {
     const QTextLayout* layout = block.layout();
     if (layout == nullptr || layout->lineCount() == 0) return {};
     const QTextLine line = layout->lineAt(0);
@@ -161,53 +174,8 @@ Anchor anchorOf(const QTextBlock& block, MarkerStyle style, const QFont&,
     // Позиция раскладки — левый край содержимого фрейма; левое поле блока в неё
     // не входит, его надо прибавить.
     const qreal textLeft = origin.x() + block.blockFormat().leftMargin();
-    // ЗАЗОР — НЕЗУМЛЕННЫМ ШРИФТОМ ВЁРСТКИ, тем же, каким applyListGeometry
-    // испёк leftMargin: левый край текста при зуме неподвижен в пикселях (поля
-    // блоков при зуме не переписывают — каждая запись формата была бы шагом
-    // отмены, см. known_bugs.md), и якорь маркера обязан стоять так же. Зазор
-    // зумленным шрифтом — это и был съезд маркера на gap·(z−1), у каждого рода
-    // свой (жалоба владельца 31.08). Цена неподвижности, названная вслух:
-    // при z≠1 зазор — константа в пикселях, а не доля кегля.
-    const qreal gap = gapFor(style, layoutBaseFont(look), look);
+    const qreal gap = gapFor(style, rulerOf(look), look);
     return {textLeft - gap, origin.y() + line.y() + line.ascent(), true};
-}
-
-// Отсечка роста глифа у левого края колонки документа — приём plateScale
-// (note_view.cpp): глиф растёт с зумом ВЛЕВО от прибитого правого края, там
-// пустота собственного отступа пункта, но у пункта верхнего уровня в узком
-// окне пустота кончается на x=0 — дальше рост упирается.
-qreal glyphScaleFor(MarkerStyle style, int ordinal, int level, const QFont& base,
-                    const ZDocStyle& look, qreal anchorRight) {
-    const qreal wanted = glyphWidth(style, ordinal, level, base, look);
-    const qreal available = qMax(0.0, anchorRight);
-    if (wanted <= available || wanted <= 0) return 1.0;
-    qreal scale = available / wanted;
-    // Шрифтовые метрики не строго линейны по кеглю — одна поправка по факту.
-    if (!drawnCheckbox(style, look) && !drawnBullet(style, look)) {
-        QFont shrunk = markerFont(style, base, look);
-        shrunk.setPointSizeF(qMax(1.0, shrunk.pointSizeF() * scale));
-        const qreal again = QFontMetricsF(shrunk).horizontalAdvance(
-            markerText(style, ordinal, level, look));
-        if (again > available && again > 0) scale *= available / again;
-    }
-    return scale;
-}
-
-// Шрифт знакового маркера с уже применённой отсечкой. Общий и отрисовке, и
-// markerBoxOf: двух копий геометрии быть не должно.
-QFont scaledMarkerFont(MarkerStyle style, int ordinal, int level, const QFont& base,
-                       const ZDocStyle& look, qreal anchorRight) {
-    QFont font = markerFont(style, base, look);
-    const qreal scale = glyphScaleFor(style, ordinal, level, base, look, anchorRight);
-    if (scale < 1.0) font.setPointSizeF(qMax(1.0, font.pointSizeF() * scale));
-    return font;
-}
-
-// Диаметр рисованного буллета с отсечкой — тот же владелец, те же два клиента.
-qreal bulletDiameterFor(MarkerStyle style, int level, const QFont& base,
-                        const ZDocStyle& look, qreal anchorRight) {
-    return metricsOf(base).xHeight * look.bulletDiameter() *
-           glyphScaleFor(style, 0, level, base, look, anchorRight);
 }
 
 // Буллет рисуется в круге заданного диаметра — какой бы ни была фигура. Место
@@ -283,26 +251,26 @@ qreal markerColumn(MarkerStyle style, int ordinal, int level, const QFont& base,
     return glyphWidth(style, ordinal, level, base, look) + gapFor(style, base, look);
 }
 
-QRectF checkboxRect(const QTextBlock& block, const QFont& base) {
+QRectF checkboxRect(const QTextBlock& block) {
     const ZDocStyle& look = styleOf(*block.document());
     const MarkerStyle style = markerOf(block);
     if (!isListBlock(block) || !drawnCheckbox(style, look)) return {};
-    const Anchor anchor = anchorOf(block, style, base, look);
+    const Anchor anchor = anchorOf(block, style, look);
     if (!anchor.valid) return {};
 
-    const QRectF ink = QFontMetricsF(base).tightBoundingRect(QStringLiteral("iy"));
-    // Рамка растёт с зумом (шрифт base), правый край прибит якорем; у края
-    // окна рост отсекается той же отсечкой, что у остальных глифов.
-    const qreal side =
-        ink.height() * glyphScaleFor(style, 0, 0, base, look, anchor.right);
+    // Рамка заморожена, как весь маркер (см. rulerOf); вертикаль — от базовой
+    // линии ЖИВОЙ строки: строки при зуме растут, и рамка едет с ними по
+    // вертикали, оставаясь на месте по горизонтали.
+    const QRectF ink =
+        QFontMetricsF(rulerOf(look)).tightBoundingRect(QStringLiteral("iy"));
+    const qreal side = ink.height();
     // ink.top() отрицателен: столько чернил выше базовой линии. Поправка со
     // знаком: больше нуля поднимает рамку.
     const qreal top = anchor.baseline + ink.top() - look.checkboxOpticalRise() * side;
     return QRectF(anchor.right - side, top, side, side);
 }
 
-QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point,
-                           const QFont& base) {
+QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point) {
     const QAbstractTextDocumentLayout* layout = doc.documentLayout();
     // От первого блока, попадающего в строку с этой точкой: обходить документ с
     // начала незачем.
@@ -311,7 +279,7 @@ QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point,
         const QRectF rect = layout->blockBoundingRect(block);
         if (rect.top() > point.y()) break;
         if (rect.bottom() < point.y()) continue;
-        const QRectF box = checkboxRect(block, base);
+        const QRectF box = checkboxRect(block);
         // Промахнуться по рамке легко, поэтому попадание считаем с запасом в
         // половину её стороны со всех сторон.
         if (!box.isNull() && box.adjusted(-box.width() / 2, -box.height() / 2,
@@ -322,31 +290,31 @@ QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point,
     return QTextBlock();
 }
 
-void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) {
+void paintMarker(QPainter& painter, const QTextBlock& block) {
     const ZDocStyle& look = styleOf(*block.document());
     if (!isListBlock(block)) return;
     const MarkerStyle style = markerOf(block);
-    const Anchor anchor = anchorOf(block, style, base, look);
+    const Anchor anchor = anchorOf(block, style, look);
     if (!anchor.valid) return;
+    const QFont ruler = rulerOf(look);
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     if (drawnCheckbox(style, look)) {
-        paintCheckbox(painter, checkboxRect(block, base), style.checked, look);
+        paintCheckbox(painter, checkboxRect(block), style.checked, look);
     } else if (drawnBullet(style, look)) {
-        const qreal xHeight = metricsOf(base).xHeight;
-        const qreal diameter =
-            bulletDiameterFor(style, levelOf(block), base, look, anchor.right);
-        // Кружок стоит на средней линии строчных: она у любой гарнитуры именно
-        // там, где глаз ждёт буллет.
+        const qreal xHeight = metricsOf(ruler).xHeight;
+        const qreal diameter = xHeight * look.bulletDiameter();
+        // Кружок стоит на средней линии строчных БАЗОВОГО кегля, от базовой
+        // линии живой строки: по горизонтали неподвижен, по вертикали едет со
+        // строкой.
         const QPointF center(anchor.right - diameter / 2,
                              anchor.baseline - xHeight / 2 -
                                  look.bulletRise() * xHeight);
         paintBullet(painter, center, diameter, bulletShapeFor(levelOf(block), look), look);
     } else {
-        const QFont font = scaledMarkerFont(style, ordinalOf(block), levelOf(block),
-                                            base, look, anchor.right);
+        const QFont font = markerFont(style, ruler, look);
         const QString text = markerText(style, ordinalOf(block), levelOf(block), look);
         const QColor color =
             style.marker == Marker::Task
@@ -354,15 +322,15 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) 
                                  : look.checkboxUncheckedColor())
             : style.marker == Marker::Ordered ? look.orderedColor()
                                               : look.bulletColor();
-        // Поправка по вертикали — от высоты строчных основного шрифта, а не
-        // маркерного: маркер должен двигаться относительно текста строки.
+        // Поправка по вертикали — от высоты строчных базового шрифта, а не
+        // маркерного.
         qreal rise = 0;
         if (style.marker == Marker::Ordered) rise = look.orderedRise();
         else if (style.marker == Marker::Bullet) rise = look.bulletRise();
         painter.setFont(font);
         painter.setPen(color);
         painter.drawText(QPointF(anchor.right - QFontMetricsF(font).horizontalAdvance(text),
-                                 anchor.baseline - rise * metricsOf(base).xHeight),
+                                 anchor.baseline - rise * metricsOf(ruler).xHeight),
                          text);
     }
 
@@ -373,32 +341,31 @@ QFont markerFontFor(MarkerStyle style, const QFont& base, const ZDocStyle& look)
     return markerFont(style, base, look);
 }
 
-QRectF markerBoxOf(const QTextBlock& block, const QFont& base) {
+QRectF markerBoxOf(const QTextBlock& block) {
     const ZDocStyle& look = styleOf(*block.document());
     if (!isListBlock(block)) return {};
     const MarkerStyle style = markerOf(block);
-    if (drawnCheckbox(style, look)) return checkboxRect(block, base);
-    const Anchor anchor = anchorOf(block, style, base, look);
+    if (drawnCheckbox(style, look)) return checkboxRect(block);
+    const Anchor anchor = anchorOf(block, style, look);
     if (!anchor.valid) return {};
+    const QFont ruler = rulerOf(look);
 
     if (drawnBullet(style, look)) {
-        const qreal xHeight = metricsOf(base).xHeight;
-        const qreal diameter =
-            bulletDiameterFor(style, levelOf(block), base, look, anchor.right);
+        const qreal xHeight = metricsOf(ruler).xHeight;
+        const qreal diameter = xHeight * look.bulletDiameter();
         const qreal centerY =
             anchor.baseline - xHeight / 2 - look.bulletRise() * xHeight;
         return QRectF(anchor.right - diameter, centerY - diameter / 2, diameter,
                       diameter);
     }
-    const QFont font = scaledMarkerFont(style, ordinalOf(block), levelOf(block),
-                                        base, look, anchor.right);
+    const QFont font = markerFont(style, ruler, look);
     const QFontMetricsF metrics(font);
     const QString text = markerText(style, ordinalOf(block), levelOf(block), look);
     const qreal width = metrics.horizontalAdvance(text);
     qreal rise = 0;
     if (style.marker == Marker::Ordered) rise = look.orderedRise();
     else if (style.marker == Marker::Bullet) rise = look.bulletRise();
-    const qreal baseline = anchor.baseline - rise * metricsOf(base).xHeight;
+    const qreal baseline = anchor.baseline - rise * metricsOf(ruler).xHeight;
     return QRectF(anchor.right - width, baseline - metrics.ascent(), width,
                   metrics.ascent() + metrics.descent());
 }

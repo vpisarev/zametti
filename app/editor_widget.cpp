@@ -1319,7 +1319,7 @@ QTextBlock NoteEditor::checkboxUnder(const QMouseEvent& event) const {
     // Точка в координатах документа: вьюпорт прокручен, а раскладка — нет.
     const QPointF point(event.position().x() + horizontalScrollBar()->value(),
                         event.position().y() + verticalScrollBar()->value());
-    return blockAtCheckbox(*document(), point, baseFont());
+    return blockAtCheckbox(*document(), point);
 }
 
 // Зона угла: квадрат вокруг каждого из четырёх углов фотографии, наполовину

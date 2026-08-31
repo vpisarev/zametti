@@ -45,12 +45,19 @@ QString markerText(MarkerStyle style, int ordinal, int level,
 // Рамка чекбокса в координатах документа; пустая, если у блока её нет. Одна
 // функция и на отрисовку, и на попадание мышью — двух копий геометрии быть не
 // должно.
-QRectF checkboxRect(const QTextBlock& block, const QFont& base);
+//
+// ГЕОМЕТРИЯ МАРКЕРОВ ОТ ЗУМА НЕ ЗАВИСИТ ВОВСЕ — потому у этих функций и нет
+// параметра-шрифта (владелец, 31.08): текст при зуме неподвижен по
+// горизонтали (leftMargin не переписывается), значит неподвижен и маркер —
+// весь, телом и размером, в базовом шрифте вёрстки. Вертикаль — от базовой
+// линии живой строки. Долг: маркер не растёт с зумом (та же судьба, что у
+// плашки кода, known_bugs.md).
+QRectF checkboxRect(const QTextBlock& block);
 
 // Чернильная рамка маркера любого рода в координатах документа — той же
-// геометрией, какой маркер нарисован. Наружу — для тестов: прибивку якоря к
-// тексту и рост глифа с зумом иначе не измерить.
-QRectF markerBoxOf(const QTextBlock& block, const QFont& base);
+// геометрией, какой маркер нарисован. Наружу — для тестов: неподвижность
+// маркера при зуме иначе не измерить.
+QRectF markerBoxOf(const QTextBlock& block);
 
 // Шрифт знакового маркера (без отсечки у края). Наружу — для тестов: гарнитура
 // нумерованных прибита к основному шрифту заметки (решение владельца 31.08).
@@ -65,11 +72,10 @@ BulletShape bulletShapeFor(int level, const ZDocStyle& look = settings().style()
 // Блок, чей чекбокс накрывает эту точку документа. Недействительный блок —
 // мимо. Геометрия берётся из checkboxRect, то есть та же самая, по которой
 // чекбокс нарисован: двух её копий быть не должно.
-QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point,
-                           const QFont& base);
+QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point);
 
 // Рисует маркер блока. Блок должен быть списочным и уже разложенным.
-void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base);
+void paintMarker(QPainter& painter, const QTextBlock& block);
 
 // Тематическая черта "---": горизонтальная линия по ширине колонки текста,
 // на середине высоты своего блока. В документе блок пустой — рисуем сами,

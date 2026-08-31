@@ -1335,7 +1335,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
         if (rect.top() - sweep > documentRect.bottom()) break;
         if (rect.bottom() + block.blockFormat().bottomMargin() + sweep < documentRect.top())
             continue;
-        paintMarker(painter, block, base);
+        paintMarker(painter, block);
         paintDivider(painter, block, rect, displayScale());
         // Фотографию рисует обработчик объектов (ImageObjectHandler): Qt зовёт
         // его сама, отведя объекту место в строке. Здесь остаются только уголки
@@ -1951,7 +1951,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
         // Фотография живёт в нижнем поле блока и может быть видна, когда сама
         // строка уже уехала вверх, — поэтому отсечение с запасом на поле.
         if (rect.bottom() + block.blockFormat().bottomMargin() + sweep < visible.top()) continue;
-        paintMarker(painter, block, base);
+        paintMarker(painter, block);
         paintDivider(painter, block, rect, displayScale());
         // Фотографию рисует обработчик объектов (ImageObjectHandler): Qt зовёт
         // его сама, отведя объекту место в строке. Здесь остаются только уголки
