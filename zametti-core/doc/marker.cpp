@@ -69,6 +69,12 @@ QFont markerFont(MarkerStyle style, const QFont& base, const ZDocStyle& look) {
     QFont font = base;
     if (style.marker == Marker::Bullet && look.bulletStyle() == BulletStyle::Glyph)
         font.setPointSizeF(base.pointSizeF() * look.bulletScale());
+    // Цифры и буквы номера — ОСНОВНЫМ ШРИФТОМ ЗАМЕТКИ, а не тем, что достался
+    // base (решение владельца 31.08): в base может приехать шрифт другого
+    // режима, и гарнитуру номера нельзя отпускать на самотёк. Кегль остаётся
+    // от base — размер идёт за текстом и зумом.
+    if (style.marker == Marker::Ordered)
+        font.setFamilies({QString(look.fontFamily())});
     if (style.marker == Marker::Task && look.checkboxStyle() == CheckboxStyle::Glyph) {
         font.setFamilies({QString(look.symbolFamily()), QString(look.fontFamily())});
         font.setPointSizeF(base.pointSizeF() * look.checkboxGlyphScale());
