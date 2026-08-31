@@ -71,6 +71,20 @@ void attachStyle(QTextDocument& doc, std::shared_ptr<const ZDocStyle> style);
 // не у вида: так его знают и вёрстка объектов, и бумага.
 qreal displayScaleOf(const QTextDocument& doc);
 
+// КВАНТ СПИСОЧНОГО ОТСТУПА. Списочная часть левого отступа пункта хранится не
+// в leftMargin, а в indent блока — числом квантов по kListIndentQuantum
+// пикселей БАЗОВОГО облика. Зачем: ширину кванта задаёт ОДНО свойство
+// документа (setIndentWidth), и масштаб показа двигает все пункты разом —
+// текст, зазор и маркер едут пропорционально, не переписав ни одного формата
+// блока (запись формата — шаг отмены; замер zametti-bench zoom: setIndentWidth
+// «чисто»). Полный отступ блока читают через blockLeftPad (doc_model.h).
+inline constexpr qreal kListIndentQuantum = 0.5;
+
+// Ширина кванта по текущему масштабу документа: kListIndentQuantum × масштаб.
+// Зовут сборка (масштаб 1) и NoteView::setZoom — единственный, кто масштаб
+// меняет.
+void applyIndentScale(QTextDocument& doc);
+
 // ПОКАЗЫВАЕТСЯ ЛИ ЭТОТ БЛОК ОБЪЕКТОМ, а не текстом. Сегодня объектом бывает
 // фотография, занимающая абзац целиком: в документе она — один знак U+FFFC, за
 // которым стоит её исходник (см. ObjectSourceProperty в doc_model.h).

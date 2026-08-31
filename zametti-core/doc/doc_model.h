@@ -332,6 +332,13 @@ BlockImageRef imageRefOfSpan(const QString& href, const QString& alt);
 BlockImageRef imageRefOfWiki(const QString& source);
 bool isListBlock(const QTextBlock& block);
 
+// Полный левый отступ блока, как его считает вёрстка: собственное поле
+// (leftMargin) плюс списочная часть — кванты indent × indentWidth документа
+// (см. kListIndentQuantum в document_builder.h: ширину кванта двигает масштаб
+// показа, и отступы пунктов едут за зумом одним свойством документа).
+// Голый blockFormat().leftMargin() с 31.08 — только несписочная часть.
+qreal blockLeftPad(const QTextBlock& block);
+
 // Чем помечен пункт: маркер вместе с отметкой выполненности. Двумя полями, а не
 // родом блока, — род у всех пунктов один.
 struct MarkerStyle {

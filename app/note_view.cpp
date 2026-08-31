@@ -207,6 +207,11 @@ void NoteView::setZoom(qreal zoom) {
     // зума в цепочке отмены становилось на шаг больше).
     const LayoutChange mark(this);
     document()->setDefaultFont(want);
+    // Списочные отступы едут за масштабом ОДНИМ свойством документа: кванты
+    // indent испечены сборкой, а их ширину задаёт масштаб (см.
+    // kListIndentQuantum). В стек отмены setIndentWidth не попадает (замер
+    // zametti-bench zoom).
+    applyIndentScale(*document());
 }
 
 NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
@@ -677,10 +682,10 @@ void ImageObjectHandler::drawObject(QPainter* painter, const QRectF& rect, QText
 qreal NoteView::columnWidth(const QTextBlock& block) const {
     const QTextFrameFormat root = document()->rootFrame()->frameFormat();
     qreal width = document()->textWidth() - root.leftMargin() - root.rightMargin() -
-                  block.blockFormat().leftMargin();
+                  blockLeftPad(block);
     // Документ, которому ширину ещё не задали, отдаёт −1: пока её нет, меряем
     // окном. Это случается ровно один раз — до первой раскладки.
-    if (width < 16.0) width = viewport()->width() - block.blockFormat().leftMargin();
+    if (width < 16.0) width = viewport()->width() - blockLeftPad(block);
     return qMax(16.0, width);
 }
 
@@ -842,7 +847,7 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
     // писать не надо.
     const QTextFrameFormat root = document()->rootFrame()->frameFormat();
     const qreal available = viewport()->width() - root.leftMargin() - root.rightMargin() -
-                            block.blockFormat().leftMargin();
+                            blockLeftPad(block);
     qreal shift = 0.0;
     if (available > size.width()) {
         switch (ref.align) {
@@ -1403,7 +1408,7 @@ QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
         // пункта списка поле блока уже включает колонку пункта, и плашка едет
         // вместе с ним: иначе она вылезала бы левее маркера и разрезала список
         // надвое (проверено на снимке этапа 11).
-        const qreal left = rect.left() + block.blockFormat().leftMargin() - plate.padLeft;
+        const qreal left = rect.left() + blockLeftPad(block) - plate.padLeft;
         CodeBand band;
         band.rect = QRectF(left, rect.top(), rect.right() - left, height);
         band.blockNumber = block.blockNumber();
@@ -1605,7 +1610,7 @@ TableSpace NoteView::tableSpaceFor(const QTextBlock& block) const {
     space.columnWidth = columnWidth(block);
     const QTextFrameFormat frame = document()->rootFrame()->frameFormat();
     const qreal margin = qMax(0.0, qreal(viewport()->width()) - frame.leftMargin() -
-                                       block.blockFormat().leftMargin() - 8);
+                                       blockLeftPad(block) - 8);
     space.fullWidth = qMax(space.columnWidth, margin);
     space.zoom = displayScale();
     return space;

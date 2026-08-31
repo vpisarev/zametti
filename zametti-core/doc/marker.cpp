@@ -151,30 +151,29 @@ struct Anchor {
     bool valid = false;
 };
 
-// МАРКЕР ЗАМОРОЖЕН ЦЕЛИКОМ — И ПОЗИЦИЯ, И РАЗМЕР (владелец, вторая живая
-// проба 31.08: «пять раз Ctrl+− — буллеты уезжают вправо, Ctrl+= — влево»).
-// Левый край текста при зуме неподвижен в пикселях (leftMargin испечён в
-// базовом шрифте и при зуме не переписывается — каждая запись формата была бы
-// шагом отмены, см. known_bugs.md); первая починка прибивала только ПРАВЫЙ
-// край глифа, а тело растила влево — и тело ездило на глазах. Неподвижным
-// маркер бывает только весь: ВСЯ его геометрия — зазор, ширина, диаметр,
-// сторона рамки, кегль знака — меряется одним шрифтом вёрстки rulerOf(), тем
-// же, каким испечён leftMargin. Долг, названный вслух: маркер НЕ растёт с
-// зумом (как и вся горизонтальная геометрия полей — плашка кода той же
-// судьбы, known_bugs.md); лечение — масштабируемая геометрия полей, отдельная
-// работа. Отсечки у края окна не нужно: базовый глиф в базовой колонке
-// leftMargin помещается по построению.
-QFont rulerOf(const ZDocStyle& look) { return layoutBaseFont(look); }
+// МАРКЕР МАСШТАБИРУЕТСЯ ВМЕСТЕ СО СВОИМ ПУНКТОМ ЦЕЛИКОМ (третья живая проба
+// владельца 31.08: маркер обязан и не съезжать относительно текста, и расти
+// с ним — вместе это возможно только когда масштабируется ВСЯ строка пункта,
+// включая отступ текста). Отступ пункта хранится квантами в indent блока
+// (kListIndentQuantum, см. document_builder.h), и масштаб показа двигает его
+// одним setIndentWidth; здесь вся геометрия — зазор, глиф, кегль знака —
+// меряется ЗУМЛЕННЫМ шрифтом документа scaleFontOf(). Обе величины растут от
+// одного масштаба — маркер стоит при тексте на любом кегле, пропорциональный
+// ему. Две прежние починки (прибитый правый край с растущим глифом; маркер,
+// замороженный целиком) владелец отверг живыми пробами: у первой тело глифа
+// ездило вокруг якоря, у второй маркер на крупном кегле становился крохой, на
+// мелком — наползал на соседние строки.
+QFont scaleFontOf(const QTextBlock& block) { return block.document()->defaultFont(); }
 
 Anchor anchorOf(const QTextBlock& block, MarkerStyle style, const ZDocStyle& look) {
     const QTextLayout* layout = block.layout();
     if (layout == nullptr || layout->lineCount() == 0) return {};
     const QTextLine line = layout->lineAt(0);
     const QPointF origin = layout->position();
-    // Позиция раскладки — левый край содержимого фрейма; левое поле блока в неё
-    // не входит, его надо прибавить.
-    const qreal textLeft = origin.x() + block.blockFormat().leftMargin();
-    const qreal gap = gapFor(style, rulerOf(look), look);
+    // Позиция раскладки — левый край содержимого фрейма; отступ блока в неё
+    // не входит, его надо прибавить — ПОЛНЫЙ, вместе со списочными квантами.
+    const qreal textLeft = origin.x() + blockLeftPad(block);
+    const qreal gap = gapFor(style, scaleFontOf(block), look);
     return {textLeft - gap, origin.y() + line.y() + line.ascent(), true};
 }
 
@@ -258,11 +257,10 @@ QRectF checkboxRect(const QTextBlock& block) {
     const Anchor anchor = anchorOf(block, style, look);
     if (!anchor.valid) return {};
 
-    // Рамка заморожена, как весь маркер (см. rulerOf); вертикаль — от базовой
-    // линии ЖИВОЙ строки: строки при зуме растут, и рамка едет с ними по
-    // вертикали, оставаясь на месте по горизонтали.
-    const QRectF ink =
-        QFontMetricsF(rulerOf(look)).tightBoundingRect(QStringLiteral("iy"));
+    // Рамка меряется зумленным шрифтом документа — как и весь пункт
+    // (см. scaleFontOf): растёт с текстом и стоит при нём.
+    const QRectF ink = QFontMetricsF(scaleFontOf(block))
+                           .tightBoundingRect(QStringLiteral("iy"));
     const qreal side = ink.height();
     // ink.top() отрицателен: столько чернил выше базовой линии. Поправка со
     // знаком: больше нуля поднимает рамку.
@@ -296,7 +294,7 @@ void paintMarker(QPainter& painter, const QTextBlock& block) {
     const MarkerStyle style = markerOf(block);
     const Anchor anchor = anchorOf(block, style, look);
     if (!anchor.valid) return;
-    const QFont ruler = rulerOf(look);
+    const QFont ruler = scaleFontOf(block);
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -306,9 +304,8 @@ void paintMarker(QPainter& painter, const QTextBlock& block) {
     } else if (drawnBullet(style, look)) {
         const qreal xHeight = metricsOf(ruler).xHeight;
         const qreal diameter = xHeight * look.bulletDiameter();
-        // Кружок стоит на средней линии строчных БАЗОВОГО кегля, от базовой
-        // линии живой строки: по горизонтали неподвижен, по вертикали едет со
-        // строкой.
+        // Кружок стоит на средней линии строчных: она у любой гарнитуры именно
+        // там, где глаз ждёт буллет.
         const QPointF center(anchor.right - diameter / 2,
                              anchor.baseline - xHeight / 2 -
                                  look.bulletRise() * xHeight);
@@ -322,7 +319,7 @@ void paintMarker(QPainter& painter, const QTextBlock& block) {
                                  : look.checkboxUncheckedColor())
             : style.marker == Marker::Ordered ? look.orderedColor()
                                               : look.bulletColor();
-        // Поправка по вертикали — от высоты строчных базового шрифта, а не
+        // Поправка по вертикали — от высоты строчных основного шрифта, а не
         // маркерного.
         qreal rise = 0;
         if (style.marker == Marker::Ordered) rise = look.orderedRise();
@@ -348,7 +345,7 @@ QRectF markerBoxOf(const QTextBlock& block) {
     if (drawnCheckbox(style, look)) return checkboxRect(block);
     const Anchor anchor = anchorOf(block, style, look);
     if (!anchor.valid) return {};
-    const QFont ruler = rulerOf(look);
+    const QFont ruler = scaleFontOf(block);
 
     if (drawnBullet(style, look)) {
         const qreal xHeight = metricsOf(ruler).xHeight;

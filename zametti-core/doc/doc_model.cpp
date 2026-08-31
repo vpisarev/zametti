@@ -158,6 +158,13 @@ bool isListBlock(const QTextBlock& block) {
     return !isRawBlock(block) && isList(kindOf(block));
 }
 
+qreal blockLeftPad(const QTextBlock& block) {
+    const QTextBlockFormat format = block.blockFormat();
+    const QTextDocument* doc = block.document();
+    return format.leftMargin() +
+           (doc != nullptr ? format.indent() * doc->indentWidth() : 0.0);
+}
+
 MarkerStyle markerOf(const QTextBlock& block) {
     const QTextBlockFormat format = block.blockFormat();
     return {static_cast<Marker>(format.intProperty(MarkerProperty)),

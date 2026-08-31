@@ -314,7 +314,7 @@ FormulaObjects* formulaCacheOf(const QTextDocument& doc) {
 qreal columnWidthOf(const QTextDocument& doc, const QTextBlock& block) {
     const QTextFrameFormat root = doc.rootFrame()->frameFormat();
     const qreal width = doc.textWidth() - root.leftMargin() - root.rightMargin() -
-                        block.blockFormat().leftMargin();
+                        blockLeftPad(block);
     // Документ, которому ширину ещё не задали, отдаёт −1: это бывает ровно один
     // раз, до первой раскладки, — и полоса перемерится с настоящей шириной.
     return qMax(16.0, width);

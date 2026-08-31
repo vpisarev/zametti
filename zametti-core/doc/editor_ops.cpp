@@ -2750,22 +2750,45 @@ static qreal ownLeftMargin(const QTextBlock& block, const CodePlate& plate, qrea
     return 0;
 }
 
-// Поставить блоку левое поле, а нулевое — снять вовсе: у блока без отступа
-// свойства нет ВООБЩЕ, и свойство со значением 0 — это уже другой формат.
-// Отладочная сверка со сборкой сравнивает свойства поимённо и такую разницу
-// видит (на ней я и поймал, что снятый уровень уносил с собой плашку кода).
-static void setLeftMarginTo(QTextCursor& cursor, const QTextBlock& block, qreal margin) {
+// Поставить блоку левый отступ ДВУМЯ ЧАСТЯМИ одной записью формата:
+// СПИСОЧНАЯ часть — квантами в indent (kListIndentQuantum, единица БАЗОВОГО
+// облика: ширину кванта двигает масштаб показа одним setIndentWidth, и пункты
+// едут за зумом без переписывания форматов), СОБСТВЕННАЯ часть (плашка кода,
+// цитата) — в leftMargin, как прежде. Нулевая часть — свойство снимается
+// вовсе: у блока без отступа свойства нет ВООБЩЕ, и свойство со значением 0 —
+// это уже другой формат. Отладочная сверка со сборкой сравнивает свойства
+// поимённо и такую разницу видит (на ней я и поймал, что снятый уровень
+// уносил с собой плашку кода).
+static void setBlockLeft(QTextCursor& cursor, const QTextBlock& block, qreal listPx,
+                         qreal ownPx) {
     QTextBlockFormat format = block.blockFormat();
-    const bool has = format.hasProperty(QTextFormat::BlockLeftMargin);
-    if (margin <= 0.0) {
-        if (!has) return;
-        format.clearProperty(QTextFormat::BlockLeftMargin);
-        setBlockFormat(cursor, block, format);
-        return;
+    bool changed = false;
+
+    const int quanta =
+        listPx <= 0.0 ? 0 : int(std::lround(listPx / kListIndentQuantum));
+    const bool hasIndent = format.hasProperty(QTextFormat::BlockIndent);
+    if (quanta <= 0) {
+        if (hasIndent) {
+            format.clearProperty(QTextFormat::BlockIndent);
+            changed = true;
+        }
+    } else if (!hasIndent || format.indent() != quanta) {
+        format.setIndent(quanta);
+        changed = true;
     }
-    if (has && std::fabs(format.leftMargin() - margin) < 0.01) return;
-    format.setLeftMargin(margin);
-    setBlockFormat(cursor, block, format);
+
+    const bool hasMargin = format.hasProperty(QTextFormat::BlockLeftMargin);
+    if (ownPx <= 0.0) {
+        if (hasMargin) {
+            format.clearProperty(QTextFormat::BlockLeftMargin);
+            changed = true;
+        }
+    } else if (!hasMargin || std::fabs(format.leftMargin() - ownPx) >= 0.01) {
+        format.setLeftMargin(ownPx);
+        changed = true;
+    }
+
+    if (changed) setBlockFormat(cursor, block, format);
 }
 
 void applyListGeometry(QTextDocument& doc, BlockRange range) {
@@ -2854,7 +2877,7 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
         const int run = runOf[size_t(i - full.first)];
         // Пустая строка отступа не имеет никакого — ни своего, ни списочного.
         if (run == kSkip) {
-            setLeftMarginTo(cursor, block, 0);
+            setBlockLeft(cursor, block, 0, 0);
             continue;
         }
         if (run == kInside) {
@@ -2866,10 +2889,10 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
             // и нет: блок стоит сам по себе и отступ у него собственный.
             const qreal own = ownLeftMargin(block, plate, charUnit);
             if (at >= contentCol.size()) {
-                setLeftMarginTo(cursor, block, own);
+                setBlockLeft(cursor, block, 0, own);
                 continue;
             }
-            setLeftMarginTo(cursor, block, indent + contentCol[at] + own);
+            setBlockLeft(cursor, block, indent + contentCol[at], own);
             continue;
         }
         // Блок вне всякого списка: весь его отступ — собственный. Ставит его
@@ -2877,7 +2900,7 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
         // уровень, уносила вместе с уровнем и левое поле — блок кода терял
         // плашку, и заплатка расходилась с полной сборкой.
         if (run < 0) {
-            setLeftMarginTo(cursor, block, ownLeftMargin(block, plate, charUnit));
+            setBlockLeft(cursor, block, 0, ownLeftMargin(block, plate, charUnit));
             contentCol.assign(1, 0.0);
             continue;
         }
@@ -2888,10 +2911,10 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
         const qreal cell = widest[size_t(run)];
         contentCol[size_t(level) + 1] = contentCol[size_t(level)] + cell;
 
-        // Формат не трогаем, если поле и так верное: любая запись помечает
+        // Формат не трогаем, если отступ и так верный: любая запись помечает
         // документ изменённым и тянет за собой автосохранение (это внутри
-        // setLeftMarginTo).
-        setLeftMarginTo(cursor, block, indent + contentCol[size_t(level)] + cell);
+        // setBlockLeft).
+        setBlockLeft(cursor, block, indent + contentCol[size_t(level)] + cell, 0);
     }
 }
 

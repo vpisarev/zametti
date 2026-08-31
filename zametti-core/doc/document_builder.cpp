@@ -763,6 +763,10 @@ qreal displayScaleOf(const QTextDocument& doc) {
     return shown > 0.0 ? shown / base : 1.0;
 }
 
+void applyIndentScale(QTextDocument& doc) {
+    doc.setIndentWidth(kListIndentQuantum * displayScaleOf(doc));
+}
+
 void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
                    BuildOptions options) {
     if (!options.keepUndo) target.setUndoRedoEnabled(false);
@@ -777,6 +781,9 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
     const ZDocStyle& style = styleOf(target);
     BuildContext ctx = contextFor(style);
     target.setDefaultFont(ctx.base);
+    // Квант списочного отступа — по масштабу документа (после setDefaultFont:
+    // масштаб несёт шрифт). Дальше его двигает только NoteView::setZoom.
+    applyIndentScale(target);
     // Стоп табуляции — тот же, которым Tab ставит пробелы (editor.codeTabWidth).
     // Иначе набранное нами и литеральные табы из старых файлов рисовались бы
     // по-разному, и одинаковый на вид отступ оказывался бы разным.

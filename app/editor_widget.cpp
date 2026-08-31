@@ -1599,13 +1599,13 @@ void NoteEditor::keepColumnAcrossMargins(QKeyEvent* event) {
     if (!vertical) return;
 
     const QTextBlock before = textCursor().block();
-    const qreal marginBefore = before.blockFormat().leftMargin();
+    const qreal marginBefore = zametti::blockLeftPad(before);
     const qreal x = cursorRect().x() + horizontalScrollBar()->value();
 
     NoteView::keyPressEvent(event);
 
     const QTextBlock after = textCursor().block();
-    const qreal marginAfter = after.blockFormat().leftMargin();
+    const qreal marginAfter = zametti::blockLeftPad(after);
     if (after == before || qFuzzyCompare(marginAfter + 1.0, marginBefore + 1.0)) return;
 
     // Текст нового блока начинается на столько же правее или левее — значит и
