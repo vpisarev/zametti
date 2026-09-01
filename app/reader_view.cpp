@@ -48,6 +48,12 @@ bool ReaderView::showFile(const QString& path, const QString& noteId) {
     noteId_ = noteId.isEmpty() ? QFileInfo(path).completeBaseName() : noteId;
     title_ = shown_.title();
     setDocument(shown_.getDocument());
+    // МАСШТАБ ПРИБИВАЕТСЯ К СВЕЖЕМУ ДОКУМЕНТУ ТУТ ЖЕ, как это делает редактор
+    // после каждой пересборки. Свежий документ приходит в базовом кегле, а
+    // NoteView::applyZoom рано выходит, когда просимое число равно нынешнему,
+    // — и второй архивный документ подряд открывался на 100 %, сколько бы
+    // Ctrl+= ни нажали до него.
+    restoreScale();
     applyContentWidth();
     restoreSpot();
     // ПОСЛЕ того, как проставлены путь и заголовок: слушатель спросит и то, и
