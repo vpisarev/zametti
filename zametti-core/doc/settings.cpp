@@ -411,7 +411,27 @@ QFont codeLangFont() { return codeLangFont(g_settings.style()); }
 
 
 QByteArray defaultSettingsJson() {
-    return QJsonDocument(settingsToJson(ZSettings{})).toJson(QJsonDocument::Indented);
+    QJsonObject root = settingsToJson(ZSettings{});
+    // ТЕМА — ТАКАЯ ЖЕ ЧАСТЬ ОТВЕТА «что тут можно покрутить», как и остальное.
+    // Её ключи идут не через реестр (роли вложенные, и раскладывает их сама
+    // тема), но в дампе они обязаны быть: иначе про сорок ролей знал бы только
+    // тот, кто читал исходники.
+    QJsonObject theme{{QStringLiteral("extends"), QStringLiteral("light")}};
+    for (const ZTheme::RoleInfo& role : ZTheme::roles()) {
+        const QString text = role.light.alpha() == 255 ? role.light.name(QColor::HexRgb)
+                                                       : role.light.name(QColor::HexArgb);
+        const int dot = int(role.name.indexOf(QLatin1Char('.')));
+        if (dot < 0) {
+            theme.insert(role.name, text);
+            continue;
+        }
+        const QString group = role.name.left(dot);
+        QJsonObject inner = theme.value(group).toObject();
+        inner.insert(role.name.mid(dot + 1), text);
+        theme.insert(group, inner);
+    }
+    root.insert(QStringLiteral("theme"), theme);
+    return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
 
 namespace {

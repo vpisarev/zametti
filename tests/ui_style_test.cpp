@@ -40,8 +40,6 @@
 
 namespace {
 
-std::string s(const QString& q) { return q.toStdString(); }
-
 // Ступень масштаба оболочки живёт в state.json; набор правит её напрямую и
 // обязан вернуть как было — наборы идут одним процессом.
 struct WithInterfaceZoom {

@@ -67,14 +67,49 @@ Note for mac users: read `Cmd` when you see `Ctrl`.
 ## Settings
 
 There are several types of user settings, stored in different places:
-- `~/.config/zametti/config.json` - this is the file where you can configure how zametti looks and partially how it works. For the program it's a read-only file, only you edit it. To edit it, press `Settings` button on the toolbar or edit that file directly. It's inconvenient to start with an empty file, so you can run `zametti --dump-config` to get the initial fully-commented-off config, in which you can then uncomment and edit the sections and items that you want to alter. When you press `Settings` button and there is no config, the initial config with commented-off settings is automatically created, and then you edit it.
+- `~/.config/zametti/config.json` - this is the file where you can configure how zametti looks and partially how it works. For the program it's a read-only file, only you edit it. To edit it, press `Settings` button on the toolbar or edit that file directly. It's inconvenient to start with an empty file, so you can run `zametti --dump-config` to get the initial fully-commented-off config, in which you can then uncomment and edit the sections and items that you want to alter. When you press `Settings` button and there is no config, the initial config with commented-off settings is automatically created, and then you edit it. Every key there carries a one-line explanation of what it does. The sections are:
+  - `theme` — screen colors, see below;
+  - `fonts` — the note font, the monospace font, the shell font, heading steps and the size of formulas. `appSize` is the one number that drives the whole shell: the tree, the note list, the status bar, the dialogs, and even the size of the toolbar icons are derived from it;
+  - `layout` — column width, line height, spacing between blocks, list and quote indents;
+  - `editor`, `shortcuts` — autosave, tab width, the external editor, and the key for every command;
+  - `images`, `store`, `sync`, `pdf`, `logs` — the rest, each in its own place.
+
+  What is *not* there is deliberate: optical constants of the renderer (how a bullet sits on the baseline, the corner radius of a code plate) live in the code, and the colors live in the theme.
 - `~/.config/zametti/state.json` - this is the inter-session state that you normally want to preserve:
   - application window geometry. Some window managers don't let us to store the absolute position, they prefer to place windows as they wish. But the size is stored and then restored.
-  - zoom factor: press `Ctrl+=`, `Ctrl+-` to increase/decrease scale of the edited note view.
+  - four independent zoom levels: the rendered note, the markdown source mode, the history/diff view and the shell itself. `Ctrl+=`, `Ctrl+-`, `Ctrl+0` change the one you are looking at; `Ctrl+Alt+=`, `Ctrl+Alt+-`, `Ctrl+Alt+0` change the shell (toolbar, tree, note list, status bar, dialogs). One step is about 6%, twelve steps are exactly twice as large. The levels never multiply each other, and none of them affects PDF export. They live here rather than in the config because the comfortable size differs from machine to machine — the same laptop under a different OS, or with an external monitor attached, wants a different one.
   - name of the recently viewed notes and cursor positions there.
   - etc.
 - password for your storage is not stored as-is, but its Argon2id()-transformed representation is stored in the keychain and one of the components is stored in the cloud for verification. If you loose it, don't worry, just set the new password and re-upload your storage from one of your computers to the cloud again. That is, your notes will be lost only if you forgot the password and you erased all your local copies of the storage.
 - password for your cloud storage is normally stored in your system keychain service for automatic synchronization without having to enter password each time. If you forgot one, also don't panic, generate new password with your WebDav provider and update your keychain; no need to re-upload storage in this case.
+
+### Themes
+
+All the screen colors — the page, the caret, the selection, list bullets, the code plate,
+the toolbar icons, the status bar, markdown and JSON highlighting — are described by a
+*theme*: a set of named **roles** such as `background`, `foreground`, `accent`,
+`panelBackground` or `danger`. A role names a meaning, not a place, so one role usually
+paints several things at once — `panelBackground` covers both the toolbar and the status bar.
+
+The built-in theme is `light`. To tweak it, override the roles right in the config:
+
+```jsonc
+"theme": {
+    "extends": "light",
+    "accent": "#cc8822",
+    "selectionBackground": "#fae8a8"
+}
+```
+
+To keep a whole look of your own, put it in `~/.config/zametti/themes/<name>.json` and
+point the config at it with `"extends": "<name>"`. A theme file may itself extend another
+one; roles it does not mention stay as they were, so a three-line theme is a valid theme.
+An unknown theme name, a loop in `extends` and a misspelled role are all reported rather
+than silently ignored. Run `zametti --dump-config` to see every role with its default color
+and a word about what it paints.
+
+PDF export has its own colors (section `pdf`) and is not affected by the screen theme:
+a dark screen still prints on white paper.
 
 ## Running
 
@@ -123,6 +158,9 @@ Here is the list of keyboard shortcuts that are supported (mac users: read `Cmd+
 | Ctrl+= | increase zoom of the view |
 | Ctrl+- | decrease zoom of the view |
 | Ctrl+0 | reset zoom of the view to 1x |
+| Ctrl+Alt+= | make the interface (toolbar, panels, dialogs) bigger |
+| Ctrl+Alt+- | make the interface smaller |
+| Ctrl+Alt+0 | reset the interface size |
 | Ctrl+F | start search in the current note |
 | Ctrl+H | replace one text with another in the current note |
 | Ctrl+Shift+F | start search over all notes |
