@@ -172,11 +172,25 @@ void checkScalesDoNotMultiply(const QString& path) {
 
     {
         // Оболочка выросла вдвое — заметка не шелохнулась.
+        //
+        // ДЕЛАЕТСЯ РОВНО ТО, ЧТО ДЕЛАЕТ ОКНО: ступень плюс общий шрифт
+        // приложения (QApplication::setFont в applyAppearance). Первая
+        // редакция этой клетки ставила только ступень — и была пустышкой:
+        // течь шла как раз через общий шрифт. QTextEdit переносит шрифт
+        // виджета в документ на FontChange, и кегль оболочки затирал кегль
+        // заметки — на снимке живого окна текст рос вместе с тулбаром.
         WithInterfaceZoom twice(12);
+        const QFont had = QApplication::font();
+        QApplication::setFont(zametti::ZApp::instance().uiStyle().appFont());
+        QTest::qWait(20);
         ZT_TRUE("оболочка выросла",
                 zametti::ZApp::instance().uiStyle().iconSize() > iconAtZero);
-        ZT_TRUE("кегль заметки от масштаба оболочки не зависит",
+        ZT_TRUE("кегль заметки от масштаба оболочки не зависит: " +
+                    std::to_string(noteAtZero) + " → " +
+                    std::to_string(editor.document()->defaultFont().pointSizeF()),
                 std::fabs(editor.document()->defaultFont().pointSizeF() - noteAtZero) < 0.01);
+        QApplication::setFont(had);
+        QTest::qWait(20);
     }
 
     // Заметка выросла вдвое — оболочка не шелохнулась.
