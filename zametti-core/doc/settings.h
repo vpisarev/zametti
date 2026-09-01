@@ -449,10 +449,18 @@ struct ZSettings {
 
         // --- боковая панель ---
         // Гарнитура панели; пусто — та же, что у текста.
+        // КЕГЛЬ ОБОЛОЧКИ — ОДИН НА ВСЁ: дерево, список заметок, полоса
+        // сведений, панель поиска, диалоги и меню. Прежде их было три (панели
+        // 14, полоса сведений 12, иконка 24 точками), и подгонять их друг под
+        // друга приходилось руками: конфиг владельца состоял ровно из этих
+        // трёх строк — 11, 10 и 21. Одиннадцать и стало умолчанием, а
+        // остальное выводится из него постоянными отношениями (ui_style.h).
+        //
+        // Размеры, посчитанные отсюда, домножаются на СТУПЕНЬ МАСШТАБА
+        // ОБОЛОЧКИ (state.json, Ctrl+Alt+±) и ни на что другое: масштаб текста
+        // заметки сюда не входит.
         ZM_SETTING_PLAIN(QString, sidebarFontFamily, SidebarFontFamily, QStringLiteral("IBM Plex Sans SemiCondensed"))
-        ZM_SETTING(qreal, sidebarFontPoint, SidebarFontPoint, 14.0, 4.0, 48.0)
-        // Высота строки списка, долей от высоты шрифта панели.
-        ZM_SETTING(qreal, sidebarLineHeightFactor, SidebarLineHeightFactor, 1.6, 0.5, 4.0)
+        ZM_SETTING(qreal, sidebarFontPoint, SidebarFontPoint, 11.0, 4.0, 48.0)
         // Значки строк дерева — иконки Lucide из ресурсов (folder, folder-open,
         // trash-2). Прежде здесь стоял знак из шрифта, и ради него в настройках
         // жили три ключа: гарнитура «Noto Emoji», знак закрытой папки и знак
@@ -461,22 +469,15 @@ struct ZSettings {
         // появились, ключи убраны. Остались цвет и размер: они про то, КАК значок
         // выглядит, а не про то, ОТКУДА он берётся.
         ZM_SETTING_PLAIN(QColor, sidebarFolderColor, SidebarFolderColor, 0x1a, 0x1a, 0x1a)
-        // Доля от кегля панели: значок растёт вместе со строкой.
-        ZM_SETTING(qreal, sidebarFolderScale, SidebarFolderScale, 1.05, 0.2, 4.0)
         // Ширина при первом запуске, дальше её помнит state.json.
         ZM_SETTING(int, sidebarWidth, SidebarWidth, 260, 60, 2000)
 
         // --- тулбар ---
-        // Сторона иконки в ТОЧКАХ ИНТЕРФЕЙСА, не в пикселях: в пиксели она
-        // переводится домножением на devicePixelRatio окна, и рисуется сразу в
-        // нужном разрешении. Отрисовать в 20 пикселей и растянуть — то же самое
-        // мыло, из-за которого на этапе 8 расползались картинки.
-        ZM_SETTING(int, toolbarIconSize, ToolbarIconSize, 24, 12, 64)
-        // Поле вокруг иконки внутри кнопки и промежуток между смысловыми группами.
-        // Группы разделяются пустотой, а не чертой: черта в маленьком тулбаре
-        // спорит с самими иконками за внимание.
-        ZM_SETTING(int, toolbarButtonPadding, ToolbarButtonPadding, 6, 0, 64)
-        ZM_SETTING(int, toolbarGroupSpacing, ToolbarGroupSpacing, 16, 0, 200)
+        // РАЗМЕРОВ ЗДЕСЬ НЕТ: сторона иконки, поле вокруг неё внутри кнопки и
+        // промежуток между смысловыми группами выводятся из кегля оболочки
+        // (ui_style.h). Иконка — две высоты заглавной «A», и это замер, а не
+        // вкус. Группы разделяются пустотой, а не чертой: черта в маленьком
+        // тулбаре спорит с самими иконками за внимание.
         ZM_SETTING_PLAIN(QColor, toolbarBackground, ToolbarBackground, 0xf5, 0xf5, 0xf2)
         // Штрих у Lucide тонкий (2 единицы из 24), и на серо-синем 4a5159 иконка
         // читалась выцветшей — особенно на маке, где та же точка интерфейса крупнее.
@@ -499,13 +500,9 @@ struct ZSettings {
         ZM_SETTING_PLAIN(QColor, toolbarSeparatorColor, ToolbarSeparatorColor, 0xdd, 0xe1, 0xe5)
 
         // --- полоса сведений под окном ---
-        // Кегль мельче основного текста: это справка, а не содержание. Шрифт свой
-        // (не текстовый): цифры в панели должны стоять столбиком при смене числа,
-        // а не прыгать по ширине.
-        ZM_SETTING_PLAIN(QString, statusFamily, StatusFamily, QStringLiteral("IBM Plex Sans SemiCondensed"))
-        ZM_SETTING(int, statusFontPoints, StatusFontPoints, 12, 6, 24)
-        ZM_SETTING(int, statusPadding, StatusPadding, 10, 0, 100)
-        ZM_SETTING(int, statusPaddingTop, StatusPaddingTop, 4, 0, 100)
+        // Кегль мельче панельного (постоянное отношение в ui_style.h): это
+        // справка, а не содержание. Гарнитура — общая гарнитура оболочки; своей
+        // у полосы больше нет.
         ZM_SETTING_PLAIN(QColor, statusBackground, StatusBackground, 0xf5, 0xf5, 0xf2)
         ZM_SETTING_PLAIN(QColor, statusTextColor, StatusTextColor, 0x6b, 0x71, 0x79)
         ZM_SETTING_PLAIN(QColor, statusSeparatorColor, StatusSeparatorColor, 0xdd, 0xe1, 0xe5)
@@ -520,9 +517,8 @@ struct ZSettings {
         ZM_SETTING_PLAIN(QColor, noteListDateColor, NoteListDateColor, 0x8a, 0x90, 0x98)
 
         // --- панель поиска ---
-        // Прибавка к кеглю боковой панели: поле, в которое печатают, читается
-        // хуже подписи, на которую только смотрят.
-        ZM_SETTING(qreal, findFontDelta, FindFontDelta, 2.0, -10.0, 20.0)
+        // Кегль поля поиска — чуть крупнее панельного (ui_style.h): в него
+        // печатают, а не смотрят на него.
         // Недописанное выражение: буквы запроса краснеют, и это всё — ни слова
         // об ошибке нигде (решение владельца). Фон поля не трогается.
         ZM_SETTING_PLAIN(QColor, findBadPatternColor, FindBadPatternColor, 0xc0, 0x28, 0x28)

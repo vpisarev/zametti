@@ -133,6 +133,8 @@ add_library(zametti-ui STATIC
     settings_controller.cpp
     zapp.h
     zapp.cpp
+    ui_style.h
+    ui_style.cpp
     lang_editor.h
     lang_editor.cpp
     caption_editor.h

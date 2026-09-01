@@ -655,11 +655,7 @@ int main(int argc, char** argv) {
     QListView& listView = panels.listView();
 
 
-    QFont sidebarFont(zametti::settings().ui().sidebarFontFamily().isEmpty()
-                          ? zametti::settings().style().fontFamily()
-                          : zametti::settings().ui().sidebarFontFamily());
-    sidebarFont.setPointSizeF(zametti::settings().ui().sidebarFontPoint());
-    panels.setSidebarFont(sidebarFont);
+    panels.setSidebarFont(zapp.uiStyle().appFont());
 
     // Правая сторона — заметка, под ней список найденного (появляется только у
     // поиска по всему хранилищу) и панель поиска у самого низа, как в Sublime.
@@ -681,7 +677,7 @@ int main(int argc, char** argv) {
         layout->setSpacing(0);
         resultsView.setModel(&results);
         resultsView.setItemDelegate(&resultsDelegate);
-        resultsView.setFont(sidebarFont);
+        resultsView.setFont(zapp.uiStyle().appFont());
         resultsView.setUniformItemSizes(false);
         resultsView.setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         resultsView.setMaximumHeight(240);
@@ -689,7 +685,7 @@ int main(int argc, char** argv) {
 
         // Режим истории: вид истории (баннер над разностью и списком записей)
         // НА МЕСТЕ редактора; вне режима его нет вовсе — тем режим и громкий.
-        historyView.list().setFont(sidebarFont);
+        historyView.list().setFont(zapp.uiStyle().appFont());
         textStack.addWidget(&editor);
         textStack.addWidget(&archiveView);
         textStack.addWidget(&docView);
@@ -723,10 +719,13 @@ int main(int argc, char** argv) {
         // Qt рисуют подсветку палитрой приложения). Первым делом: виды ниже
         // ставят поверх свои палитры, и они должны лечь на уже верный фон.
         zametti::applySelectionPaletteToApp(zametti::settings().style());
-        QFont font(zametti::settings().ui().sidebarFontFamily().isEmpty()
-                       ? zametti::settings().style().fontFamily()
-                       : zametti::settings().ui().sidebarFontFamily());
-        font.setPointSizeF(zametti::settings().ui().sidebarFontPoint());
+        // ШРИФТ ОБОЛОЧКИ — ВСЕЙ ПРОГРАММЕ. Прежде общего QApplication::setFont
+        // не было вовсе: свои виджеты брали кегль из настроек, а меню,
+        // подсказки, кнопки диалогов и полоса истории оставались с системным —
+        // и часть окна не ехала вместе с остальной. Ставится ПЕРВЫМ: виджеты
+        // ниже кладут поверх свои шрифты, и они должны лечь на верный общий.
+        const QFont font = zapp.uiStyle().appFont();
+        QApplication::setFont(font);
         panels.setSidebarFont(font);
         resultsView.setFont(font);
         historyView.list().setFont(font);
@@ -739,6 +738,7 @@ int main(int argc, char** argv) {
 
         toolbar.refreshAppearance();
         statusBar.refreshAppearance();
+        findBar.refreshAppearance();
         editor.refreshAppearance();
         history.refreshAppearance();
         markdown.refreshAppearance();
@@ -1091,6 +1091,27 @@ int main(int argc, char** argv) {
     shortcut(QKeySequence(QStringLiteral("Ctrl++")), [&] { stepZoom(+1); });
     shortcut(QKeySequence(QStringLiteral("Ctrl+-")), [&] { stepZoom(-1); });
     shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] { setZoomSteps(zoomTarget(), 0); });
+
+    // МАСШТАБ ОБОЛОЧКИ — ОТДЕЛЬНАЯ РУЧКА, Ctrl+Alt+±. Тулбар, дерево, список,
+    // полоса сведений, панель поиска и диалоги; текста заметки он не касается,
+    // и на бумагу не влияет вовсе.
+    //
+    // Он нужен потому, что «из коробки» на разных машинах выходит по-разному:
+    // на 4K с системным масштабом 2× надписи мелковаты, под Windows на том же
+    // ноутбуке — крупноваты. Это не обход ошибок Qt (системное
+    // масштабирование делает оно и делает верно), а личная поправка поверх —
+    // и потому живёт в state.json, рядом с прочим, что у каждой машины своё.
+    auto stepInterfaceZoom = [&](int delta) {
+        zapp.state().setInterfaceZoom(zapp.state().interfaceZoom() + delta);
+        applyAppearance();
+    };
+    shortcut(QKeySequence(QStringLiteral("Ctrl+Alt+=")), [&] { stepInterfaceZoom(+1); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+Alt++")), [&] { stepInterfaceZoom(+1); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+Alt+-")), [&] { stepInterfaceZoom(-1); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+Alt+0")), [&] {
+        zapp.state().setInterfaceZoom(0);
+        applyAppearance();
+    });
 
     // Отмена и повтор живут в самом редакторе: QTextEdit объявляет их своими и
     // до ярлыка окна они не доходят.

@@ -3,6 +3,7 @@
 #include "settings.h"
 
 #include "icons.h"
+#include "zapp.h"
 
 #include <QApplication>
 #include <QFontMetrics>
@@ -108,12 +109,18 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
         emit closed();
     });
 
+    refreshAppearance();
+    hide();
+}
+
+// ОБЛИК ПЕРЕЧИТЫВАЕТСЯ, А НЕ СТАВИТСЯ ОДИН РАЗ. Прежде шрифт и значки панели
+// поиска задавались в конструкторе, и правка конфига до них не доходила вовсе
+// — а с масштабом оболочки (Ctrl+Alt+±) панель осталась бы единственным
+// местом окна, которое не поехало.
+void FindBar::refreshAppearance() {
     // Кегль чуть крупнее панельного: в поле поиска печатают, а не смотрят на
-    // него, и мелкий шрифт здесь читается хуже. Прибавка — в конфиге.
-    QFont panelFont(settings().ui().sidebarFontFamily().isEmpty()
-                        ? settings().style().fontFamily()
-                        : settings().ui().sidebarFontFamily());
-    panelFont.setPointSizeF(settings().ui().sidebarFontPoint() + settings().ui().findFontDelta());
+    // него, и мелкий шрифт здесь читается хуже (ui_style.h).
+    const QFont panelFont = ZApp::instance().uiStyle().findFont();
     setFont(panelFont);
     restyleButtons();
     // ПОЛЯМ — НИЖНЯЯ ГРАНИЦА. В узком окне растяжки делили остаток так, что от
@@ -123,7 +130,6 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     const int minField = QFontMetrics(panelFont).horizontalAdvance(QLatin1Char('0')) * 10;
     find_->setMinimumWidth(minField);
     replace_->setMinimumWidth(minField);
-    hide();
 }
 
 // Значки кнопок — теми же средствами, что у тулбара: цвет из настроек,
@@ -135,7 +141,7 @@ void FindBar::restyleButtons() {
     const qreal dpr = window() && window()->windowHandle()
                           ? window()->windowHandle()->devicePixelRatio()
                           : devicePixelRatioF();
-    const int size = a.ui().toolbarIconSize();
+    const int size = ZApp::instance().uiStyle().iconSize();
     const auto make = [&](const QString& name) {
         QIcon icon;
         icon.addPixmap(toolbarIcon(name, size, a.ui().toolbarIconColor(), dpr), QIcon::Normal,

@@ -23,6 +23,7 @@
 #include "app_state.h"
 #include "settings.h"
 #include "zimage_cache.h"
+#include "ui_style.h"
 #include "zstorage.h"
 #include "zstorage_manager.h"
 
@@ -52,6 +53,20 @@ public:
     // Перечитать конфиг (первый раз — при старте, потом — по сторожу файла).
     // Ложь — файл битый, настройки прежние; объяснение в error.
     bool reloadSettings(QString* error, QStringList* unknown = nullptr);
+
+    // --- размеры оболочки ---------------------------------------------------
+    // ZUiStyle — ОДИН ответ на «какого размера интерфейс»: шрифт панелей,
+    // полосы сведений и поиска, сторона иконки, поля кнопок. Всё выводится из
+    // кегля интерфейса и ступени МАСШТАБА ОБОЛОЧКИ (state.json), которая с
+    // масштабом текста не перемножается никогда.
+    //
+    // Спрашивать его надо через uiStyle(): он сам пересчитается, если кегль
+    // или ступень с прошлого раза изменились, — так порядок «загрузили шрифты,
+    // прочитали конфиг, поставили масштаб» перестаёт быть чьей-то заботой.
+    const ZUiStyle& uiStyle() {
+        ui_.update(settings(), state_.interfaceZoom());
+        return ui_;
+    }
 
     // --- состояние сеанса (state.json) --------------------------------------
     // ZAppState прочитано один раз при создании; окно правит поля и зовёт
@@ -136,6 +151,7 @@ protected:
     std::vector<ZStorage::VirtualNote> infoNotes_;
     bool infoReady_ = false;
     ZImageCache images_;
+    ZUiStyle ui_;
     QHash<IconKey, QPixmap> icons_;
 };
 

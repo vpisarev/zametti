@@ -1,10 +1,12 @@
 #include "toolbar.h"
 
 #include "icons.h"
+#include "zapp.h"
 #include "settings.h"
 
 #include <QEvent>
 #include <QHBoxLayout>
+#include <QSpacerItem>
 #include <QIcon>
 #include <QPainter>
 #include <QToolButton>
@@ -128,14 +130,16 @@ Toolbar::Toolbar(QWidget* parent) : QWidget(parent) {
 
 void Toolbar::build() {
     auto* layout = new QHBoxLayout(this);
-    const ZSettings& a = settings();
-    layout->setContentsMargins(a.ui().toolbarGroupSpacing() / 2, 4, a.ui().toolbarGroupSpacing() / 2, 4);
     layout->setSpacing(0);
 
     int previousGroup = -1;
     for (const Spec& spec : kSpecs) {
-        if (previousGroup >= 0 && spec.group != previousGroup)
-            layout->addSpacing(a.ui().toolbarGroupSpacing());
+        if (previousGroup >= 0 && spec.group != previousGroup) {
+            // Величину промежутка ставит restyle(): она выводится из кегля
+            // интерфейса и живёт, пока живёт полоса.
+            layout->addSpacing(0);
+            groupGaps_.append(layout->itemAt(layout->count() - 1)->spacerItem());
+        }
         previousGroup = spec.group;
 
         auto* button = new QToolButton(this);
@@ -165,7 +169,19 @@ void Toolbar::restyle() {
                           ? window()->windowHandle()->devicePixelRatio()
                           : devicePixelRatioF();
 
-    const int side = a.ui().toolbarIconSize() + 2 * a.ui().toolbarButtonPadding();
+    // РАЗМЕРЫ — ИЗ ОДНОГО МЕСТА (ui_style.h): сторона иконки выводится из
+    // кегля интерфейса, поля кнопки — из стороны иконки. Своих чисел у полосы
+    // больше нет ни одного.
+    const ZUiStyle& ui = ZApp::instance().uiStyle();
+    const int iconSide = ui.iconSize();
+    const int side = iconSide + 2 * ui.buttonPadding();
+    if (auto* layout = qobject_cast<QHBoxLayout*>(this->layout())) {
+        layout->setContentsMargins(ui.groupSpacing() / 2, ui.toolbarMargin(),
+                                   ui.groupSpacing() / 2, ui.toolbarMargin());
+        for (QSpacerItem* gap : groupGaps_)
+            gap->changeSize(ui.groupSpacing(), 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
+        layout->invalidate();
+    }
     for (const Spec& spec : kSpecs) {
         QToolButton* button = buttons_.value(int(spec.id));
         if (!button) continue;
@@ -177,22 +193,22 @@ void Toolbar::restyle() {
                                                                    : a.ui().toolbarIconOnColor();
 
         QIcon icon;
-        icon.addPixmap(toolbarIcon(name, a.ui().toolbarIconSize(), a.ui().toolbarIconColor(), dpr),
+        icon.addPixmap(toolbarIcon(name, iconSide, a.ui().toolbarIconColor(), dpr),
                        QIcon::Normal, QIcon::Off);
-        icon.addPixmap(toolbarIcon(name, a.ui().toolbarIconSize(), a.ui().toolbarIconHoverColor(), dpr),
+        icon.addPixmap(toolbarIcon(name, iconSide, a.ui().toolbarIconHoverColor(), dpr),
                        QIcon::Active, QIcon::Off);
-        icon.addPixmap(toolbarIcon(name, a.ui().toolbarIconSize(), a.ui().toolbarIconDisabledColor(), dpr),
+        icon.addPixmap(toolbarIcon(name, iconSide, a.ui().toolbarIconDisabledColor(), dpr),
                        QIcon::Disabled, QIcon::Off);
         // Нажатое состояние переключателя — цветом. Рамка на иконке в двадцать
         // точек спорит с самим рисунком, а цвет виден сразу и издалека.
-        icon.addPixmap(toolbarIcon(name, a.ui().toolbarIconSize(), onColour, dpr),
+        icon.addPixmap(toolbarIcon(name, iconSide, onColour, dpr),
                        QIcon::Normal, QIcon::On);
-        icon.addPixmap(toolbarIcon(name, a.ui().toolbarIconSize(), onColour, dpr),
+        icon.addPixmap(toolbarIcon(name, iconSide, onColour, dpr),
                        QIcon::Active, QIcon::On);
-        icon.addPixmap(toolbarIcon(name, a.ui().toolbarIconSize(), a.ui().toolbarIconDisabledColor(), dpr),
+        icon.addPixmap(toolbarIcon(name, iconSide, a.ui().toolbarIconDisabledColor(), dpr),
                        QIcon::Disabled, QIcon::On);
         button->setIcon(icon);
-        button->setIconSize(QSize(a.ui().toolbarIconSize(), a.ui().toolbarIconSize()));
+        button->setIconSize(QSize(iconSide, iconSide));
         button->setFixedSize(side, side);
     }
 

@@ -10,6 +10,7 @@
 #include "document.h"
 #include "note_id.h"
 #include "settings.h"
+#include "zapp.h"
 
 #include <QCollator>
 #include <QDateTime>
@@ -411,10 +412,8 @@ QPixmap rowPixmap(const QString& icon) {
     const ZSettings& a = settings();
     const qreal dpr = qGuiApp != nullptr ? qGuiApp->devicePixelRatio() : 1.0;
 
-    QFont font;
-    font.setPointSizeF(a.ui().sidebarFontPoint() * a.ui().sidebarFolderScale());
-    const int side = QFontMetrics(font).height();
-    return toolbarIcon(icon, side, a.ui().sidebarFolderColor(), dpr);
+    return toolbarIcon(icon, ZApp::instance().uiStyle().folderIconSize(),
+                       a.ui().sidebarFolderColor(), dpr);
 }
 
 const NoteTreeModel::Node* nodeOf(const QModelIndex& index, const NoteTreeModel::Node* root) {
@@ -1333,7 +1332,7 @@ QSize NoteTreeDelegate::sizeHint(const QStyleOptionViewItem& option,
                                  const QModelIndex& index) const {
     QSize size = QStyledItemDelegate::sizeHint(option, index);
     const qreal height =
-        QFontMetricsF(option.font).height() * settings().ui().sidebarLineHeightFactor();
+        QFontMetricsF(option.font).height() * ZApp::instance().uiStyle().rowHeightFactor();
     size.setHeight(int(height + 0.5));
     return size;
 }

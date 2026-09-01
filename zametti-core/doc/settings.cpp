@@ -241,10 +241,8 @@ QJsonObject settingsToJson(const ZSettings& a) {
     QJsonObject sidebar{
         {QStringLiteral("fontFamily"), a.ui().sidebarFontFamily()},
         {QStringLiteral("fontSize"), a.ui().sidebarFontPoint()},
-        {QStringLiteral("lineHeightFactor"), a.ui().sidebarLineHeightFactor()},
         {QStringLiteral("width"), a.ui().sidebarWidth()},
         {QStringLiteral("folderColor"), colorToString(a.ui().sidebarFolderColor())},
-        {QStringLiteral("folderScale"), a.ui().sidebarFolderScale()},
     };
 
     QJsonObject imageSelection{
@@ -264,19 +262,12 @@ QJsonObject settingsToJson(const ZSettings& a) {
     };
 
     QJsonObject statusBar{
-        {QStringLiteral("family"), a.ui().statusFamily()},
-        {QStringLiteral("fontPoints"), a.ui().statusFontPoints()},
-        {QStringLiteral("padding"), a.ui().statusPadding()},
-        {QStringLiteral("paddingTop"), a.ui().statusPaddingTop()},
         {QStringLiteral("background"), colorToString(a.ui().statusBackground())},
         {QStringLiteral("textColor"), colorToString(a.ui().statusTextColor())},
         {QStringLiteral("separatorColor"), colorToString(a.ui().statusSeparatorColor())},
     };
 
     QJsonObject toolbar{
-        {QStringLiteral("iconSize"), a.ui().toolbarIconSize()},
-        {QStringLiteral("buttonPadding"), a.ui().toolbarButtonPadding()},
-        {QStringLiteral("groupSpacing"), a.ui().toolbarGroupSpacing()},
         {QStringLiteral("background"), colorToString(a.ui().toolbarBackground())},
         {QStringLiteral("iconColor"), colorToString(a.ui().toolbarIconColor())},
         {QStringLiteral("iconHoverColor"), colorToString(a.ui().toolbarIconHoverColor())},
@@ -288,7 +279,6 @@ QJsonObject settingsToJson(const ZSettings& a) {
     };
 
     QJsonObject find{
-        {QStringLiteral("fontDelta"), a.ui().findFontDelta()},
         {QStringLiteral("badPatternColor"), colorToString(a.ui().findBadPatternColor())},
         {QStringLiteral("matchLimit"), a.ui().findMatchLimit()},
         {QStringLiteral("historyLimit"), a.ui().findHistoryLimit()},
@@ -613,9 +603,7 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     const QJsonObject sidebar = root.value(QStringLiteral("sidebar")).toObject();
     readString(sidebar, "fontFamily", a.ui(), &ZSettings::Ui::setSidebarFontFamily);
     readReal(sidebar, "fontSize", a.ui(), &ZSettings::Ui::setSidebarFontPoint);
-    readReal(sidebar, "lineHeightFactor", a.ui(), &ZSettings::Ui::setSidebarLineHeightFactor);
     readColor(sidebar, "folderColor", a.ui(), &ZSettings::Ui::setSidebarFolderColor);
-    readReal(sidebar, "folderScale", a.ui(), &ZSettings::Ui::setSidebarFolderScale);
     readInt(sidebar, "width", a.ui(), &ZSettings::Ui::setSidebarWidth);
     const QJsonObject imageSelection =
         root.value(QStringLiteral("imageSelection")).toObject();
@@ -640,22 +628,11 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     }
 
     const QJsonObject statusBar = root.value(QStringLiteral("statusBar")).toObject();
-    const QJsonValue statusFamily = statusBar.value(QStringLiteral("family"));
-    if (statusFamily.isString()) a.ui().setStatusFamily(statusFamily.toString());
-    readInt(statusBar, "fontPoints", a.ui(), &ZSettings::Ui::setStatusFontPoints);
-    readInt(statusBar, "padding", a.ui(), &ZSettings::Ui::setStatusPadding);
-    readInt(statusBar, "paddingTop", a.ui(), &ZSettings::Ui::setStatusPaddingTop);
     readColor(statusBar, "background", a.ui(), &ZSettings::Ui::setStatusBackground);
     readColor(statusBar, "textColor", a.ui(), &ZSettings::Ui::setStatusTextColor);
     readColor(statusBar, "separatorColor", a.ui(), &ZSettings::Ui::setStatusSeparatorColor);
 
     const QJsonObject toolbar = root.value(QStringLiteral("toolbar")).toObject();
-    // Иконка меньше двенадцати точек перестаёт читаться, больше шестидесяти
-    // ломает высоту тулбара; границы — у самой настройки (ZM_SETTING в
-    // settings.h), как и у всех остальных чисел.
-    readInt(toolbar, "iconSize", a.ui(), &ZSettings::Ui::setToolbarIconSize);
-    readInt(toolbar, "buttonPadding", a.ui(), &ZSettings::Ui::setToolbarButtonPadding);
-    readInt(toolbar, "groupSpacing", a.ui(), &ZSettings::Ui::setToolbarGroupSpacing);
     readColor(toolbar, "background", a.ui(), &ZSettings::Ui::setToolbarBackground);
     readColor(toolbar, "iconColor", a.ui(), &ZSettings::Ui::setToolbarIconColor);
     readColor(toolbar, "iconHoverColor", a.ui(), &ZSettings::Ui::setToolbarIconHoverColor);
@@ -666,7 +643,6 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readColor(toolbar, "separatorColor", a.ui(), &ZSettings::Ui::setToolbarSeparatorColor);
 
     const QJsonObject find = root.value(QStringLiteral("find")).toObject();
-    readReal(find, "fontDelta", a.ui(), &ZSettings::Ui::setFindFontDelta);
     readColor(find, "badPatternColor", a.ui(), &ZSettings::Ui::setFindBadPatternColor);
     readInt(find, "matchLimit", a.ui(), &ZSettings::Ui::setFindMatchLimit);
     readInt(find, "historyLimit", a.ui(), &ZSettings::Ui::setFindHistoryLimit);

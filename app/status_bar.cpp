@@ -2,6 +2,7 @@
 
 #include "doc_model.h"
 #include "settings.h"
+#include "zapp.h"
 
 #include <QFileInfo>
 #include <QFontMetrics>
@@ -57,9 +58,12 @@ StatusBar::StatusBar(QWidget* parent) : QWidget(parent) {
 
 void StatusBar::refreshAppearance() {
     const ZSettings& a = settings();
-    QFont font(a.ui().statusFamily(), a.ui().statusFontPoints());
-    left_->setFont(font);
-    right_->setFont(font);
+    // Шрифт и поля — из общего расчёта оболочки (ui_style.h): своего кегля у
+    // полосы больше нет, она мельче панелей на постоянное отношение и растёт
+    // вместе с ними при Ctrl+Alt+±.
+    const ZUiStyle& ui = ZApp::instance().uiStyle();
+    left_->setFont(ui.statusFont());
+    right_->setFont(ui.statusFont());
 
     const QString colour = a.ui().statusTextColor().name(QColor::HexRgb);
     left_->setStyleSheet(QStringLiteral("color: %1;").arg(colour));
@@ -67,9 +71,9 @@ void StatusBar::refreshAppearance() {
 
     auto* layout = qobject_cast<QHBoxLayout*>(this->layout());
     if (layout != nullptr) {
-        layout->setContentsMargins(a.ui().statusPadding(), a.ui().statusPaddingTop(), a.ui().statusPadding(),
-                                   a.ui().statusPaddingTop());
-        layout->setSpacing(a.ui().statusPadding());
+        layout->setContentsMargins(ui.statusPadding(), ui.statusPaddingTop(),
+                                   ui.statusPadding(), ui.statusPaddingTop());
+        layout->setSpacing(ui.statusPadding());
     }
     setAutoFillBackground(true);
     QPalette pal = palette();
