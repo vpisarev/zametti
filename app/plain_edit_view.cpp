@@ -6,6 +6,7 @@
 
 #include "note_view.h"   // applyPalette, caretShouldBeDrawn — правила у всех видов одни
 #include "settings.h"
+#include "zoom_scale.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QColor>
@@ -239,7 +240,8 @@ QColor PlainEditView::wrapMarkColor() const { return settings().markdownHighligh
 
 void PlainEditView::applyZoom(qreal zoom) {
     const ZDocStyle& style = settings().style();
-    zoom_ = qBound(settings().ui().zoomMin(), zoom, settings().ui().zoomMax());
+    // Края шкалы — свойство программы, а не настройка (zoom_scale.h).
+    zoom_ = qBound(zoomScale(kZoomStepsMin), zoom, zoomScale(kZoomStepsMax));
 
     // ГАРНИТУРА КОДА: плоский текст читают как код — по колонкам, и
     // пропорциональный шрифт сбил бы и таблицы, и отступы.

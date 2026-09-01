@@ -37,6 +37,39 @@ bool ZAppState::knowsCaret(const QString& noteId) const {
     return false;
 }
 
+// ЧЕТЫРЕ СТУПЕНИ МАСШТАБА — СВОЕЙ СЕКЦИЕЙ, и это же отличает их от старого
+// файла. Прежде масштабы лежали в корне дробными числами (zoom: 1.1,
+// plainZoom, historyZoom, ещё раньше markdownZoom); теперь в корне лежит
+// ОБЪЕКТ zoom с целыми ступенями. Разобрать одно от другого можно ровно по
+// виду значения — число это или объект, — и никак иначе: в JSON «2» одинаково
+// годится и на двойной множитель, и на две ступени.
+void ZAppState::readZoom(const QJsonObject& root) {
+    const QJsonValue zoom = root.value(QStringLiteral("zoom"));
+    if (zoom.isObject()) {
+        const QJsonObject steps = zoom.toObject();
+        setNoteZoom(steps.value(QStringLiteral("note")).toInt(0));
+        setSourceZoom(steps.value(QStringLiteral("source")).toInt(0));
+        // Нет своей ступени — берём ступень заметки: режим истории открывается
+        // тем же кеглем, каким человек читает саму заметку.
+        setHistoryZoom(steps.value(QStringLiteral("history")).toInt(noteZoom()));
+        setInterfaceZoom(steps.value(QStringLiteral("interface")).toInt(0));
+        return;
+    }
+
+    // Старый файл: множители переводим в ступени. Числа при этом слегка
+    // округляются (1.1 — это не ровно ступень, а 1.98 от неё), и это верно:
+    // шкала теперь одна, и промежуточных множителей на ней не бывает.
+    setNoteZoom(zoomStepsFor(zoom.toDouble(1.0)));
+    const QJsonValue source = root.contains(QStringLiteral("plainZoom"))
+                                  ? root.value(QStringLiteral("plainZoom"))
+                                  : root.value(QStringLiteral("markdownZoom"));
+    setSourceZoom(zoomStepsFor(source.toDouble(1.0)));
+    setHistoryZoom(zoomStepsFor(root.value(QStringLiteral("historyZoom"))
+                                    .toDouble(zoom.toDouble(1.0))));
+    // Масштаба оболочки в старых файлах не было вовсе — ступень нулевая.
+    setInterfaceZoom(0);
+}
+
 ZAppState ZAppState::load(ZStorageManager* stores) {
     ZAppState session;
     QFile file(path());
@@ -51,20 +84,13 @@ ZAppState ZAppState::load(ZStorageManager* stores) {
     session.setTreeSort(root.value(QStringLiteral("treeSort")).toString());
     session.setCaret(root.value(QStringLiteral("caret")).toInt(0));
     session.setAnchor(root.value(QStringLiteral("anchor")).toInt(session.caret()));
-    session.setZoom(root.value(QStringLiteral("zoom")).toDouble(1.0));
+    session.readZoom(root);
     session.setWindowGeometry(QByteArray::fromBase64(
         root.value(QStringLiteral("windowGeometry")).toString().toLatin1()));
     session.setSplitterState(QByteArray::fromBase64(
         root.value(QStringLiteral("splitterState")).toString().toLatin1()));
     session.setPanelsHidden(root.value(QStringLiteral("panelsHidden")).toBool(false));
     session.setMarkdownMode(root.value(QStringLiteral("markdownMode")).toBool(false));
-    // Ленивая миграция: прежде масштаб исходника звался markdownZoom, а у
-    // правки настроек был свой. Новый ключ один; нет его — берём старый.
-    session.setPlainZoom(root.value(QStringLiteral("plainZoom"))
-                             .toDouble(root.value(QStringLiteral("markdownZoom")).toDouble(1.0)));
-    // Масштаб истории: нет ключа — берём масштаб заметки, чтобы режим открылся
-    // тем же кеглем, каким человек читает саму заметку.
-    session.setHistoryZoom(root.value(QStringLiteral("historyZoom")).toDouble(session.zoom()));
     session.setHistoryListWidth(root.value(QStringLiteral("historyListWidth")).toInt(0));
     session.setExportDir(root.value(QStringLiteral("exportDir")).toString());
     session.setExportKeepMeta(root.value(QStringLiteral("exportKeepMeta")).toBool(false));
@@ -113,15 +139,17 @@ void ZAppState::save(const ZStorageManager& stores) const {
                   {QStringLiteral("treeSort"), session.treeSort()},
                   {QStringLiteral("caret"), session.caret()},
                   {QStringLiteral("anchor"), session.anchor()},
-                  {QStringLiteral("zoom"), session.zoom()},
+                  {QStringLiteral("zoom"),
+                   QJsonObject{{QStringLiteral("note"), session.noteZoom()},
+                               {QStringLiteral("source"), session.sourceZoom()},
+                               {QStringLiteral("history"), session.historyZoom()},
+                               {QStringLiteral("interface"), session.interfaceZoom()}}},
                   {QStringLiteral("windowGeometry"),
                    QString::fromLatin1(session.windowGeometry().toBase64())},
                   {QStringLiteral("splitterState"),
                    QString::fromLatin1(session.splitterState().toBase64())},
                   {QStringLiteral("panelsHidden"), session.panelsHidden()},
                   {QStringLiteral("markdownMode"), session.markdownMode()},
-                  {QStringLiteral("plainZoom"), session.plainZoom()},
-                  {QStringLiteral("historyZoom"), session.historyZoom()},
                   {QStringLiteral("historyListWidth"), session.historyListWidth()},
                   {QStringLiteral("exportDir"), session.exportDir()},
                   {QStringLiteral("exportKeepMeta"), session.exportKeepMeta()},

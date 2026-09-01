@@ -15,6 +15,7 @@
 #include "history_panel.h"
 #include "reader_view.h"
 #include "toolbar_controller.h"
+#include "zoom_scale.h"
 #include "zoom_target.h"
 #include "history_view.h"
 #include "image_viewer.h"
@@ -990,8 +991,7 @@ int main(int argc, char** argv) {
     // Кегль задан явно в каждом формате, поэтому штатный зум QTextEdit до него
     // не дотягивается: при смене масштаба документ собирается заново из того же
     // содержимого. В историю правок это не попадает — облик не содержимое.
-    editor.setZoom(std::clamp(session.zoom(), zametti::settings().ui().zoomMin(),
-                              zametti::settings().ui().zoomMax()));
+    editor.setZoom(zametti::zoomScale(session.noteZoom()));
 
     // МЕСТО КАРЕТКИ, ПЕРЕЖИВШЕЕ ПЕРЕЗАПУСК, — В ПАМЯТЬ РЕДАКТОРА, до открытия.
     // Дальше заметка открывается обычной дорогой и встаёт туда же, где её
@@ -1060,24 +1060,37 @@ int main(int argc, char** argv) {
                 return;
         }
     };
-    auto stepZoom = [&](qreal factor) {
-        // От чего шагаем — от масштаба ТОГО ЖЕ, кому и применим.
-        const qreal now = zoomTarget() == zametti::ZoomTarget::Plain ? markdownView.zoom()
-                          : zoomTarget() == zametti::ZoomTarget::History
-                              ? historyView.textView().zoom()
-                              : editor.zoom();
-
-        applyZoom(std::clamp(now * factor, zametti::settings().ui().zoomMin(),
-                             zametti::settings().ui().zoomMax()));
+    // СТУПЕНЬ, А НЕ МНОЖИТЕЛЬ, И ИСТИНА ЖИВЁТ В ZAppState (zoom_scale.h).
+    // Прежде шаг был «домножить нынешний масштаб на 1.1», и произведение само
+    // становилось источником правды для следующего нажатия — отсюда
+    // 1.1000000000000003 в state.json и невозможность попасть в ровное число.
+    // Теперь правится целое k, а множитель 2^(k/12) выводится из него заново.
+    const auto zoomStepsOf = [&](zametti::ZoomTarget target) {
+        switch (target) {
+            case zametti::ZoomTarget::Plain: return zapp.state().sourceZoom();
+            case zametti::ZoomTarget::History: return zapp.state().historyZoom();
+            case zametti::ZoomTarget::Note: break;
+        }
+        return zapp.state().noteZoom();
+    };
+    auto setZoomSteps = [&](zametti::ZoomTarget target, int steps) {
+        switch (target) {
+            case zametti::ZoomTarget::Plain: zapp.state().setSourceZoom(steps); break;
+            case zametti::ZoomTarget::History: zapp.state().setHistoryZoom(steps); break;
+            case zametti::ZoomTarget::Note: zapp.state().setNoteZoom(steps); break;
+        }
+        // Обрезку по краям шкалы делает сеттер — читаем то, что он принял.
+        applyZoom(zametti::zoomScale(zoomStepsOf(target)));
+    };
+    auto stepZoom = [&](int delta) {
+        const zametti::ZoomTarget target = zoomTarget();
+        setZoomSteps(target, zoomStepsOf(target) + delta);
     };
     // Ctrl+= рядом с Ctrl++: увеличивают одной и той же клавишей, с шифтом и без.
-    shortcut(QKeySequence(QStringLiteral("Ctrl+=")),
-             [&] { stepZoom(zametti::settings().ui().zoomStep()); });
-    shortcut(QKeySequence(QStringLiteral("Ctrl++")),
-             [&] { stepZoom(zametti::settings().ui().zoomStep()); });
-    shortcut(QKeySequence(QStringLiteral("Ctrl+-")),
-             [&] { stepZoom(1.0 / zametti::settings().ui().zoomStep()); });
-    shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] { applyZoom(1.0); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+=")), [&] { stepZoom(+1); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl++")), [&] { stepZoom(+1); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+-")), [&] { stepZoom(-1); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] { setZoomSteps(zoomTarget(), 0); });
 
     // Отмена и повтор живут в самом редакторе: QTextEdit объявляет их своими и
     // до ярлыка окна они не доходят.
@@ -3179,9 +3192,9 @@ int main(int argc, char** argv) {
     // РЕЖИМ ПРАВКИ ИСХОДНИКА ПЕРЕЖИВАЕТ ПЕРЕЗАПУСК (решение владельца): вышли
     // из программы с нажатой [M] — вернулись в неё же. После открытия заметки и
     // после фокуса: входить в режим нечем, пока показывать нечего.
-    markdownView.applyZoom(session.plainZoom());
-    settingsView.applyZoom(session.plainZoom());
-    historyView.textView().applyZoom(session.historyZoom());
+    markdownView.applyZoom(zametti::zoomScale(session.sourceZoom()));
+    settingsView.applyZoom(zametti::zoomScale(session.sourceZoom()));
+    historyView.textView().applyZoom(zametti::zoomScale(session.historyZoom()));
     if (session.markdownMode()) markdown.enter();
 
 
@@ -3205,15 +3218,15 @@ int main(int argc, char** argv) {
         out.setLastFile(editor.filePath());
         out.setCaret(editor.caretPosition());
         out.setAnchor(editor.caretAnchor());
-        out.setZoom(editor.zoom());
+        // Ступени масштаба здесь НЕ переписываются: истина в них живёт с самого
+        // нажатия клавиши (см. setZoomSteps), а не выводится обратно из кегля
+        // вида. Обратный ход — деление кегля на кегль — как раз и давал те
+        // дробные числа, ради которых заведена шкала.
         out.setWindowGeometry(window.saveGeometry());
         out.setSplitterState(splitter.saveState());
         out.setHistoryListWidth(historyListWidth);
         out.setPanelsHidden(!toolbar.isChecked(zametti::Toolbar::Button::Panels));
         out.setMarkdownMode(markdown.active());
-        // Число одно на оба плоских вида — берём у любого из них.
-        out.setPlainZoom(markdownView.zoom());
-        out.setHistoryZoom(historyView.textView().zoom());
         out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());
         out.setSearchRegex(findBar.regexOn());

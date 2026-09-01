@@ -353,12 +353,6 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("smoothMs"), a.ui().smoothScrollMs()},
     };
 
-    QJsonObject zoom{
-        {QStringLiteral("step"), a.ui().zoomStep()},
-        {QStringLiteral("min"), a.ui().zoomMin()},
-        {QStringLiteral("max"), a.ui().zoomMax()},
-    };
-
     QJsonObject sync{
         {QStringLiteral("url"), a.sync().url()},
         {QStringLiteral("user"), a.sync().user()},
@@ -422,7 +416,6 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("images"), images},
         {QStringLiteral("shortcuts"), shortcuts},
         {QStringLiteral("scroll"), scroll},
-        {QStringLiteral("zoom"), zoom},
     };
 }
 
@@ -732,10 +725,6 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readBool(scroll, "smooth", a.ui(), &ZSettings::Ui::setSmoothScroll);
     readInt(scroll, "smoothMs", a.ui(), &ZSettings::Ui::setSmoothScrollMs);
 
-    const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();
-    readReal(zoom, "step", a.ui(), &ZSettings::Ui::setZoomStep);
-    readReal(zoom, "min", a.ui(), &ZSettings::Ui::setZoomMin);
-    readReal(zoom, "max", a.ui(), &ZSettings::Ui::setZoomMax);
 }
 
 

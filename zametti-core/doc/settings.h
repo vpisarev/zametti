@@ -551,10 +551,11 @@ struct ZSettings {
         // и ленивее летит.
         ZM_SETTING(int, smoothScrollMs, SmoothScrollMs, 140, 0, 2000)
 
-        // --- масштаб ---
-        ZM_SETTING(qreal, zoomStep, ZoomStep, 1.1, 1.01, 2.0)
-        ZM_SETTING(qreal, zoomMin, ZoomMin, 0.5, 0.1, 1.0)
-        ZM_SETTING(qreal, zoomMax, ZoomMax, 4.0, 1.0, 16.0)
+        // МАСШТАБА ЗДЕСЬ БОЛЬШЕ НЕТ. Прежде тут жили zoomStep, zoomMin и
+        // zoomMax; теперь шкала одна и целочисленная — 2^(k/12), см.
+        // zoom_scale.h, — и настраивать в ней нечего: шаг задан построением, а
+        // края (50 % и 400 %) — свойство программы. Сами ступени лежат в
+        // state.json: их четыре, и они независимы.
     };
 
 
