@@ -98,6 +98,7 @@ add_executable(zametti-tests
     export_test.cpp
     heading_test.cpp
     config_test.cpp
+    theme_test.cpp
     config_file_test.cpp
     json_highlighter_test.cpp
     ops_test.cpp

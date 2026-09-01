@@ -123,6 +123,15 @@ QColor selectedTextColour(const ZDocStyle& style, const QPalette& palette) {
 
 void applySelectionPaletteToApp(const ZDocStyle& style) {
     QPalette palette = QApplication::palette();
+    // ЦВЕТ ТЕКСТА — ВСЕЙ ПРОГРАММЕ. Прежде его не ставил никто: своего цвета
+    // текста у программы не было вовсе, и буквы всюду брались из системной
+    // палитры. Со светлой темой это совпадало, а тёмную делало невозможной —
+    // фон свой, буквы чужие. Ставим и Text (поля, списки, документы), и
+    // WindowText (подписи, кнопки).
+    palette.setColor(QPalette::Text, style.textColor());
+    palette.setColor(QPalette::WindowText, style.textColor());
+    palette.setColor(QPalette::Inactive, QPalette::Text, style.textColor());
+    palette.setColor(QPalette::Inactive, QPalette::WindowText, style.textColor());
     palette.setColor(QPalette::Highlight, style.selectionBackground());
     palette.setColor(QPalette::HighlightedText, selectedTextColour(style, palette));
     // Неактивная группа тоже: у меню и списков она своя, и без неё подсветка
@@ -134,13 +143,17 @@ void applySelectionPaletteToApp(const ZDocStyle& style) {
 }
 
 void applyPalette(QWidget& view, bool history, const ZDocStyle& style) {
+    applyPalette(view, history ? style.historyBackground() : style.pageBackground(), style);
+}
+
+void applyPalette(QWidget& view, const QColor& background, const ZDocStyle& style) {
     QPalette palette = view.palette();
     // В режиме истории поле тонируется: слегка пожелтевший от времени фон
     // (решение владельца). Прошлое видно ещё до того, как человек прочтёт
     // баннер, а совпадение historyBackground с pageBackground выключает
     // тонировку — это законная настройка, а не поломка.
-    palette.setColor(QPalette::Base, history ? style.historyBackground()
-                                             : style.pageBackground());
+    palette.setColor(QPalette::Base, background);
+    palette.setColor(QPalette::Text, style.textColor());
     palette.setColor(QPalette::Highlight, style.selectionBackground());
     // Текст в выделении: свой цвет, если задан, иначе обычный цвет текста —
     // выделение у нас светлое, и белый по умолчанию на нём просто пропал бы.

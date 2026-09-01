@@ -1,6 +1,7 @@
 #include "settings.h"
 
 #include "doc_model.h"
+#include "theme.h"
 
 #include <QDir>
 #include <QFile>
@@ -509,7 +510,36 @@ QByteArray configTemplate() {
             out += "   // " + QByteArray(key.note);
         out += "\n";
     }
-    if (!section.isEmpty()) out += "//     },\n";
+    if (!section.isEmpty()) out += "//     },\n//\n";
+
+    // ТЕМА — В ТОМ ЖЕ ФАЙЛЕ И ТЕМ ЖЕ СПОСОБОМ. Ролей четыре десятка, и каждая
+    // здесь названа со своим цветом светлой темы: иначе про них знал бы только
+    // тот, кто читал исходники. Своя тема — либо переопределения прямо здесь,
+    // либо файл themes/<имя>.json и "extends" на него.
+    out +=
+        "//     \"theme\": {\n"
+        "//         \"extends\": \"light\",   // a built-in theme, or themes/<name>.json "
+        "next to this file\n";
+    QString group;
+    for (const ZTheme::RoleInfo& role : ZTheme::roles()) {
+        const int dot = int(role.name.indexOf(QLatin1Char('.')));
+        const QString mine = dot < 0 ? QString() : role.name.left(dot);
+        if (mine != group) {
+            if (!group.isEmpty()) out += "//         },\n";
+            group = mine;
+            if (!group.isEmpty()) out += "//         \"" + group.toUtf8() + "\": {\n";
+        }
+        const QByteArray pad = group.isEmpty() ? "//         " : "//             ";
+        const QString leaf = dot < 0 ? role.name : role.name.mid(dot + 1);
+        const QColor value = role.light;
+        const QString text = value.alpha() == 255 ? value.name(QColor::HexRgb)
+                                                  : value.name(QColor::HexArgb);
+        out += pad + "\"" + leaf.toUtf8() + "\": \"" + text.toUtf8() + "\",   // " +
+               role.note.toUtf8() + "\n";
+    }
+    if (!group.isEmpty()) out += "//         },\n";
+    out += "//     },\n";
+
     out += "}\n";
     return out;
 }
@@ -673,8 +703,28 @@ bool loadSettings(QString* error, QStringList* unknown) {
         }
         if (unknown != nullptr) *unknown = unknownConfigKeys(doc.object());
         // С чистого листа: конфиг — отклонения от умолчаний (см. заголовок).
-        g_settings = ZSettings{};
-        settingsFromJson(doc.object(), g_settings);
+        ZSettings fresh;
+        // ТЕМА — ПЕРВОЙ, остальные ключи поверх. Цвета в конфиге больше не
+        // лежат россыпью: их задаёт тема (theme.h), а секция "theme" — это имя
+        // основания плюс переопределения ролей.
+        //
+        // Неизвестное имя темы — ОШИБКА ЗАГРУЗКИ, как битый JSON: прежние
+        // настройки остаются, причина уходит наверх. Молча показать не ту тему,
+        // которую попросили, хуже, чем сказать вслух.
+        const QJsonObject themeSection =
+            doc.object().value(QStringLiteral("theme")).toObject();
+        const QString base = themeSection.value(QStringLiteral("extends")).toString(
+            QStringLiteral("light"));
+        ZTheme theme;
+        QString themeError;
+        if (!ZTheme::resolve(base, &theme, &themeError)) {
+            if (error != nullptr) *error = themeError;
+            return false;
+        }
+        theme.applyOverrides(themeSection, unknown);
+        theme.applyTo(fresh);
+        settingsFromJson(doc.object(), fresh);
+        g_settings = fresh;
     }
     applyImageAllocationLimit();
     return true;

@@ -369,6 +369,12 @@ static int ztRunSuite(int argc, char** argv) {
                 // заводить второй значило бы сравнивать со своей же догадкой о
                 // том, как он настроен.
                 zametti::NoteEditor& twin = editor;
+                // ПАЛИТРУ СТАВИТ ОКНО, а не сам вид: в живой программе это
+                // делает applyAppearance. Без неё редактор в наборе стоял на
+                // системной палитре — белый лист и чёрные буквы вместо наших
+                // #fefefb и #1a1a1a, — и сравнение с архивным видом (у него
+                // палитра своя) сравнивало заодно и это.
+                zametti::applyPalette(twin);
                 twin.resize(shotView.size());
                 twin.show();
                 twin.openFile(shotPath);

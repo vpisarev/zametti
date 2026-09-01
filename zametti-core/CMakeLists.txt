@@ -133,6 +133,7 @@ add_library(zametti-core STATIC
     doc/list_line.h             doc/list_line.cpp
     doc/search.h                doc/search.cpp
     doc/settings.h              doc/settings.cpp
+    doc/theme.h                 doc/theme.cpp
     doc/sort_order.h            doc/sort_order.cpp
     doc/formula.h               doc/formula.cpp
     doc/formula_object.h        doc/formula_object.cpp

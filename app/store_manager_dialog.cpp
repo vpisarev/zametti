@@ -29,6 +29,17 @@
 #include <QVBoxLayout>
 
 namespace zametti {
+namespace {
+
+// Цвет тревоги — ИЗ ТЕМЫ (роль danger), а не «#c03030» строкой. Три места в
+// этом окне красили текст красным вручную, и в тёмной теме они остались бы
+// единственными, кто не знает про тему вовсе.
+QString alarmStyle() {
+    return QStringLiteral("color: %1;")
+        .arg(settings().ui().statusSuspectColor().name(QColor::HexRgb));
+}
+
+}  // namespace
 
 namespace {
 
@@ -558,7 +569,7 @@ void StoreManagerDialog::render() {
     folderFreeze_->freeze(snap.folderFrozen ? snap.folder : QString());
     folder_->setToolTip(snap.folder);
     // Папка не нашлась — путь красным (сценарий 3 владельца): дальше Browse.
-    folder_->setStyleSheet(snap.folderMissing ? QStringLiteral("color: #c03030;")
+    folder_->setStyleSheet(snap.folderMissing ? alarmStyle()
                                               : QString());
     put(password2_, snap.repeat);
 
@@ -581,7 +592,7 @@ void StoreManagerDialog::render() {
         put(field, state.stub ? QString(8, QChar(0x2022)) : state.text);
         field->setPlaceholderText(state.placeholder);
         field->setEnabled(state.enabled);
-        field->setStyleSheet(state.placeholderAlarm ? QStringLiteral("color: #c03030;")
+        field->setStyleSheet(state.placeholderAlarm ? alarmStyle()
                                                     : QString());
         eye->setEnabled(state.eyeEnabled);
         if (!state.eyeEnabled) eye->setChecked(false);
@@ -634,7 +645,7 @@ void StoreManagerDialog::render() {
                                .arg(state.text.left(cut).toHtmlEscaped(),
                                     dim.name(QColor::HexArgb), tail));
         }
-        label->setStyleSheet(state.alarm ? QStringLiteral("color: #c03030;") : QString());
+        label->setStyleSheet(state.alarm ? alarmStyle() : QString());
     };
     line(localLine_, snap.local);
     line(cloudLine_, snap.cloud);

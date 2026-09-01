@@ -315,8 +315,9 @@ void NotePanels::setSidebarFont(const QFont& font) {
 }
 
 void NotePanels::refreshAppearance() {
-    applyPalette(tree_);
-    applyPalette(listView_);
+    // Фон боковых панелей — свой: у тёмных тем колонка обычно темнее листа.
+    applyPalette(tree_, settings().ui().sidebarBackground());
+    applyPalette(listView_, settings().ui().sidebarBackground());
     // Делегаты читают настройки прямо при отрисовке — им довольно перерисовки,
     // но размеры строк они считают там же, и без сброса подсказок список
     // остался бы с прежними высотами.

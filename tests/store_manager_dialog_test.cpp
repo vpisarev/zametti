@@ -7,6 +7,7 @@
 // переспросы отвечает TestDialog::ask мимо модального окна (та же дверь — у
 // обезьяны store-monkey).
 
+#include "settings.h"
 #include "store_manager_dialog.h"
 
 #include "keyfile.h"
@@ -247,8 +248,11 @@ void checkBrowseOnMissingLocalFolder() {
     QCoreApplication::processEvents();
 
     auto* folder = dialog.findChild<QLineEdit*>(QStringLiteral("folder"));
-    ZT_TRUE("путь горит красным",
-            folder->styleSheet().contains(QStringLiteral("c03030")));
+    // Цвет тревоги — из темы (роль danger), а не зашитая строка: набор
+    // спрашивает у настроек то же, что спросит окно.
+    ZT_TRUE("путь горит цветом тревоги",
+            folder->styleSheet().contains(
+                zametti::settings().ui().statusSuspectColor().name(QColor::HexRgb)));
     ZT_TRUE("«…» логически жива", dialog.browseButton_->isEnabled());
     ZT_TRUE("«…» видима", dialog.browseButton_->isVisible());
     ZT_TRUE("«…» не нулевого размера",

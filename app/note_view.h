@@ -41,6 +41,10 @@ namespace zametti {
 // history — тонировать поле как прошлое (см. historyBackground).
 void applyPalette(QWidget& view, bool history = false,
                   const ZDocStyle& style = settings().style());
+// Тот же вид, но фон задан явно: боковым панелям он свой
+// (ui.sidebarBackground), а не фон страницы.
+void applyPalette(QWidget& view, const QColor& background,
+                  const ZDocStyle& style = settings().style());
 
 // Цвет текста ВНУТРИ выделения: colors.selectionForeground, а если он
 // прозрачный — обычный цвет текста этой палитры («выведи сам»). Одно правило на

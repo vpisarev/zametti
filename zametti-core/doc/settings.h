@@ -206,6 +206,11 @@ public:
 
     // --- цвета ---
     ZM_SETTING_PLAIN(QColor, pageBackground, PageBackground, 0xfe, 0xfe, 0xfb)
+    // ЦВЕТ ТЕКСТА. Своего цвета текста у программы не было вовсе: она стояла на
+    // системной палитре (QPalette::Text), и тёмная тема была невозможна в
+    // принципе — фон свой, а буквы чужие. Ставится палитре видов и всей
+    // программы (applyPalette, applySelectionPaletteToApp).
+    ZM_SETTING_PLAIN(QColor, textColor, TextColor, 0x1a, 0x1a, 0x1a)
     // Фон поля в режиме истории: чуть серый, как бумага в архиве (решение
     // владельца, сессия 7; прежде был бежевый «пожелтевший»). Тонировка тут не
     // украшение, а часть громкости режима — человек должен видеть, что перед
@@ -305,8 +310,11 @@ public:
     // --- маркированный список ---
     // Цвета маркеров раздельные: буллет — фигура, цифра — знак, и уравнивать их
     // в цвете не обязательно.
-    ZM_SETTING_PLAIN(QColor, bulletColor, BulletColor, 0x30, 0x30, 0x30)
-    ZM_SETTING_PLAIN(QColor, orderedColor, OrderedColor, 0x30, 0x30, 0x30)
+    // Цветом ТЕКСТА (роль foreground): прежде буллеты и номера стояли на
+    // #303030 — на двенадцать единиц светлее букв, разница неразличима глазом,
+    // а роли требовала бы своей. Тема красит их вместе с текстом.
+    ZM_SETTING_PLAIN(QColor, bulletColor, BulletColor, 0x1a, 0x1a, 0x1a)
+    ZM_SETTING_PLAIN(QColor, orderedColor, OrderedColor, 0x1a, 0x1a, 0x1a)
 
     ZM_SETTING_PLAIN(BulletStyle, bulletStyle, BulletStyle, BulletStyle::Drawn)
     // Для нарисованного: диаметр и поправка по вертикали, обе — доли от высоты
@@ -494,6 +502,9 @@ struct ZSettings {
         // вместо цветного. Всё это была плата за отсутствие своих иконок; иконки
         // появились, ключи убраны. Остались цвет и размер: они про то, КАК значок
         // выглядит, а не про то, ОТКУДА он берётся.
+        // Фон дерева и списка заметок. Отдельно от фона страницы: у тёмных тем
+        // боковая колонка обычно темнее или светлее листа, и это их право.
+        ZM_SETTING_PLAIN(QColor, sidebarBackground, SidebarBackground, 0xfe, 0xfe, 0xfb)
         ZM_SETTING_PLAIN(QColor, sidebarFolderColor, SidebarFolderColor, 0x1a, 0x1a, 0x1a)
         // Ширина при первом запуске, дальше её помнит state.json.
         ZM_SETTING(int, sidebarWidth, SidebarWidth, 260, 60, 2000)
@@ -539,7 +550,7 @@ struct ZSettings {
         ZM_SETTING(int, noteListWidth, NoteListWidth, 320, 60, 2000)
         // Сколько строк сниппета показывать под заголовком.
         ZM_SETTING(int, noteListSnippetLines, NoteListSnippetLines, 2, 0, 20)
-        ZM_SETTING_PLAIN(QColor, noteListSnippetColor, NoteListSnippetColor, 0x77, 0x7d, 0x86)
+        ZM_SETTING_PLAIN(QColor, noteListSnippetColor, NoteListSnippetColor, 0x77, 0x7e, 0x86)
         ZM_SETTING_PLAIN(QColor, noteListDateColor, NoteListDateColor, 0x8a, 0x90, 0x98)
 
         // --- панель поиска ---
