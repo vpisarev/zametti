@@ -291,8 +291,13 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     // трогаются — они только для чтения (решение владельца); прежде тут стоял
     // люк editSettings, подменявший облик всей программе на время вывоза.
     //
-    // Подменяются ТОЛЬКО шрифты и кегли: цвета, поля, ритм страницы у бумаги
-    // те же, что на экране, — она и должна выглядеть как то, что человек видит.
+    // Подменяются шрифты, кегли И ЦВЕТА. Цвета прежде брались с экрана целиком
+    // — «бумага должна выглядеть как то, что человек видит», — и это было
+    // верно, пока экран мог быть только светлым. С темами первая же тёмная
+    // дала бы чёрную страницу с белыми буквами: тонну тонера и нечитаемую
+    // распечатку. Поэтому у бумаги свои цвета (секция pdf), а прозрачный цвет
+    // там значит «взять экранный» — кому нравится своя палитра и на листе,
+    // получает её одним способом.
     auto style = std::make_shared<ZDocStyle>(settings().style());
     if (!paper.fontFamily().isEmpty()) style->setFontFamily(paper.fontFamily());
     if (paper.pointSize() > 0.0) style->setBaseFontPoint(paper.pointSize());
@@ -303,6 +308,17 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     // плашка выглядела как на экране — со скруглением и воздухом, но без имени
     // языка и кнопки копирования.
     style->setCodeStripHeight(paper.codeStripHeight());
+    const auto onPaper = [](const QColor& wanted, auto&& setter) {
+        if (wanted.alpha() > 0) setter(wanted);
+    };
+    onPaper(paper.background(), [&](const QColor& c) { style->setPageBackground(c); });
+    onPaper(paper.background(), [&](const QColor& c) { style->setHistoryBackground(c); });
+    onPaper(paper.foreground(), [&](const QColor& c) { style->setTextColor(c); });
+    onPaper(paper.foreground(), [&](const QColor& c) { style->setBulletColor(c); });
+    onPaper(paper.foreground(), [&](const QColor& c) { style->setOrderedColor(c); });
+    onPaper(paper.link(), [&](const QColor& c) { style->setLinkColor(c); });
+    onPaper(paper.quote(), [&](const QColor& c) { style->setQuoteColor(c); });
+    onPaper(paper.codeBackground(), [&](const QColor& c) { style->setCodeBackground(c); });
 
     QPdfWriter writer(targetPath);
     // Формат листа — по имени; незнакомое имя — A4.
@@ -443,7 +459,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         // карточка на белом листе.
         painter.fillRect(QRectF(-marginPx, -marginPx, pageWidth + 2 * marginPx,
                                 pageHeight + 2 * marginPx),
-                         settings().style().pageBackground());
+                         style->pageBackground());
         painter.translate(0.0, -top);
         view.renderSlice(painter, QRectF(0.0, top, pageWidth, bottom - top), imageRatio,
                          paper.maxExportedImageSize());

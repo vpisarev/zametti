@@ -97,6 +97,28 @@ using Key = ZSettings::Key;
             }                                                                           \
     }
 
+// Цвет пишется строкой «#rrggbb» или «#aarrggbb»; битую строку молча
+// пропускаем — половина окна не должна чернеть из-за опечатки.
+// Цвет пишется строкой «#rrggbb» или «#aarrggbb»; битую строку молча
+// пропускаем — половина окна не должна чернеть из-за опечатки. Довод зовётся
+// key, а не name: QColor::name() внутри — препроцессор подставил бы имя ключа
+// прямо в вызов.
+#define ZM_KEY_COLOR(section, key, note, part, lower, Upper)                            \
+    Key {                                                                               \
+        section, key, note,                                                             \
+            [](const ZSettings& a) {                                                    \
+                const QColor c = a.part.lower();                                        \
+                return QJsonValue(c.alpha() == 255 ? c.name(QColor::HexRgb)             \
+                                                   : c.name(QColor::HexArgb));          \
+            },                                                                          \
+            [](ZSettings& a, const QJsonValue& v) {                                     \
+                if (!v.isString()) return true;                                         \
+                const QColor parsed = QColor::fromString(v.toString());                 \
+                if (parsed.isValid()) a.part.set##Upper(parsed);                        \
+                return true;                                                            \
+            }                                                                           \
+    }
+
 #define ZM_KEY_STR(section, name, note, part, lower, Upper)                             \
     Key {                                                                               \
         section, name, note, [](const ZSettings& a) { return QJsonValue(a.part.lower()); }, \
@@ -282,6 +304,14 @@ const std::vector<Key>& keys() {
                 a.pdf().setHeadingStep(headingsFromJson(v, a.pdf().headingStep()));
                 return true;
             }},
+        // Цвета бумаги независимы от экранной темы: лист остаётся белым, даже
+        // когда экран тёмный. Прозрачный цвет значит «взять экранный».
+        ZM_KEY_COLOR("pdf", "background", "page color on paper", pdf(), background, Background),
+        ZM_KEY_COLOR("pdf", "foreground", "text color on paper", pdf(), foreground, Foreground),
+        ZM_KEY_COLOR("pdf", "link", "links on paper", pdf(), link, Link),
+        ZM_KEY_COLOR("pdf", "quote", "quotes on paper", pdf(), quote, Quote),
+        ZM_KEY_COLOR("pdf", "codeBackground", "behind code on paper", pdf(), codeBackground,
+                     CodeBackground),
         ZM_KEY_STR("pdf", "pageSize", "A4, Letter, A5...", pdf(), pageSize, PageSize),
         ZM_KEY_REAL("pdf", "marginMm", "page margins, in millimetres", pdf(), marginMm, MarginMm),
         ZM_KEY_INT("pdf", "imageDpi", "resolution of pictures on paper", pdf(), imageDpi,
@@ -304,6 +334,7 @@ const std::vector<Key>& keys() {
 #undef ZM_KEY_INT
 #undef ZM_KEY_BOOL
 #undef ZM_KEY_STR
+#undef ZM_KEY_COLOR
 
 QJsonObject settingsToJson(const ZSettings& a) {
     QJsonObject root;

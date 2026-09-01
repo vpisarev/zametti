@@ -243,10 +243,21 @@ void checkRegistryRoundTrip() {
         const zametti::ZSettings fresh;
         const QJsonValue was = key.get(fresh);
         QJsonValue want;
-        if (was.isBool()) want = !was.toBool();
-        else if (was.isDouble()) want = was.toDouble() + 1.0;
-        else if (was.isString()) want = was.toString() + QStringLiteral("x");
-        else continue;
+        if (was.isBool()) {
+            want = !was.toBool();
+        } else if (was.isDouble()) {
+            want = was.toDouble() + 1.0;
+        } else if (was.isString()) {
+            // Цвету приписанная буква не поможет: «#ffffffx» не разберётся, и
+            // проверка краснела бы на всей секции бумаги, ничего не найдя.
+            const QColor colour = QColor::fromString(was.toString());
+            want = colour.isValid() ? (colour.name(QColor::HexRgb) == QLatin1String("#123456")
+                                           ? QStringLiteral("#654321")
+                                           : QStringLiteral("#123456"))
+                                    : was.toString() + QStringLiteral("x");
+        } else {
+            continue;
+        }
 
         zametti::ZSettings mine;
         const std::string where = std::string(key.section) + "." + key.name;

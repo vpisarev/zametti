@@ -1149,6 +1149,18 @@ struct ZSettings {
         // Формат листа — именем QPageSize ("A4", "A5", "Letter"…); незнакомое
         // имя — A4. Здесь, а не параметром вызова: настройки вывоза — одна
         // структура, которую вызывающий берёт копией и правит, что нужно.
+        // ЦВЕТА БУМАГИ — СВОИ, И ЭТО НЕ ПРИДИРКА. Экранная тема бывает тёмной,
+        // а лист остаётся белым: вывоз копировал цвета с экрана, и первая же
+        // тёмная тема дала бы чёрную страницу с белыми буквами — тонну тонера
+        // и нечитаемую распечатку. Пусто (прозрачный цвет) — взять экранный:
+        // так тот, кому нравится своя палитра и на бумаге, получает её одним
+        // способом, а не двумя.
+        ZM_SETTING_PLAIN(QColor, background, Background, 0xff, 0xff, 0xff)
+        ZM_SETTING_PLAIN(QColor, foreground, Foreground, 0x18, 0x18, 0x18)
+        ZM_SETTING_PLAIN(QColor, link, Link, 0x32, 0x5c, 0xc0)
+        ZM_SETTING_PLAIN(QColor, quote, Quote, 0x5a, 0x62, 0x6a)
+        ZM_SETTING_PLAIN(QColor, codeBackground, CodeBackground, 0xf4, 0xf4, 0xf2)
+
         ZM_SETTING_PLAIN(QString, pageSize, PageSize, QStringLiteral("A4"))
         ZM_SETTING(qreal, marginMm, MarginMm, 15.0, 0.0, 100.0)
         // Разрешение, в котором картинки уезжают в файл. 200 — печатное
