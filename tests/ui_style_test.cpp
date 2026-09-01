@@ -31,6 +31,7 @@
 #include <QDir>
 #include <QFile>
 #include <QLabel>
+#include <QKeySequence>
 #include <QTest>
 #include <QToolButton>
 
@@ -214,6 +215,16 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("заметка записана", file.open(QIODevice::WriteOnly | QIODevice::Truncate));
         file.write("# Заголовок\n\nАбзац, чтобы было что мерить.\n");
     }
+
+    // Сочетания масштаба оболочки: строки обязаны разбираться и не совпадать с
+    // сочетаниями масштаба текста. Саму развязку клавиш проверить набором
+    // нечем — она живёт лямбдами в main(), и это названо долгом в отчёте; но
+    // опечатку в строке («Ctrl+Alt+плюс») ловим здесь.
+    for (const char* chord : {"Ctrl+Alt+=", "Ctrl+Alt++", "Ctrl+Alt+-", "Ctrl+Alt+0"})
+        ZT_TRUE(std::string("сочетание разбирается: ") + chord,
+                !QKeySequence(QString::fromLatin1(chord)).isEmpty());
+    ZT_TRUE("масштаб оболочки и масштаб текста — разные клавиши",
+            QKeySequence(QStringLiteral("Ctrl+Alt+=")) != QKeySequence(QStringLiteral("Ctrl+=")));
 
     checkDerivedFromOneSize();
     checkInterfaceZoomScalesEverything();
