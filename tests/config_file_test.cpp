@@ -32,13 +32,13 @@ void checkTemplateOnLoad() {
     ZT_TRUE("и без неизвестных ключей", check.unknownKeys.isEmpty());
 
     // Круг записи.
-    model.setText(QStringLiteral("{\n  \"font\": { \"pointSize\": 13 }\n}\n"));
+    model.setText(QStringLiteral("{\n  \"fonts\": { \"noteSize\": 13 }\n}\n"));
     ZT_TRUE("грязный после правки", model.dirty());
     ZT_TRUE("записалось: " + s(error), model.save(&error));
     ZT_TRUE("чистый после записи", !model.dirty());
     zametti::ZConfigFile again(path);
     ZT_TRUE("перечитан", again.load(&error));
-    ZT_EQ("текст тот же", std::string("{\n  \"font\": { \"pointSize\": 13 }\n}\n"), s(again.text()));
+    ZT_EQ("текст тот же", std::string("{\n  \"fonts\": { \"noteSize\": 13 }\n}\n"), s(again.text()));
 }
 
 void checkCheck() {
@@ -51,15 +51,15 @@ void checkCheck() {
     ZT_TRUE("причина названа", !broken.error.isEmpty());
 
     const ZConfigFile::Check unknown =
-        ZConfigFile::check(QStringLiteral("{ \"font\": { \"foo\": 1 }, \"bar\": {} }"));
+        ZConfigFile::check(QStringLiteral("{ \"fonts\": { \"foo\": 1 }, \"bar\": {} }"));
     ZT_TRUE("разбирается", unknown.ok);
-    ZT_EQ("неизвестные ключи названы (в порядке ключей JSON)", std::string("bar, font.foo"),
+    ZT_EQ("неизвестные ключи названы (в порядке ключей JSON)", std::string("bar, fonts.foo"),
           s(unknown.unknownKeys.join(QStringLiteral(", "))));
-    ZT_TRUE("известный ключ новой секции — не неизвестный",
-            ZConfigFile::check(QStringLiteral("{ \"jsonEditing\": { \"tabIndent\": 2 } }"))
+    ZT_TRUE("известный ключ — не неизвестный",
+            ZConfigFile::check(QStringLiteral("{ \"editor\": { \"tabWidth\": 2 } }"))
                 .unknownKeys.isEmpty());
     ZT_TRUE("комментарии и висячие запятые — не беда",
-            ZConfigFile::check(QStringLiteral("{ // c\n \"font\": { \"pointSize\": 12, }, }")).ok);
+            ZConfigFile::check(QStringLiteral("{ // c\n \"fonts\": { \"noteSize\": 12, }, }")).ok);
     ZT_TRUE("массив вместо объекта — беда", !ZConfigFile::check(QStringLiteral("[1, 2]")).ok);
 }
 

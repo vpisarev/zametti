@@ -234,7 +234,7 @@ void PlainEditView::refreshAppearance() {
     applyZoom(zoom_);   // шрифт, стоп табуляции и поля — одним местом
 }
 
-int PlainEditView::tabStop() const { return qMax(1, settings().editor().codeTabWidth()); }
+int PlainEditView::tabStop() const { return qMax(1, settings().editor().tabWidth()); }
 
 QColor PlainEditView::wrapMarkColor() const { return settings().markdownHighlighting().comment(); }
 
@@ -245,8 +245,12 @@ void PlainEditView::applyZoom(qreal zoom) {
 
     // ГАРНИТУРА КОДА: плоский текст читают как код — по колонкам, и
     // пропорциональный шрифт сбил бы и таблицы, и отступы.
+    // КЕГЛЬ У ПЛОСКИХ ВИДОВ СВОЙ (fonts.monospaceSize), а не кегль заметки: тут
+    // читают колонками, и согласовать моноширинный с основным шрифтом заметки —
+    // дело человека, а не наше. Внутри свёрстанной заметки кегль кода остаётся
+    // ступенью: там он обязан ехать за одним setDefaultFont.
     QFont font(style.codeFamily());
-    font.setPointSizeF(style.baseFontPoint() * zoom_);
+    font.setPointSizeF(style.monospacePoint() * zoom_);
     setFont(font);
     document()->setDefaultFont(font);
     // Стоп табуляции — тот же, которым Tab ставит пробелы: набранное и старые

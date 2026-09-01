@@ -66,8 +66,8 @@ void checkDefaultsAreEmbedded() {
     const zametti::ZSettings def;
     ZT_TRUE("шрифт текста из умолчаний влинкован: " + s(def.style().fontFamily()),
             embedded.contains(def.style().fontFamily()));
-    ZT_TRUE("шрифт панелей из умолчаний влинкован: " + s(def.ui().sidebarFontFamily()),
-            embedded.contains(def.ui().sidebarFontFamily()));
+    ZT_TRUE("шрифт панелей из умолчаний влинкован: " + s(def.ui().appFamily()),
+            embedded.contains(def.ui().appFamily()));
 }
 
 // Строка из таблицы name шрифта: nameID 1 — семейство, 2 — начертание. Берём

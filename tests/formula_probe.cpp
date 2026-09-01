@@ -212,11 +212,11 @@ void measureXHeight() {
     const double textX = metrics.xHeight();
     std::printf("рост строчных: текст %s, математика %s, отношение %s (в конфиге %s)\n",
                 num(textX).c_str(), num(mathX).c_str(), num(textX / mathX).c_str(),
-                num(zametti::settings().formulas().inlineScale()).c_str());
+                num(zametti::settings().formulas().mathScale()).c_str());
     // Коэффициент из конфига обязан и правда равнять рост строчных: если
     // однажды сменится гарнитура, эта проверка покраснеет первой.
     const zametti::FormulaImage scaled = zametti::Formulas::render(
-        QStringLiteral("x"), false, textPixelSize() * zametti::settings().formulas().inlineScale(),
+        QStringLiteral("x"), false, textPixelSize() * zametti::settings().formulas().mathScale(),
         Qt::black, 1.0);
     if (scaled.ok()) {
         const Ink si = inkRows(scaled.image);
@@ -242,7 +242,7 @@ void shootComparison(int zoom) {
     QFont font(look.fontFamily());
     font.setPointSizeF(look.baseFontPoint() * zoom);
     const QFontMetricsF metrics(font);
-    QFont label(zametti::settings().ui().sidebarFontFamily());
+    QFont label(zametti::settings().ui().appFamily());
     label.setPointSizeF(look.baseFontPoint() * zoom * 0.62);
 
     struct Piece {
@@ -258,7 +258,7 @@ void shootComparison(int zoom) {
     };
     // Сравниваем единицу с тем, что стоит в конфиге: лист обязан показывать
     // то, чем программа и правда рисует, а не число, вписанное в набор.
-    const double scales[] = {1.00, zametti::settings().formulas().inlineScale()};
+    const double scales[] = {1.00, zametti::settings().formulas().mathScale()};
 
     const int pad = 24;
     const qreal step = metrics.height() * 2.6;
@@ -347,7 +347,7 @@ void shootRuler(int zoom) {
             if (piece.latex.isEmpty()) continue;
             const zametti::FormulaImage formula = zametti::Formulas::render(
                 piece.latex, false,
-                QFontInfo(font).pixelSize() * zametti::settings().formulas().inlineScale(),
+                QFontInfo(font).pixelSize() * zametti::settings().formulas().mathScale(),
                 QColor(0x1a, 0x1a, 0x1a), 1.0);
             if (!formula.ok()) continue;
             // ВОТ ОНА, ПОСАДКА: верх картинки = базовая линия текста минус

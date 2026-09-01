@@ -93,30 +93,32 @@ void checkTemplate() {
     ZT_TRUE("шаблон — объект", doc.isObject());
     ZT_TRUE("отклонений в шаблоне нет", doc.object().isEmpty());
 
-    // 2. При этом в нём есть КАЖДЫЙ параметр: иначе это не меню, а пустышка.
-    //    Сверяем по ключам полного списка умолчаний — тому самому, который
-    //    печатает --dump-config.
-    const QJsonDocument defaults = QJsonDocument::fromJson(zametti::defaultSettingsJson());
-    ZT_TRUE("список умолчаний — объект", defaults.isObject());
+    // 2. В нём есть КАЖДЫЙ ПУБЛИЧНЫЙ ключ — иначе это не меню, а пустышка, — и
+    //    у каждого своя подпись: имя без объяснения человеку ничего не даёт,
+    //    ради этого шаблон и перестал быть просто дампом умолчаний.
     int missing = 0;
-    const QJsonObject root = defaults.object();
-    for (auto section = root.begin(); section != root.end(); ++section) {
-        const QByteArray key = QStringLiteral("\"%1\"").arg(section.key()).toUtf8();
-        if (!written.contains(key)) {
+    int mute = 0;
+    for (const zametti::ZSettings::Key& key : zametti::ZSettings::registry()) {
+        const QByteArray name = QStringLiteral("\"%1\"").arg(QString::fromLatin1(key.name)).toUtf8();
+        if (!written.contains(name)) {
             ++missing;
-            std::printf("  нет в шаблоне: %s\n", section.key().toUtf8().constData());
+            std::printf("  нет в шаблоне: %s.%s\n", key.section, key.name);
         }
-        if (!section.value().isObject()) continue;
-        const QJsonObject inner = section.value().toObject();
-        for (auto item = inner.begin(); item != inner.end(); ++item) {
-            const QByteArray name = QStringLiteral("\"%1\"").arg(item.key()).toUtf8();
-            if (written.contains(name)) continue;
-            ++missing;
-            std::printf("  нет в шаблоне: %s.%s\n", section.key().toUtf8().constData(),
-                        item.key().toUtf8().constData());
+        if (key.note == nullptr || *key.note == '\0') {
+            ++mute;
+            std::printf("  без подписи: %s.%s\n", key.section, key.name);
         }
     }
-    ZT_TRUE("в шаблоне есть каждый параметр", missing == 0);
+    ZT_TRUE("в шаблоне есть каждый публичный ключ", missing == 0);
+    ZT_TRUE("и у каждого своя подпись", mute == 0);
+
+    // 3. А внутренних коэффициентов отрисовки в нём НЕТ (решение владельца:
+    //    убрать из JSON совсем). Три имени наугад из тех, что жили в конфиге
+    //    до этой уборки, — если хоть одно вернулось, значит вернулась и
+    //    россыпь, ради ухода от которой всё затевалось.
+    for (const char* internal : {"bulletRise", "codeCornerRadius", "cornerOffset"})
+        ZT_TRUE(std::string("внутренней ручки в шаблоне нет: ") + internal,
+                !written.contains(internal));
 
     // 3. Существующий файл не перезаписывается: там правки человека.
     QFile mine(path);
@@ -173,12 +175,14 @@ void checkLoadUnderstandsComments() {
           std::to_string(zametti::ZSettings{}.editor().autosaveDelayMs()),
           std::to_string(zametti::settings().editor().autosaveDelayMs()));
 
-    // Секция редактора конфига известна словарю ключей.
+    // Опечатка названа поимённо, а верный ключ рядом — нет. Здесь же ловится
+    // и целая секция, которой у программы нет.
     const QJsonObject probe =
-        QJsonDocument::fromJson("{\"jsonEditing\": {\"tabIndent\": 2, \"tabIndnt\": 3}}").object();
+        QJsonDocument::fromJson("{\"editor\": {\"tabWidth\": 2, \"tabWdth\": 3},"
+                                " \"colours\": {\"caret\": \"#fff\"}}").object();
     const QStringList unknown = zametti::unknownConfigKeys(probe);
-    ZT_EQ("опечатка названа, верный ключ — нет", std::string("jsonEditing.tabIndnt"),
-          s(unknown.join(QStringLiteral(", "))));
+    ZT_EQ("опечатка и чужая секция названы, верный ключ — нет",
+          std::string("colours, editor.tabWdth"), s(unknown.join(QStringLiteral(", "))));
 }
 
 // Раздел таблиц: умолчания ровно те, о которых договорились с владельцем, и
@@ -207,69 +211,53 @@ void checkTablesDefaults() {
     ZT_TRUE("зебры нет", fresh.tables().altTableColor().alpha() == 0);
 }
 
-void checkTablesFromConfig() {
-    QFile file(zametti::configPath());
-    ZT_TRUE("файл открывается на запись",
-            file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    file.write(R"cfg({
-  "tables": {
-    "borderColor": "#3355aa",
-    "horizontalBorder": 1,
-    "verticalBorder": 3,
-    "headerSeparator": 4,
-    "rowSeparator": 5,
-    "columnSeparator": 6,
-    "headerColor": "#eeeeee",
-    "tableColor": "#80ffffff",
-    "altTableColor": "#11223344"
-  }
-}
-)cfg");
-    file.close();
-
+// КРУГ ПО РЕЕСТРУ: то, что программа напечатала как свои умолчания, она
+// обязана прочитать обратно и получить ровно то же. Проверка ОБЩАЯ — по всем
+// ключам сразу, а не по списку избранных: раньше здесь стояли девять ключей
+// раздела таблиц, и о ключе, который печатался, но не читался, набор не знал
+// бы ничего. Ровно эта беда и была возможна, пока запись и чтение конфига были
+// двумя рукописными функциями.
+void checkRegistryRoundTrip() {
+    const QByteArray dump = zametti::defaultSettingsJson();
+    {
+        QFile file(zametti::configPath());
+        ZT_TRUE("умолчания записаны конфигом",
+                file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write(dump);
+    }
     QString error;
     QStringList unknown;
-    ZT_TRUE("конфиг с разделом таблиц прочитан: " + s(error),
-            zametti::loadSettings(&error, &unknown));
-    // Раздел ЗНАКОМ программе: неизвестный ключ — это опечатка, о которой она
-    // обязана сказать, и молчание здесь означало бы, что раздел не заведён.
-    ZT_EQ("незнакомых ключей нет", std::string(), unknown.join(QLatin1Char(',')).toStdString());
+    ZT_TRUE("конфиг из умолчаний прочитан: " + s(error), zametti::loadSettings(&error, &unknown));
+    ZT_EQ("и ни одного незнакомого ключа в нём нет", std::string(),
+          unknown.join(QLatin1Char(',')).toStdString());
+    // Печатаем ещё раз — и сверяем побайтово: разойтись эти два дампа могут
+    // только если какой-то ключ читается не туда, куда пишется.
+    ZT_EQ("круг «напечатали — прочитали — напечатали» сходится", dump.toStdString(),
+          zametti::defaultSettingsJson().toStdString());
 
-    const zametti::ZSettings& a = zametti::settings();
-    ZT_EQ("цвет линий", std::string("#3355aa"),
-          a.tables().borderColor().name(QColor::HexRgb).toStdString());
-    ZT_EQ("толщины прочитаны все шесть", std::string("1 3 4 5 6"),
-          std::to_string(int(a.tables().horizontalBorder())) + " " +
-              std::to_string(int(a.tables().verticalBorder())) + " " +
-              std::to_string(int(a.tables().headerSeparator())) + " " +
-              std::to_string(int(a.tables().rowSeparator())) + " " +
-              std::to_string(int(a.tables().columnSeparator())));
-    ZT_EQ("заливка заголовка", std::string("#eeeeee"),
-          a.tables().headerColor().name(QColor::HexRgb).toStdString());
-    ZT_EQ("полупрозрачная заливка тела", std::string("128"),
-          std::to_string(a.tables().tableColor().alpha()));
-    ZT_EQ("зебра с прозрачностью", std::string("17"),
-          std::to_string(a.tables().altTableColor().alpha()));
+    // ОТКЛОНЕНИЕ ПО КАЖДОМУ КЛЮЧУ: значение, заведомо отличное от умолчания,
+    // обязано доехать до настроек. Числа сдвигаем на единицу, строки —
+    // приписыванием, признаки — отрицанием; списки и выражения этот проход
+    // пропускает: у них своя проверка выше.
+    for (const zametti::ZSettings::Key& key : zametti::ZSettings::registry()) {
+        const zametti::ZSettings fresh;
+        const QJsonValue was = key.get(fresh);
+        QJsonValue want;
+        if (was.isBool()) want = !was.toBool();
+        else if (was.isDouble()) want = was.toDouble() + 1.0;
+        else if (was.isString()) want = was.toString() + QStringLiteral("x");
+        else continue;
 
-    // Опечатка в имени ключа не должна проходить молча.
-    QFile typo(zametti::configPath());
-    ZT_TRUE("файл открывается на запись",
-            typo.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    typo.write(R"cfg({ "tables": { "borderColour": "#123456" } })cfg");
-    typo.close();
-    QStringList complaints;
-    zametti::loadSettings(&error, &complaints);
-    ZT_EQ("об опечатке в ключе сказано", std::string("tables.borderColour"),
-          complaints.join(QLatin1Char(',')).toStdString());
+        zametti::ZSettings mine;
+        const std::string where = std::string(key.section) + "." + key.name;
+        // Значение может не влезть в диапазон (кегль у потолка) — тогда set
+        // честно отвечает ложью, и проверять нечего, кроме самой честности.
+        if (!key.set(mine, want)) continue;
+        ZT_TRUE(where + ": отклонение доехало",
+                zametti::ZSettings::registry().empty() || key.get(mine) != was);
+    }
 }
 
-}  // namespace
-
-// НАСТРОЙКИ — ПОЖЕЛАНИЯ, РОБАСТНОСТЬ ВЫШЕ (решение владельца): число вне
-// допустимого диапазона обрезается сеттером самой настройки (ZM_SETTING в
-// settings.h), а не проверяется где-то ещё. Здесь: абсурдный конфиг
-// (imageCacheSizeMb = 100000000, отрицательная задержка, кегль в тысячу
-// пунктов) не проходит как есть, и умолчания сами лежат в своих границах.
 void checkClamping() {
     // Наборы идут одним процессом, а настройки — глобальные: обрезанный до
     // краёв кегль остался бы всем последующим наборам. Возвращаем как было.
@@ -283,28 +271,26 @@ void checkClamping() {
             file.open(QIODevice::WriteOnly | QIODevice::Truncate));
     file.write(
         "{\n"
-        "  \"editor\": { \"imageCacheSizeMb\": 100000000, \"autosaveDelayMs\": -5,\n"
-        "              \"documentCacheSizeMb\": 0, \"undoLimit\": 7 },\n"
-        "  \"font\": { \"pointSize\": 1000 },\n"
-        "  \"sidebar\": { \"fontSize\": 1000 }\n"
+        "  \"editor\": { \"autosaveDelayMs\": -5, \"tabWidth\": 7,\n"
+        "              \"historyMergeHours\": 100000 },\n"
+        "  \"fonts\": { \"noteSize\": 1000, \"appSize\": 1000 }\n"
         "}\n");
     file.close();
     QString error;
     ZT_TRUE("абсурдный конфиг читается (обрезается, а не отвергается): " + s(error),
             zametti::loadSettings(&error));
     const zametti::ZSettings& a = zametti::settings();
-    ZT_EQ("кэш картинок обрезан до потолка", std::to_string(a.cache().imageCacheSizeMbMax()),
-          std::to_string(a.cache().imageCacheSizeMb()));
     ZT_EQ("задержка автосохранения — до пола", std::to_string(a.editor().autosaveDelayMsMin()),
           std::to_string(a.editor().autosaveDelayMs()));
-    ZT_EQ("кэш документов — до пола", std::to_string(a.cache().documentCacheSizeMbMin()),
-          std::to_string(a.cache().documentCacheSizeMb()));
+    ZT_EQ("часы слияния истории — до потолка",
+          std::to_string(a.history().historyMergeHoursMax()),
+          std::to_string(a.history().historyMergeHours()));
     ZT_EQ("значение в границах взято как есть", std::string("7"),
-          std::to_string(a.editor().undoLimit()));
+          std::to_string(a.editor().tabWidth()));
     ZT_EQ("кегль — до потолка", std::to_string(int(a.style().baseFontPointMax())),
           std::to_string(int(a.style().baseFontPoint())));
-    ZT_EQ("кегль оболочки — до потолка", std::to_string(int(a.ui().sidebarFontPointMax())),
-          std::to_string(int(a.ui().sidebarFontPoint())));
+    ZT_EQ("кегль оболочки — до потолка", std::to_string(int(a.ui().appPointMax())),
+          std::to_string(int(a.ui().appPoint())));
 
     // Сеттер сам говорит, приняла ли настройка значение как есть.
     zametti::ZSettings own;
@@ -325,6 +311,8 @@ void checkClamping() {
     ZT_TRUE("умолчание полей бумаги в границах", def.pdf().setMarginMm(def.pdf().marginMm()));
 }
 
+}  // namespace
+
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -344,7 +332,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkLoadUnderstandsComments();
     checkClamping();
     checkTablesDefaults();
-    checkTablesFromConfig();
+    checkRegistryRoundTrip();
 
     qputenv(zametti::kConfigDirVar, previousHome);
     return zt::report("config");

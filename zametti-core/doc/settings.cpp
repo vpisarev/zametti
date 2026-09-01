@@ -14,6 +14,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QSet>
 #include <QStandardPaths>
 
 #ifdef Q_OS_WIN
@@ -30,10 +31,6 @@ namespace {
 
 ZSettings g_settings;
 
-QString colorToString(const QColor& c) {
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
-}
-
 // Значение из объекта, если оно там есть и нужного вида. Чужие и битые ключи
 // молча пропускаем: конфиг правят руками, и опечатка в одном параметре не
 // должна ронять остальные.
@@ -42,669 +39,295 @@ QString colorToString(const QColor& c) {
 // лог: настройки пользователя — пожелания, робастность выше них (решение
 // владельца), а молчать о поправленном нельзя — человек должен видеть, что его
 // число не взяли.
-void complainClamped(const QJsonObject& o, const char* key, const QJsonValue& v) {
-    Q_UNUSED(o);
-    std::fprintf(stderr, "setting «%s» = %g outside the allowed range — clamped to the edge\n",
-                 key, v.toDouble());
+void complainClamped(const char* section, const char* key, const QJsonValue& v) {
+    std::fprintf(stderr,
+                 "setting «%s.%s» = %g outside the allowed range — clamped to the edge\n",
+                 section, key, v.toDouble());
 }
 
-template <class Obj>
-void readReal(const QJsonObject& o, const char* key, Obj& obj, bool (Obj::*set)(qreal)) {
-    const QJsonValue v = o.value(QLatin1String(key));
-    if (v.isDouble() && !(obj.*set)(v.toDouble())) complainClamped(o, key, v);
-}
+// ОДНА ТАБЛИЦА НА ВЕСЬ ПУБЛИЧНЫЙ КОНФИГ.
+//
+// Здесь стояли две рукописные функции — settingsToJson и settingsFromJson, —
+// и они повторяли друг друга ключ в ключ: двести строк «записать» и двести
+// строк «прочитать». Разойтись им ничего не мешало, и они расходились: ключ,
+// который писали, но не читали, выглядел как работающая настройка ровно до
+// первой попытки ею воспользоваться.
+//
+// Теперь у ключа одна строка, и из неё выводится ВСЁ: --dump-config, шаблон
+// конфига (с подписью у каждого ключа — он же и есть меню для человека),
+// словарь известных имён и общая проверка «каждый ключ переживает круг JSON».
+//
+// ЧЕГО ЗДЕСЬ НЕТ — того нет и в конфиге. Внутренние коэффициенты отрисовки
+// (посадка буллета, скругление плашки кода, углы рамки выделенной картинки,
+// потолки поиска, бюджеты кэшей) остались полями со своими умолчаниями в
+// settings.h, но наружу не выходят: решение владельца — «убрать из JSON
+// совсем». Публичной настройке полагается своя предметная секция; если её
+// нет, сперва надо решить, должна ли настройка быть публичной вообще.
 
-template <class Obj>
-void readInt(const QJsonObject& o, const char* key, Obj& obj, bool (Obj::*set)(int)) {
-    const QJsonValue v = o.value(QLatin1String(key));
-    if (v.isDouble() && !(obj.*set)(v.toInt())) complainClamped(o, key, v);
-}
+using Key = ZSettings::Key;
 
-template <class Obj>
-void readBool(const QJsonObject& o, const char* key, Obj& obj, bool (Obj::*set)(bool)) {
-    const QJsonValue v = o.value(QLatin1String(key));
-    if (v.isBool()) (obj.*set)(v.toBool());
-}
-
-template <class Obj>
-void readString(const QJsonObject& o, const char* key, Obj& obj, bool (Obj::*set)(QString)) {
-    const QJsonValue v = o.value(QLatin1String(key));
-    if (v.isString()) (obj.*set)(v.toString());
-}
-
-template <class Obj>
-void readColor(const QJsonObject& o, const char* key, Obj& obj, bool (Obj::*set)(QColor)) {
-    const QJsonValue v = o.value(QLatin1String(key));
-    if (!v.isString()) return;
-    const QColor parsed = QColor::fromString(v.toString());
-    if (parsed.isValid()) (obj.*set)(parsed);
-}
-
-QString styleToString(CheckboxStyle s) {
-    switch (s) {
-        case CheckboxStyle::Glyph: return QStringLiteral("glyph");
-        case CheckboxStyle::Ascii: return QStringLiteral("ascii");
-        case CheckboxStyle::Drawn: return QStringLiteral("drawn");
+// Чтение идёт ЧЕРЕЗ СЕТТЕР, а он обрезает число до допустимого диапазона и
+// отвечает, принял ли значение как есть: настройки пользователя — пожелания,
+// робастность выше них (решение владельца). Ложь из set() значит «обрезано», и
+// загрузчик про это скажет. Значение не того вида молча пропускается: конфиг
+// правят руками, и опечатка в одном ключе не должна ронять остальные.
+#define ZM_KEY_REAL(section, name, note, part, lower, Upper)                            \
+    Key {                                                                               \
+        section, name, note, [](const ZSettings& a) { return QJsonValue(a.part.lower()); }, \
+            [](ZSettings& a, const QJsonValue& v) {                                     \
+                return !v.isDouble() || a.part.set##Upper(v.toDouble());                \
+            }                                                                           \
     }
-    return QStringLiteral("drawn");
+
+#define ZM_KEY_INT(section, name, note, part, lower, Upper)                             \
+    Key {                                                                               \
+        section, name, note, [](const ZSettings& a) { return QJsonValue(a.part.lower()); }, \
+            [](ZSettings& a, const QJsonValue& v) {                                     \
+                return !v.isDouble() || a.part.set##Upper(v.toInt());                   \
+            }                                                                           \
+    }
+
+#define ZM_KEY_BOOL(section, name, note, part, lower, Upper)                            \
+    Key {                                                                               \
+        section, name, note, [](const ZSettings& a) { return QJsonValue(a.part.lower()); }, \
+            [](ZSettings& a, const QJsonValue& v) {                                     \
+                if (v.isBool()) a.part.set##Upper(v.toBool());                          \
+                return true;                                                            \
+            }                                                                           \
+    }
+
+#define ZM_KEY_STR(section, name, note, part, lower, Upper)                             \
+    Key {                                                                               \
+        section, name, note, [](const ZSettings& a) { return QJsonValue(a.part.lower()); }, \
+            [](ZSettings& a, const QJsonValue& v) {                                     \
+                if (v.isString()) a.part.set##Upper(v.toString());                      \
+                return true;                                                            \
+            }                                                                           \
+    }
+
+// Ступени заголовков: шесть чисел по уровням. Короче списка — остальные
+// уровни остаются какими были; длиннее — лишнее отбрасывается.
+QJsonValue headingsToJson(const HeadingSteps& steps) {
+    QJsonArray out;
+    for (int v : steps) out.append(v);
+    return out;
 }
 
-template <class Obj>
-void readStyle(const QJsonObject& o, const char* key, Obj& obj, bool (Obj::*set)(CheckboxStyle)) {
-    const QJsonValue v = o.value(QLatin1String(key));
-    if (!v.isString()) return;
-    const QString s = v.toString();
-    if (s == QLatin1String("glyph")) (obj.*set)(CheckboxStyle::Glyph);
-    else if (s == QLatin1String("ascii")) (obj.*set)(CheckboxStyle::Ascii);
-    else if (s == QLatin1String("drawn")) (obj.*set)(CheckboxStyle::Drawn);
+HeadingSteps headingsFromJson(const QJsonValue& v, HeadingSteps steps) {
+    const QJsonArray given = v.toArray();
+    for (int i = 0; i < given.size() && i < int(steps.size()); ++i)
+        if (given.at(i).isDouble()) steps[size_t(i)] = given.at(i).toInt();
+    return steps;
 }
+
+const std::vector<Key>& keys() {
+    static const std::vector<Key> table = {
+        // --- ШРИФТЫ -------------------------------------------------------
+        // Кегли — в пунктах, ступени — в делениях лестницы Qt (−2…+4).
+        ZM_KEY_STR("fonts", "noteFamily", "main font of a note; may be proportional",
+                   style(), fontFamily, FontFamily),
+        ZM_KEY_REAL("fonts", "noteSize", "size of the note font, in points", style(),
+                    baseFontPoint, BaseFontPoint),
+        ZM_KEY_STR("fonts", "monospaceFamily", "code, source mode, history and this editor",
+                   style(), codeFamily, CodeFamily),
+        ZM_KEY_REAL("fonts", "monospaceSize",
+                    "size of the monospace font in the flat views, in points", style(),
+                    monospacePoint, MonospacePoint),
+        ZM_KEY_INT("fonts", "codeStep",
+                   "size of code INSIDE a note, as a step from the note font (-2..+4)",
+                   style(), codeStep, CodeStep),
+        ZM_KEY_STR("fonts", "appFamily", "font of the shell: tree, list, panels, dialogs",
+                   ui(), appFamily, AppFamily),
+        ZM_KEY_REAL("fonts", "appSize",
+                    "size of the shell font; toolbar icons and paddings follow it", ui(),
+                    appPoint, AppPoint),
+        Key{"fonts", "headingSteps", "size of headings 1..6, as steps from the note font",
+            [](const ZSettings& a) { return headingsToJson(a.style().headingStep()); },
+            [](ZSettings& a, const QJsonValue& v) {
+                a.style().setHeadingStep(headingsFromJson(v, a.style().headingStep()));
+                return true;
+            }},
+        ZM_KEY_REAL("fonts", "mathScale", "formula ink against text ink", formulas(),
+                    mathScale, MathScale),
+
+        // --- РИТМ СТРАНИЦЫ ------------------------------------------------
+        ZM_KEY_REAL("layout", "maxContentWidth", "column width, in widths of 'A'", style(),
+                    maxContentWidth, MaxContentWidth),
+        ZM_KEY_REAL("layout", "lineHeightFactor", "line height, as a factor of the font height",
+                    style(), lineHeightFactor, LineHeightFactor),
+        ZM_KEY_REAL("layout", "blockSpacing", "air between blocks, in line heights", style(),
+                    blockSpacing, BlockSpacing),
+        ZM_KEY_REAL("layout", "listIndent", "indent of a list level, in widths of 'A'", style(),
+                    listIndent, ListIndent),
+        ZM_KEY_REAL("layout", "quoteIndent", "indent of a quote, in widths of 'A'", style(),
+                    quoteIndent, QuoteIndent),
+
+        // --- ПРАВКА --------------------------------------------------------
+        ZM_KEY_INT("editor", "autosaveDelayMs", "pause in typing after which the note is written",
+                   editor(), autosaveDelayMs, AutosaveDelayMs),
+        ZM_KEY_INT("editor", "tabWidth", "tab stop in code, source mode and this editor, in spaces",
+                   editor(), tabWidth, TabWidth),
+        ZM_KEY_STR("editor", "externalEditor", "command to open a note elsewhere; %f is the path",
+                   editor(), externalEditor, ExternalEditor),
+        ZM_KEY_INT("editor", "historyMergeChars",
+                   "an edit smaller than this replaces the previous history entry", history(),
+                   historyMergeChars, HistoryMergeChars),
+        ZM_KEY_INT("editor", "historyMergeHours", "...and only if that entry is younger than this",
+                   history(), historyMergeHours, HistoryMergeHours),
+        // Автозамены: список пар [сочетание, что вставить]. Заданный список
+        // заменяет умолчания целиком — иначе от умолчания было бы не избавиться.
+        Key{"editor", "special", "chords that insert a character: [[\"Alt+-\", \"---\"]]",
+            [](const ZSettings& a) {
+                QJsonArray out;
+                for (const auto& pair : a.editor().specialKeys())
+                    out.append(QJsonArray{pair.first, pair.second});
+                return QJsonValue(out);
+            },
+            [](ZSettings& a, const QJsonValue& v) {
+                if (!v.isArray()) return true;
+                ZSettings::KeyPairs pairs;
+                for (const QJsonValue& entry : v.toArray()) {
+                    const QJsonArray pair = entry.toArray();
+                    if (pair.size() != 2 || !pair.at(0).isString() || !pair.at(1).isString())
+                        continue;   // битую запись пропускаем, соседние живут
+                    if (pair.at(0).toString().isEmpty()) continue;
+                    pairs.push_back({pair.at(0).toString(), pair.at(1).toString()});
+                }
+                a.editor().setSpecialKeys(std::move(pairs));
+                return true;
+            }},
+
+        // --- СОЧЕТАНИЯ КЛАВИШ ----------------------------------------------
+        // Строкой, как их пишет QKeySequence; несколько — через точку с
+        // запятой; пустая строка убирает сочетание совсем. Суффикс «Key» у имён
+        // не нужен: секция уже называется shortcuts.
+        ZM_KEY_STR("shortcuts", "fullscreen", "hide everything but the text", editor(),
+                   fullscreenKey, FullscreenKey),
+        ZM_KEY_STR("shortcuts", "makeBullet", "turn blocks into a bullet list", editor(),
+                   makeBulletKey, MakeBulletKey),
+        ZM_KEY_STR("shortcuts", "makeOrdered", "turn blocks into a numbered list", editor(),
+                   makeOrderedKey, MakeOrderedKey),
+        ZM_KEY_STR("shortcuts", "makeTask", "turn blocks into a task list", editor(),
+                   makeTaskKey, MakeTaskKey),
+        ZM_KEY_STR("shortcuts", "makeParagraph", "turn blocks back into plain paragraphs",
+                   editor(), makeParagraphKey, MakeParagraphKey),
+        ZM_KEY_STR("shortcuts", "makeComment", "wrap blocks into an HTML comment", editor(),
+                   makeCommentKey, MakeCommentKey),
+        ZM_KEY_STR("shortcuts", "toggleTask", "check or uncheck a task", editor(), toggleTaskKey,
+                   ToggleTaskKey),
+        ZM_KEY_STR("shortcuts", "moveUp", "move the current item up", editor(), moveUpKey,
+                   MoveUpKey),
+        ZM_KEY_STR("shortcuts", "moveDown", "move the current item down", editor(), moveDownKey,
+                   MoveDownKey),
+        ZM_KEY_STR("shortcuts", "markdownMode", "show the note as raw markdown; empty by default",
+                   editor(), markdownModeKey, MarkdownModeKey),
+        ZM_KEY_STR("shortcuts", "diffNext", "next change in the history mode", editor(),
+                   diffNextKey, DiffNextKey),
+        ZM_KEY_STR("shortcuts", "diffPrevious", "previous change in the history mode", editor(),
+                   diffPreviousKey, DiffPreviousKey),
+        ZM_KEY_STR("shortcuts", "jsonComment", "comment out lines in this editor", jsonEditing(),
+                   commentKey, CommentKey),
+
+        // --- КАРТИНКИ -------------------------------------------------------
+        ZM_KEY_INT("images", "maxImportedSize",
+                   "imported pictures are shrunk to this side, in pixels", images(),
+                   maxImportedImageSize, MaxImportedImageSize),
+        ZM_KEY_INT("images", "maxDeletedSize",
+                   "a picture kept in the trash is shrunk to this side, in pixels", images(),
+                   maxDeletedImageSize, MaxDeletedImageSize),
+        ZM_KEY_BOOL("images", "captions", "show the alt-text under a picture", style(),
+                    imageCaption, ImageCaption),
+        // Битый регэксп настройку не меняет: молча спрятать все подписи (или ни
+        // одной) из-за опечатки в конфиге нельзя.
+        Key{"images", "nonamePattern", "alt-texts matching this are NOT shown (camera names)",
+            [](const ZSettings& a) {
+                return QJsonValue(a.style().imageNonameCaption().pattern());
+            },
+            [](ZSettings& a, const QJsonValue& v) {
+                if (!v.isString()) return true;
+                const QRegularExpression candidate(v.toString(),
+                                                   QRegularExpression::CaseInsensitiveOption);
+                if (candidate.isValid()) a.style().setImageNonameCaption(candidate);
+                return true;
+            }},
+        ZM_KEY_INT("images", "viewerMaxZoomPercent",
+                   "how much the full-screen viewer may enlarge a small picture", imageViewer(),
+                   maxZoomPercent, MaxZoomPercent),
+
+        // --- ХРАНИЛИЩЕ ------------------------------------------------------
+        ZM_KEY_STR("store", "root", "store to open when none is given; relative to $HOME",
+                   store(), notesRoot, NotesRoot),
+        ZM_KEY_STR("store", "title", "label of the root row; empty means 'All notes'", store(),
+                   storeTitle, StoreTitle),
+        ZM_KEY_BOOL("store", "watchFolder", "re-read the store when files change behind our back",
+                    store(), watchStore, WatchStore),
+
+        // --- ОБЛАКО ---------------------------------------------------------
+        ZM_KEY_BOOL("sync", "onStart", "pull other devices' edits when starting", sync(), onStart,
+                    OnStart),
+        ZM_KEY_BOOL("sync", "onExit", "push our own edits when quitting", sync(), onExit, OnExit),
+
+        // --- БУМАГА ---------------------------------------------------------
+        // У бумаги своя типографика: экранный масштаб на неё не влияет вовсе.
+        ZM_KEY_STR("pdf", "fontFamily", "main font on paper", pdf(), fontFamily, FontFamily),
+        ZM_KEY_REAL("pdf", "fontSize", "size of the main font on paper, in points", pdf(),
+                    pointSize, PointSize),
+        ZM_KEY_STR("pdf", "monospaceFamily", "code font on paper", pdf(), codeFamily, CodeFamily),
+        ZM_KEY_INT("pdf", "codeStep", "size of code on paper, as a step from the main font",
+                   pdf(), codeStep, CodeStep),
+        Key{"pdf", "headingSteps", "size of headings 1..6 on paper",
+            [](const ZSettings& a) { return headingsToJson(a.pdf().headingStep()); },
+            [](ZSettings& a, const QJsonValue& v) {
+                a.pdf().setHeadingStep(headingsFromJson(v, a.pdf().headingStep()));
+                return true;
+            }},
+        ZM_KEY_STR("pdf", "pageSize", "A4, Letter, A5...", pdf(), pageSize, PageSize),
+        ZM_KEY_REAL("pdf", "marginMm", "page margins, in millimetres", pdf(), marginMm, MarginMm),
+        ZM_KEY_INT("pdf", "imageDpi", "resolution of pictures on paper", pdf(), imageDpi,
+                   ImageDpi),
+        ZM_KEY_INT("pdf", "maxImageSize", "pictures are shrunk to this side before export", pdf(),
+                   maxExportedImageSize, MaxExportedImageSize),
+
+        // --- ЖУРНАЛЫ ---------------------------------------------------------
+        ZM_KEY_BOOL("logs", "writeErrLog", "write err.log next to this file", logs(), writeErrLog,
+                    WriteErrLog),
+        ZM_KEY_BOOL("logs", "writeSyncLog", "write sync.log next to this file", logs(),
+                    writeSyncLog, WriteSyncLog),
+        ZM_KEY_INT("logs", "logSizeMb", "cap on the size of each log, in megabytes", logs(),
+                   logSizeMb, LogSizeMb),
+    };
+    return table;
+}
+
+#undef ZM_KEY_REAL
+#undef ZM_KEY_INT
+#undef ZM_KEY_BOOL
+#undef ZM_KEY_STR
 
 QJsonObject settingsToJson(const ZSettings& a) {
-    QJsonArray shapes;
-    for (BulletShape shape : a.style().bulletShapes())
-        shapes.append(shape == BulletShape::Circle   ? QStringLiteral("circle")
-                      : shape == BulletShape::Square ? QStringLiteral("square")
-                                                     : QStringLiteral("disc"));
-
-    QJsonArray headings;
-    for (int v : a.style().headingStep()) headings.append(v);
-
-    QJsonObject font{
-        {QStringLiteral("family"), a.style().fontFamily()},
-        {QStringLiteral("pointSize"), a.style().baseFontPoint()},
-        {QStringLiteral("symbolFamily"), a.style().symbolFamily()},
-        {QStringLiteral("codeFamily"), a.style().codeFamily()},
-        {QStringLiteral("codeLangFamily"), a.style().codeLangFamily()},
-        {QStringLiteral("codeStep"), a.style().codeStep()},
-        {QStringLiteral("diffStep"), a.style().diffStep()},
-        {QStringLiteral("headingStep"), headings},
-        {QStringLiteral("fallbackStep"), a.style().fallbackStep()},
-    };
-
-    QJsonObject formulas{
-        {QStringLiteral("inlineScale"), a.formulas().inlineScale()},
-        {QStringLiteral("displayScale"), a.formulas().displayScale()},
-    };
-
-    QJsonObject tables{
-        {QStringLiteral("cellPadding"), a.tables().cellPadding()},
-        {QStringLiteral("cellPaddingY"), a.tables().cellPaddingY()},
-        {QStringLiteral("borderColor"), colorToString(a.tables().borderColor())},
-        {QStringLiteral("horizontalBorder"), a.tables().horizontalBorder()},
-        {QStringLiteral("verticalBorder"), a.tables().verticalBorder()},
-        {QStringLiteral("headerSeparator"), a.tables().headerSeparator()},
-        {QStringLiteral("rowSeparator"), a.tables().rowSeparator()},
-        {QStringLiteral("columnSeparator"), a.tables().columnSeparator()},
-        {QStringLiteral("headerColor"), colorToString(a.tables().headerColor())},
-        {QStringLiteral("tableColor"), colorToString(a.tables().tableColor())},
-        {QStringLiteral("altTableColor"), colorToString(a.tables().altTableColor())},
-    };
-
-    QJsonArray paperHeadings;
-    for (int v : a.pdf().headingStep()) paperHeadings.append(v);
-    QJsonObject pdf{
-        {QStringLiteral("fontFamily"), a.pdf().fontFamily()},
-        {QStringLiteral("pointSize"), a.pdf().pointSize()},
-        {QStringLiteral("codeFamily"), a.pdf().codeFamily()},
-        {QStringLiteral("codeStep"), a.pdf().codeStep()},
-        {QStringLiteral("headingStep"), paperHeadings},
-        {QStringLiteral("pageSize"), a.pdf().pageSize()},
-        {QStringLiteral("marginMm"), a.pdf().marginMm()},
-        {QStringLiteral("imageDpi"), a.pdf().imageDpi()},
-        {QStringLiteral("maxExportedImageSize"), a.pdf().maxExportedImageSize()},
-        {QStringLiteral("codeStripHeight"), a.pdf().codeStripHeight()},
-    };
-
-    QJsonObject layout{
-        {QStringLiteral("lineHeightFactor"), a.style().lineHeightFactor()},
-        {QStringLiteral("listLineHeightFactor"), a.style().listLineHeightFactor()},
-        {QStringLiteral("blockSpacing"), a.style().blockSpacing()},
-        {QStringLiteral("listIndent"), a.style().listIndent()},
-        {QStringLiteral("codeIndent"), a.style().codeIndent()},
-        {QStringLiteral("codePadLeft"), a.style().codePadLeft()},
-        {QStringLiteral("codeStripHeight"), a.style().codeStripHeight()},
-        {QStringLiteral("codePadTop"), a.style().codePadTop()},
-        {QStringLiteral("codeCornerRadius"), a.style().codeCornerRadius()},
-        {QStringLiteral("codeCopyIconScale"), a.style().codeCopyIconScale()},
-        {QStringLiteral("codeLangPointSize"), a.style().codeLangPointSize()},
-        {QStringLiteral("codeStripPadding"), a.style().codeStripPadding()},
-        {QStringLiteral("codeLangGap"), a.style().codeLangGap()},
-        {QStringLiteral("quoteIndent"), a.style().quoteIndent()},
-        {QStringLiteral("sideMargin"), a.style().sideMargin()},
-        {QStringLiteral("verticalMargin"), a.style().verticalMargin()},
-        {QStringLiteral("maxContentWidth"), a.style().maxContentWidth()},
-        {QStringLiteral("caretWidth"), a.style().caretWidth()},
-        {QStringLiteral("dividerWidth"), a.style().dividerWidth()},
-    };
-
-    QJsonObject colors{
-        {QStringLiteral("pageBackground"), colorToString(a.style().pageBackground())},
-        {QStringLiteral("historyBackground"), colorToString(a.style().historyBackground())},
-        {QStringLiteral("selectionBackground"), colorToString(a.style().selectionBackground())},
-        {QStringLiteral("selectionForeground"), colorToString(a.style().selectionForeground())},
-        {QStringLiteral("searchHighlight"), colorToString(a.style().searchHighlight())},
-        {QStringLiteral("diffAdded"), colorToString(a.style().diffAdded())},
-        {QStringLiteral("diffRemoved"), colorToString(a.style().diffRemoved())},
-        {QStringLiteral("diffChanged"), colorToString(a.style().diffChanged())},
-        {QStringLiteral("link"), colorToString(a.style().linkColor())},
-        {QStringLiteral("quote"), colorToString(a.style().quoteColor())},
-        {QStringLiteral("rawSource"), colorToString(a.style().rawColor())},
-        {QStringLiteral("divider"), colorToString(a.style().dividerColor())},
-        {QStringLiteral("codeBackground"), colorToString(a.style().codeBackground())},
-        {QStringLiteral("codeLang"), colorToString(a.style().codeLangColor())},
-        {QStringLiteral("caret"), colorToString(a.style().caretColor())},
-    };
-
-    QJsonObject list{
-        {QStringLiteral("bulletColor"), colorToString(a.style().bulletColor())},
-        {QStringLiteral("orderedColor"), colorToString(a.style().orderedColor())},
-        {QStringLiteral("bulletStyle"),
-         a.style().bulletStyle() == BulletStyle::Glyph ? QStringLiteral("glyph")
-                                             : QStringLiteral("drawn")},
-        {QStringLiteral("bulletDiameter"), a.style().bulletDiameter()},
-        {QStringLiteral("bulletStrokeWidth"), a.style().bulletStrokeWidth()},
-        {QStringLiteral("bulletSquareSide"), a.style().bulletSquareSide()},
-        {QStringLiteral("bulletShapes"), shapes},
-        {QStringLiteral("bulletRise"), a.style().bulletRise()},
-        {QStringLiteral("orderedRise"), a.style().orderedRise()},
-        {QStringLiteral("bullet"), a.style().bulletGlyph()},
-        {QStringLiteral("bulletScale"), a.style().bulletScale()},
-        {QStringLiteral("bulletTextGap"), a.style().bulletTextGap()},
-        {QStringLiteral("orderedTextGap"), a.style().orderedTextGap()},
-    };
-
-    QJsonObject checkbox{
-        {QStringLiteral("style"), styleToString(a.style().checkboxStyle())},
-        {QStringLiteral("checkedColor"), colorToString(a.style().checkboxCheckedColor())},
-        {QStringLiteral("uncheckedColor"), colorToString(a.style().checkboxUncheckedColor())},
-        {QStringLiteral("tickColor"), colorToString(a.style().checkboxTickColor())},
-        {QStringLiteral("penWidth"), a.style().checkboxPenWidth()},
-        {QStringLiteral("cornerRadius"), a.style().checkboxCornerRadius()},
-        {QStringLiteral("opticalRise"), a.style().checkboxOpticalRise()},
-        {QStringLiteral("glyphScale"), a.style().checkboxGlyphScale()},
-        {QStringLiteral("textGap"), a.style().checkboxTextGap()},
-    };
-
-    QJsonObject notes{
-        {QStringLiteral("root"), a.store().notesRoot()},
-        {QStringLiteral("title"), a.store().storeTitle()},
-        {QStringLiteral("watchFolder"), a.store().watchStore()},
-    };
-
-    QJsonObject noteList{
-        {QStringLiteral("width"), a.ui().noteListWidth()},
-        {QStringLiteral("snippetLines"), a.ui().noteListSnippetLines()},
-        {QStringLiteral("snippetColor"), colorToString(a.ui().noteListSnippetColor())},
-        {QStringLiteral("dateColor"), colorToString(a.ui().noteListDateColor())},
-    };
-
-    QJsonObject sidebar{
-        {QStringLiteral("fontFamily"), a.ui().sidebarFontFamily()},
-        {QStringLiteral("fontSize"), a.ui().sidebarFontPoint()},
-        {QStringLiteral("width"), a.ui().sidebarWidth()},
-        {QStringLiteral("folderColor"), colorToString(a.ui().sidebarFolderColor())},
-    };
-
-    QJsonObject imageSelection{
-        {QStringLiteral("cornerShare"), a.style().imageCornerShare()},
-        {QStringLiteral("cornerMinLength"), a.style().imageCornerMinLength()},
-        {QStringLiteral("cornerWidth"), a.style().imageCornerWidth()},
-        {QStringLiteral("cornerOffset"), a.style().imageCornerOffset()},
-    };
-
-    QJsonObject imageCaption{
-        {QStringLiteral("shown"), a.style().imageCaption()},
-        {QStringLiteral("family"), a.style().imageCaptionFamily()},
-        {QStringLiteral("fontPoints"), a.style().imageCaptionPoints()},
-        {QStringLiteral("gap"), a.style().imageCaptionGap()},
-        {QStringLiteral("color"), colorToString(a.style().imageCaptionColor())},
-        {QStringLiteral("noname"), a.style().imageNonameCaption().pattern()},
-    };
-
-    QJsonObject statusBar{
-        {QStringLiteral("background"), colorToString(a.ui().statusBackground())},
-        {QStringLiteral("textColor"), colorToString(a.ui().statusTextColor())},
-        {QStringLiteral("separatorColor"), colorToString(a.ui().statusSeparatorColor())},
-    };
-
-    QJsonObject toolbar{
-        {QStringLiteral("background"), colorToString(a.ui().toolbarBackground())},
-        {QStringLiteral("iconColor"), colorToString(a.ui().toolbarIconColor())},
-        {QStringLiteral("iconHoverColor"), colorToString(a.ui().toolbarIconHoverColor())},
-        {QStringLiteral("iconOnColor"), colorToString(a.ui().toolbarIconOnColor())},
-        {QStringLiteral("iconMarkColor"), colorToString(a.ui().toolbarIconMarkColor())},
-        {QStringLiteral("iconDisabledColor"), colorToString(a.ui().toolbarIconDisabledColor())},
-        {QStringLiteral("hoverBackground"), colorToString(a.ui().toolbarHoverBackground())},
-        {QStringLiteral("separatorColor"), colorToString(a.ui().toolbarSeparatorColor())},
-    };
-
-    QJsonObject find{
-        {QStringLiteral("badPatternColor"), colorToString(a.ui().findBadPatternColor())},
-        {QStringLiteral("matchLimit"), a.ui().findMatchLimit()},
-        {QStringLiteral("historyLimit"), a.ui().findHistoryLimit()},
-    };
-
-    QJsonArray special;
-    for (const auto& [keys, text] : a.editor().specialKeys()) {
-        QJsonArray pair;
-        pair.append(keys);
-        pair.append(text);
-        special.append(pair);
+    QJsonObject root;
+    for (const Key& key : ZSettings::registry()) {
+        const QString section = QString::fromLatin1(key.section);
+        QJsonObject inner = root.value(section).toObject();
+        inner.insert(QString::fromLatin1(key.name), key.get(a));
+        root.insert(section, inner);
     }
-
-    QJsonObject editor{
-        {QStringLiteral("autosaveDelayMs"), a.editor().autosaveDelayMs()},
-        {QStringLiteral("undoCoalesceMs"), a.editor().undoCoalesceMs()},
-        {QStringLiteral("statsDelayMs"), a.editor().statsDelayMs()},
-        {QStringLiteral("undoLimit"), a.editor().undoLimit()},
-        {QStringLiteral("undoRunChars"), a.editor().undoRunChars()},
-        {QStringLiteral("historyMergeChars"), a.history().historyMergeChars()},
-        {QStringLiteral("historyMergeHours"), a.history().historyMergeHours()},
-        {QStringLiteral("undoBudgetMb"), a.editor().undoBudgetMb()},
-        {QStringLiteral("imageCacheSizeMb"), a.cache().imageCacheSizeMb()},
-        {QStringLiteral("maxLoadedImageSize"), a.cache().maxLoadedImageSize()},
-        {QStringLiteral("documentCacheSizeMb"), a.cache().documentCacheSizeMb()},
-        {QStringLiteral("toggleTaskKey"), a.editor().toggleTaskKey()},
-        {QStringLiteral("moveUpKey"), a.editor().moveUpKey()},
-        {QStringLiteral("moveDownKey"), a.editor().moveDownKey()},
-        {QStringLiteral("makeBulletKey"), a.editor().makeBulletKey()},
-        {QStringLiteral("makeOrderedKey"), a.editor().makeOrderedKey()},
-        {QStringLiteral("makeTaskKey"), a.editor().makeTaskKey()},
-        {QStringLiteral("makeParagraphKey"), a.editor().makeParagraphKey()},
-        {QStringLiteral("makeCommentKey"), a.editor().makeCommentKey()},
-        {QStringLiteral("markdownModeKey"), a.editor().markdownModeKey()},
-        {QStringLiteral("fullscreenKey"), a.editor().fullscreenKey()},
-        {QStringLiteral("codeTabWidth"), a.editor().codeTabWidth()},
-        {QStringLiteral("special"), special},
-        {QStringLiteral("externalEditor"), a.editor().externalEditor()},
-    };
-
-    // ТОЛЬКО S. Остальные числа импорта настройке не подлежат — решение
-    // владельца, и вот его причина: они выведены замерами на большом корпусе и
-    // СОГЛАСОВАНЫ МЕЖДУ СОБОЙ. Произвольная смена одного ломает логику
-    // остальных — например, качество и порог пережатия подобраны так, чтобы
-    // спор с исходником имел смысл; сдвинь одно, и правило станет либо
-    // бесполезным, либо вредным. Значения живут в settings.h, и менять их
-    // можно только правкой кода, то есть осознанно и с новым замером.
-    QJsonObject images{
-        {QStringLiteral("maxImportedImageSize"), a.images().maxImportedImageSize()},
-        {QStringLiteral("maxDeletedImageSize"), a.images().maxDeletedImageSize()},
-    };
-
-    // Сочетания клавиш, которым суждено разойтись по системам. Пока их два —
-    // ходьба по изменённым местам в истории: на маке F4 занята системой.
-    QJsonObject shortcuts{
-        {QStringLiteral("diffNext"), a.editor().diffNextKey()},
-        {QStringLiteral("diffPrevious"), a.editor().diffPreviousKey()},
-    };
-
-    QJsonObject scroll{
-        {QStringLiteral("smooth"), a.ui().smoothScroll()},
-        {QStringLiteral("smoothMs"), a.ui().smoothScrollMs()},
-    };
-
-    QJsonObject sync{
-        {QStringLiteral("url"), a.sync().url()},
-        {QStringLiteral("user"), a.sync().user()},
-        {QStringLiteral("cloudDir"), a.sync().cloudDir()},
-        {QStringLiteral("timeoutMs"), a.sync().timeoutMs()},
-        {QStringLiteral("onStart"), a.sync().onStart()},
-        {QStringLiteral("onExit"), a.sync().onExit()},
-    };
-
-    QJsonObject logs{
-        {QStringLiteral("writeErrLog"), a.logs().writeErrLog()},
-        {QStringLiteral("writeSyncLog"), a.logs().writeSyncLog()},
-        {QStringLiteral("logSizeMb"), a.logs().logSizeMb()},
-    };
-
-    return QJsonObject{
-        {QStringLiteral("font"), font},
-        {QStringLiteral("pdf"), pdf},
-        {QStringLiteral("sync"), sync},
-        {QStringLiteral("logs"), logs},
-        {QStringLiteral("layout"), layout},
-        {QStringLiteral("colors"), colors},
-        {QStringLiteral("list"), list},
-        {QStringLiteral("checkbox"), checkbox},
-        {QStringLiteral("notes"), notes},
-        {QStringLiteral("sidebar"), sidebar},
-        {QStringLiteral("noteList"), noteList},
-        {QStringLiteral("toolbar"), toolbar},
-        {QStringLiteral("statusBar"), statusBar},
-        {QStringLiteral("imageSelection"), imageSelection},
-        {QStringLiteral("imageCaption"), imageCaption},
-        {QStringLiteral("find"), find},
-        {QStringLiteral("editor"), editor},
-        {QStringLiteral("tables"), tables},
-        {QStringLiteral("markdownHighlighting"),
-         QJsonObject{{QStringLiteral("accent"), colorToString(a.markdownHighlighting().accent())},
-                     {QStringLiteral("codeBackground"),
-                      colorToString(a.markdownHighlighting().codeBackground())},
-                     {QStringLiteral("link"), colorToString(a.markdownHighlighting().link())},
-                     {QStringLiteral("image"), colorToString(a.markdownHighlighting().image())},
-                     {QStringLiteral("comment"), colorToString(a.markdownHighlighting().comment())},
-                     {QStringLiteral("headingStep"), a.markdownHighlighting().headingStep()},
-                     {QStringLiteral("largeHeadingLevels"),
-                      a.markdownHighlighting().largeHeadingLevels()}}},
-        {QStringLiteral("jsonEditing"),
-         QJsonObject{{QStringLiteral("key"), colorToString(a.jsonEditing().key())},
-                     {QStringLiteral("string"), colorToString(a.jsonEditing().string())},
-                     {QStringLiteral("number"), colorToString(a.jsonEditing().number())},
-                     {QStringLiteral("keyword"), colorToString(a.jsonEditing().keyword())},
-                     {QStringLiteral("comment"), colorToString(a.jsonEditing().comment())},
-                     {QStringLiteral("punctuation"), colorToString(a.jsonEditing().punctuation())},
-                     {QStringLiteral("tabIndent"), a.jsonEditing().tabIndent()},
-                     {QStringLiteral("commentKey"), a.jsonEditing().commentKey()}}},
-        {QStringLiteral("imageViewer"),
-         QJsonObject{{QStringLiteral("background"), colorToString(a.imageViewer().background())},
-                     {QStringLiteral("captionColor"), colorToString(a.imageViewer().captionColor())},
-                     {QStringLiteral("captionPoints"), a.imageViewer().captionPoints()},
-                     {QStringLiteral("maxZoomPercent"), a.imageViewer().maxZoomPercent()},
-                     {QStringLiteral("margin"), a.imageViewer().margin()}}},
-        {QStringLiteral("formulas"), formulas},
-        {QStringLiteral("images"), images},
-        {QStringLiteral("shortcuts"), shortcuts},
-        {QStringLiteral("scroll"), scroll},
-    };
+    return root;
 }
 
 void settingsFromJson(const QJsonObject& root, ZSettings& a) {
-    const QJsonObject font = root.value(QStringLiteral("font")).toObject();
-    readString(font, "family", a.style(), &ZDocStyle::setFontFamily);
-    readReal(font, "pointSize", a.style(), &ZDocStyle::setBaseFontPoint);
-    readString(font, "symbolFamily", a.style(), &ZDocStyle::setSymbolFamily);
-    readString(font, "codeFamily", a.style(), &ZDocStyle::setCodeFamily);
-    readString(font, "codeLangFamily", a.style(), &ZDocStyle::setCodeLangFamily);
-    readInt(font, "codeStep", a.style(), &ZDocStyle::setCodeStep);
-    readInt(font, "diffStep", a.style(), &ZDocStyle::setDiffStep);
-    readInt(font, "fallbackStep", a.style(), &ZDocStyle::setFallbackStep);
-    const QJsonArray headings = font.value(QStringLiteral("headingStep")).toArray();
-    {
-        ZSettings::HeadingSteps steps = a.style().headingStep();
-        for (int i = 0; i < headings.size() && i < int(steps.size()); ++i)
-            if (headings.at(i).isDouble()) steps[size_t(i)] = headings.at(i).toInt();
-        a.style().setHeadingStep(steps);
+    for (const Key& key : ZSettings::registry()) {
+        const QJsonValue section = root.value(QString::fromLatin1(key.section));
+        if (!section.isObject()) continue;
+        const QJsonValue value = section.toObject().value(QString::fromLatin1(key.name));
+        if (value.isUndefined()) continue;
+        if (!key.set(a, value)) complainClamped(key.section, key.name, value);
     }
-
-    const QJsonObject formulas = root.value(QStringLiteral("formulas")).toObject();
-    readReal(formulas, "inlineScale", a.formulas(), &ZSettings::Formulas::setInlineScale);
-    readReal(formulas, "displayScale", a.formulas(), &ZSettings::Formulas::setDisplayScale);
-
-    const QJsonObject markdown = root.value(QStringLiteral("markdownHighlighting")).toObject();
-    readColor(markdown, "accent", a.markdownHighlighting(), &ZSettings::MarkdownHighlighting::setAccent);
-    readColor(markdown, "codeBackground", a.markdownHighlighting(),
-              &ZSettings::MarkdownHighlighting::setCodeBackground);
-    readColor(markdown, "link", a.markdownHighlighting(), &ZSettings::MarkdownHighlighting::setLink);
-    readColor(markdown, "image", a.markdownHighlighting(), &ZSettings::MarkdownHighlighting::setImage);
-    readColor(markdown, "comment", a.markdownHighlighting(), &ZSettings::MarkdownHighlighting::setComment);
-    readInt(markdown, "headingStep", a.markdownHighlighting(),
-            &ZSettings::MarkdownHighlighting::setHeadingStep);
-    readInt(markdown, "largeHeadingLevels", a.markdownHighlighting(),
-            &ZSettings::MarkdownHighlighting::setLargeHeadingLevels);
-
-    const QJsonObject viewer = root.value(QStringLiteral("imageViewer")).toObject();
-    readColor(viewer, "background", a.imageViewer(), &ZSettings::ImageViewer::setBackground);
-    readColor(viewer, "captionColor", a.imageViewer(), &ZSettings::ImageViewer::setCaptionColor);
-    readReal(viewer, "captionPoints", a.imageViewer(), &ZSettings::ImageViewer::setCaptionPoints);
-    readInt(viewer, "maxZoomPercent", a.imageViewer(), &ZSettings::ImageViewer::setMaxZoomPercent);
-    readInt(viewer, "margin", a.imageViewer(), &ZSettings::ImageViewer::setMargin);
-
-    const QJsonObject json = root.value(QStringLiteral("jsonEditing")).toObject();
-    readColor(json, "key", a.jsonEditing(), &ZSettings::JsonEditing::setKey);
-    readColor(json, "string", a.jsonEditing(), &ZSettings::JsonEditing::setString);
-    readColor(json, "number", a.jsonEditing(), &ZSettings::JsonEditing::setNumber);
-    readColor(json, "keyword", a.jsonEditing(), &ZSettings::JsonEditing::setKeyword);
-    readColor(json, "comment", a.jsonEditing(), &ZSettings::JsonEditing::setComment);
-    readColor(json, "punctuation", a.jsonEditing(), &ZSettings::JsonEditing::setPunctuation);
-    readInt(json, "tabIndent", a.jsonEditing(), &ZSettings::JsonEditing::setTabIndent);
-    readString(json, "commentKey", a.jsonEditing(), &ZSettings::JsonEditing::setCommentKey);
-
-    const QJsonObject tables = root.value(QStringLiteral("tables")).toObject();
-    readReal(tables, "cellPadding", a.tables(), &ZSettings::Tables::setCellPadding);
-    readReal(tables, "cellPaddingY", a.tables(), &ZSettings::Tables::setCellPaddingY);
-    readColor(tables, "borderColor", a.tables(), &ZSettings::Tables::setBorderColor);
-    readReal(tables, "horizontalBorder", a.tables(), &ZSettings::Tables::setHorizontalBorder);
-    readReal(tables, "verticalBorder", a.tables(), &ZSettings::Tables::setVerticalBorder);
-    readReal(tables, "headerSeparator", a.tables(), &ZSettings::Tables::setHeaderSeparator);
-    readReal(tables, "rowSeparator", a.tables(), &ZSettings::Tables::setRowSeparator);
-    readReal(tables, "columnSeparator", a.tables(), &ZSettings::Tables::setColumnSeparator);
-    readColor(tables, "headerColor", a.tables(), &ZSettings::Tables::setHeaderColor);
-    readColor(tables, "tableColor", a.tables(), &ZSettings::Tables::setTableColor);
-    readColor(tables, "altTableColor", a.tables(), &ZSettings::Tables::setAltTableColor);
-
-    // Облачная синхронизация. Секретов здесь нет — только адрес, логин,
-    // каталог и два ключа поведения.
-    const QJsonObject sync = root.value(QStringLiteral("sync")).toObject();
-    readString(sync, "url", a.sync(), &ZSettings::Sync::setUrl);
-    readString(sync, "user", a.sync(), &ZSettings::Sync::setUser);
-    // Прежний ключ remoteDir читается запасным путём (§0): новый — сильнее.
-    readString(sync, "remoteDir", a.sync(), &ZSettings::Sync::setCloudDir);
-    readString(sync, "cloudDir", a.sync(), &ZSettings::Sync::setCloudDir);
-    readInt(sync, "timeoutMs", a.sync(), &ZSettings::Sync::setTimeoutMs);
-    readBool(sync, "onStart", a.sync(), &ZSettings::Sync::setOnStart);
-    readBool(sync, "onExit", a.sync(), &ZSettings::Sync::setOnExit);
-
-    const QJsonObject logs = root.value(QStringLiteral("logs")).toObject();
-    readBool(logs, "writeErrLog", a.logs(), &ZSettings::Logs::setWriteErrLog);
-    readBool(logs, "writeSyncLog", a.logs(), &ZSettings::Logs::setWriteSyncLog);
-    readInt(logs, "logSizeMb", a.logs(), &ZSettings::Logs::setLogSizeMb);
-
-    const QJsonObject paper = root.value(QStringLiteral("pdf")).toObject();
-    readString(paper, "fontFamily", a.pdf(), &ZSettings::Pdf::setFontFamily);
-    readReal(paper, "pointSize", a.pdf(), &ZSettings::Pdf::setPointSize);
-    readString(paper, "codeFamily", a.pdf(), &ZSettings::Pdf::setCodeFamily);
-    readInt(paper, "codeStep", a.pdf(), &ZSettings::Pdf::setCodeStep);
-    readString(paper, "pageSize", a.pdf(), &ZSettings::Pdf::setPageSize);
-    readReal(paper, "marginMm", a.pdf(), &ZSettings::Pdf::setMarginMm);
-    readInt(paper, "imageDpi", a.pdf(), &ZSettings::Pdf::setImageDpi);
-    readInt(paper, "maxExportedImageSize", a.pdf(), &ZSettings::Pdf::setMaxExportedImageSize);
-    readReal(paper, "codeStripHeight", a.pdf(), &ZSettings::Pdf::setCodeStripHeight);
-    const QJsonArray paperHeads = paper.value(QStringLiteral("headingStep")).toArray();
-    {
-        ZSettings::HeadingSteps steps = a.pdf().headingStep();
-        for (int i = 0; i < paperHeads.size() && i < int(steps.size()); ++i)
-            if (paperHeads.at(i).isDouble()) steps[size_t(i)] = paperHeads.at(i).toInt();
-        a.pdf().setHeadingStep(steps);
-    }
-
-    const QJsonObject layout = root.value(QStringLiteral("layout")).toObject();
-    readReal(layout, "lineHeightFactor", a.style(), &ZDocStyle::setLineHeightFactor);
-    readReal(layout, "listLineHeightFactor", a.style(), &ZDocStyle::setListLineHeightFactor);
-    readReal(layout, "blockSpacing", a.style(), &ZDocStyle::setBlockSpacing);
-    readReal(layout, "listIndent", a.style(), &ZDocStyle::setListIndent);
-    readReal(layout, "codeIndent", a.style(), &ZDocStyle::setCodeIndent);
-    readReal(layout, "codePadLeft", a.style(), &ZDocStyle::setCodePadLeft);
-    readReal(layout, "codeStripHeight", a.style(), &ZDocStyle::setCodeStripHeight);
-    readReal(layout, "codePadTop", a.style(), &ZDocStyle::setCodePadTop);
-    readReal(layout, "codeCornerRadius", a.style(), &ZDocStyle::setCodeCornerRadius);
-    readReal(layout, "codeCopyIconScale", a.style(), &ZDocStyle::setCodeCopyIconScale);
-    readReal(layout, "codeLangPointSize", a.style(), &ZDocStyle::setCodeLangPointSize);
-    readReal(layout, "codeStripPadding", a.style(), &ZDocStyle::setCodeStripPadding);
-    readReal(layout, "codeLangGap", a.style(), &ZDocStyle::setCodeLangGap);
-    readReal(layout, "quoteIndent", a.style(), &ZDocStyle::setQuoteIndent);
-    readReal(layout, "sideMargin", a.style(), &ZDocStyle::setSideMargin);
-    readReal(layout, "verticalMargin", a.style(), &ZDocStyle::setVerticalMargin);
-    readReal(layout, "maxContentWidth", a.style(), &ZDocStyle::setMaxContentWidth);
-    readReal(layout, "caretWidth", a.style(), &ZDocStyle::setCaretWidth);
-    readReal(layout, "dividerWidth", a.style(), &ZDocStyle::setDividerWidth);
-
-    const QJsonObject colors = root.value(QStringLiteral("colors")).toObject();
-    readColor(colors, "pageBackground", a.style(), &ZDocStyle::setPageBackground);
-    readColor(colors, "historyBackground", a.style(), &ZDocStyle::setHistoryBackground);
-    readColor(colors, "selectionBackground", a.style(), &ZDocStyle::setSelectionBackground);
-    readColor(colors, "selectionForeground", a.style(), &ZDocStyle::setSelectionForeground);
-    readColor(colors, "searchHighlight", a.style(), &ZDocStyle::setSearchHighlight);
-    readColor(colors, "diffAdded", a.style(), &ZDocStyle::setDiffAdded);
-    readColor(colors, "diffRemoved", a.style(), &ZDocStyle::setDiffRemoved);
-    readColor(colors, "diffChanged", a.style(), &ZDocStyle::setDiffChanged);
-    readColor(colors, "link", a.style(), &ZDocStyle::setLinkColor);
-    readColor(colors, "quote", a.style(), &ZDocStyle::setQuoteColor);
-    readColor(colors, "rawSource", a.style(), &ZDocStyle::setRawColor);
-    readColor(colors, "divider", a.style(), &ZDocStyle::setDividerColor);
-    readColor(colors, "codeBackground", a.style(), &ZDocStyle::setCodeBackground);
-    readColor(colors, "codeLang", a.style(), &ZDocStyle::setCodeLangColor);
-    readColor(colors, "caret", a.style(), &ZDocStyle::setCaretColor);
-
-    const QJsonObject list = root.value(QStringLiteral("list")).toObject();
-    readColor(list, "bulletColor", a.style(), &ZDocStyle::setBulletColor);
-    readColor(list, "orderedColor", a.style(), &ZDocStyle::setOrderedColor);
-    const QJsonValue bulletStyle = list.value(QStringLiteral("bulletStyle"));
-    if (bulletStyle.isString()) {
-        a.style().setBulletStyle(bulletStyle.toString() == QLatin1String("glyph") ? BulletStyle::Glyph
-                                                                               : BulletStyle::Drawn);
-    }
-    readReal(list, "bulletDiameter", a.style(), &ZDocStyle::setBulletDiameter);
-    readReal(list, "bulletRise", a.style(), &ZDocStyle::setBulletRise);
-    readReal(list, "bulletStrokeWidth", a.style(), &ZDocStyle::setBulletStrokeWidth);
-    readReal(list, "bulletSquareSide", a.style(), &ZDocStyle::setBulletSquareSide);
-
-    // Фигуры по уровням — списком строк. Пустой список пропускаем: остаться
-    // вовсе без фигур значит остаться без буллетов.
-    const QJsonValue shapes = list.value(QStringLiteral("bulletShapes"));
-    if (shapes.isArray()) {
-        std::vector<BulletShape> parsed;
-        for (const QJsonValue& value : shapes.toArray()) {
-            const QString name = value.toString();
-            if (name == QLatin1String("circle")) parsed.push_back(BulletShape::Circle);
-            else if (name == QLatin1String("square")) parsed.push_back(BulletShape::Square);
-            else if (name == QLatin1String("disc")) parsed.push_back(BulletShape::Disc);
-        }
-        if (!parsed.empty()) a.style().setBulletShapes(std::move(parsed));
-    }
-    readReal(list, "orderedRise", a.style(), &ZDocStyle::setOrderedRise);
-    readString(list, "bullet", a.style(), &ZDocStyle::setBulletGlyph);
-    readReal(list, "bulletScale", a.style(), &ZDocStyle::setBulletScale);
-    readReal(list, "bulletTextGap", a.style(), &ZDocStyle::setBulletTextGap);
-    readReal(list, "orderedTextGap", a.style(), &ZDocStyle::setOrderedTextGap);
-
-    const QJsonObject checkbox = root.value(QStringLiteral("checkbox")).toObject();
-    readStyle(checkbox, "style", a.style(), &ZDocStyle::setCheckboxStyle);
-    readColor(checkbox, "checkedColor", a.style(), &ZDocStyle::setCheckboxCheckedColor);
-    readColor(checkbox, "uncheckedColor", a.style(), &ZDocStyle::setCheckboxUncheckedColor);
-    readColor(checkbox, "tickColor", a.style(), &ZDocStyle::setCheckboxTickColor);
-    readReal(checkbox, "penWidth", a.style(), &ZDocStyle::setCheckboxPenWidth);
-    readReal(checkbox, "cornerRadius", a.style(), &ZDocStyle::setCheckboxCornerRadius);
-    readReal(checkbox, "opticalRise", a.style(), &ZDocStyle::setCheckboxOpticalRise);
-    readReal(checkbox, "glyphScale", a.style(), &ZDocStyle::setCheckboxGlyphScale);
-    readReal(checkbox, "textGap", a.style(), &ZDocStyle::setCheckboxTextGap);
-
-    const QJsonObject notes = root.value(QStringLiteral("notes")).toObject();
-    readString(notes, "root", a.store(), &ZSettings::Store::setNotesRoot);
-    readString(notes, "title", a.store(), &ZSettings::Store::setStoreTitle);
-    const QJsonValue watch = notes.value(QStringLiteral("watchFolder"));
-    if (watch.isBool()) a.store().setWatchStore(watch.toBool());
-    const QJsonObject noteList = root.value(QStringLiteral("noteList")).toObject();
-    readInt(noteList, "width", a.ui(), &ZSettings::Ui::setNoteListWidth);
-    readInt(noteList, "snippetLines", a.ui(), &ZSettings::Ui::setNoteListSnippetLines);
-    readColor(noteList, "snippetColor", a.ui(), &ZSettings::Ui::setNoteListSnippetColor);
-    readColor(noteList, "dateColor", a.ui(), &ZSettings::Ui::setNoteListDateColor);
-
-    const QJsonObject sidebar = root.value(QStringLiteral("sidebar")).toObject();
-    readString(sidebar, "fontFamily", a.ui(), &ZSettings::Ui::setSidebarFontFamily);
-    readReal(sidebar, "fontSize", a.ui(), &ZSettings::Ui::setSidebarFontPoint);
-    readColor(sidebar, "folderColor", a.ui(), &ZSettings::Ui::setSidebarFolderColor);
-    readInt(sidebar, "width", a.ui(), &ZSettings::Ui::setSidebarWidth);
-    const QJsonObject imageSelection =
-        root.value(QStringLiteral("imageSelection")).toObject();
-    readReal(imageSelection, "cornerShare", a.style(), &ZDocStyle::setImageCornerShare);
-    readInt(imageSelection, "cornerMinLength", a.style(), &ZDocStyle::setImageCornerMinLength);
-    readReal(imageSelection, "cornerWidth", a.style(), &ZDocStyle::setImageCornerWidth);
-    readReal(imageSelection, "cornerOffset", a.style(), &ZDocStyle::setImageCornerOffset);
-    const QJsonObject imageCaption = root.value(QStringLiteral("imageCaption")).toObject();
-    readBool(imageCaption, "shown", a.style(), &ZDocStyle::setImageCaption);
-    const QJsonValue captionFamily = imageCaption.value(QStringLiteral("family"));
-    if (captionFamily.isString()) a.style().setImageCaptionFamily(captionFamily.toString());
-    readReal(imageCaption, "fontPoints", a.style(), &ZDocStyle::setImageCaptionPoints);
-    readReal(imageCaption, "gap", a.style(), &ZDocStyle::setImageCaptionGap);
-    readColor(imageCaption, "color", a.style(), &ZDocStyle::setImageCaptionColor);
-    // Битый регэксп настройку не меняет: молча прятать все подписи (или ни
-    // одной) из-за опечатки в конфиге нельзя.
-    const QJsonValue noname = imageCaption.value(QStringLiteral("noname"));
-    if (noname.isString()) {
-        const QRegularExpression candidate(noname.toString(),
-                                           QRegularExpression::CaseInsensitiveOption);
-        if (candidate.isValid()) a.style().setImageNonameCaption(candidate);
-    }
-
-    const QJsonObject statusBar = root.value(QStringLiteral("statusBar")).toObject();
-    readColor(statusBar, "background", a.ui(), &ZSettings::Ui::setStatusBackground);
-    readColor(statusBar, "textColor", a.ui(), &ZSettings::Ui::setStatusTextColor);
-    readColor(statusBar, "separatorColor", a.ui(), &ZSettings::Ui::setStatusSeparatorColor);
-
-    const QJsonObject toolbar = root.value(QStringLiteral("toolbar")).toObject();
-    readColor(toolbar, "background", a.ui(), &ZSettings::Ui::setToolbarBackground);
-    readColor(toolbar, "iconColor", a.ui(), &ZSettings::Ui::setToolbarIconColor);
-    readColor(toolbar, "iconHoverColor", a.ui(), &ZSettings::Ui::setToolbarIconHoverColor);
-    readColor(toolbar, "iconOnColor", a.ui(), &ZSettings::Ui::setToolbarIconOnColor);
-    readColor(toolbar, "iconMarkColor", a.ui(), &ZSettings::Ui::setToolbarIconMarkColor);
-    readColor(toolbar, "iconDisabledColor", a.ui(), &ZSettings::Ui::setToolbarIconDisabledColor);
-    readColor(toolbar, "hoverBackground", a.ui(), &ZSettings::Ui::setToolbarHoverBackground);
-    readColor(toolbar, "separatorColor", a.ui(), &ZSettings::Ui::setToolbarSeparatorColor);
-
-    const QJsonObject find = root.value(QStringLiteral("find")).toObject();
-    readColor(find, "badPatternColor", a.ui(), &ZSettings::Ui::setFindBadPatternColor);
-    readInt(find, "matchLimit", a.ui(), &ZSettings::Ui::setFindMatchLimit);
-    readInt(find, "historyLimit", a.ui(), &ZSettings::Ui::setFindHistoryLimit);
-    const QJsonObject shortcuts = root.value(QStringLiteral("shortcuts")).toObject();
-    readString(shortcuts, "diffNext", a.editor(), &ZSettings::Editor::setDiffNextKey);
-    readString(shortcuts, "diffPrevious", a.editor(), &ZSettings::Editor::setDiffPreviousKey);
-
-    const QJsonObject editor = root.value(QStringLiteral("editor")).toObject();
-    readInt(editor, "autosaveDelayMs", a.editor(), &ZSettings::Editor::setAutosaveDelayMs);
-    readInt(editor, "undoCoalesceMs", a.editor(), &ZSettings::Editor::setUndoCoalesceMs);
-    readInt(editor, "statsDelayMs", a.editor(), &ZSettings::Editor::setStatsDelayMs);
-    readInt(editor, "undoRunChars", a.editor(), &ZSettings::Editor::setUndoRunChars);
-    readInt(editor, "codeTabWidth", a.editor(), &ZSettings::Editor::setCodeTabWidth);
-    readInt(editor, "historyMergeChars", a.history(), &ZSettings::History::setHistoryMergeChars);
-    readInt(editor, "historyMergeHours", a.history(), &ZSettings::History::setHistoryMergeHours);
-    readInt(editor, "undoLimit", a.editor(), &ZSettings::Editor::setUndoLimit);
-    readInt(editor, "undoBudgetMb", a.editor(), &ZSettings::Editor::setUndoBudgetMb);
-    readInt(editor, "imageCacheSizeMb", a.cache(), &ZSettings::Cache::setImageCacheSizeMb);
-    readInt(editor, "maxLoadedImageSize", a.cache(), &ZSettings::Cache::setMaxLoadedImageSize);
-    readInt(editor, "documentCacheSizeMb", a.cache(), &ZSettings::Cache::setDocumentCacheSizeMb);
-    readString(editor, "toggleTaskKey", a.editor(), &ZSettings::Editor::setToggleTaskKey);
-    readString(editor, "moveUpKey", a.editor(), &ZSettings::Editor::setMoveUpKey);
-    readString(editor, "moveDownKey", a.editor(), &ZSettings::Editor::setMoveDownKey);
-    readString(editor, "makeBulletKey", a.editor(), &ZSettings::Editor::setMakeBulletKey);
-    readString(editor, "makeOrderedKey", a.editor(), &ZSettings::Editor::setMakeOrderedKey);
-    readString(editor, "makeTaskKey", a.editor(), &ZSettings::Editor::setMakeTaskKey);
-    readString(editor, "makeParagraphKey", a.editor(), &ZSettings::Editor::setMakeParagraphKey);
-    readString(editor, "makeCommentKey", a.editor(), &ZSettings::Editor::setMakeCommentKey);
-    readString(editor, "markdownModeKey", a.editor(),
-               &ZSettings::Editor::setMarkdownModeKey);
-    readString(editor, "fullscreenKey", a.editor(), &ZSettings::Editor::setFullscreenKey);
-    // Автозамены: список пар [сочетание, что вставить]. Заданный список
-    // заменяет умолчания целиком — иначе от умолчания было бы не избавиться.
-    const QJsonValue special = editor.value(QStringLiteral("special"));
-    if (special.isArray()) {
-        ZSettings::KeyPairs pairs;
-        for (const QJsonValue& entry : special.toArray()) {
-            const QJsonArray pair = entry.toArray();
-            if (pair.size() != 2 || !pair.at(0).isString() || !pair.at(1).isString())
-                continue;   // битую запись пропускаем, соседние живут
-            const QString keys = pair.at(0).toString();
-            if (keys.isEmpty()) continue;
-            pairs.push_back({keys, pair.at(1).toString()});
-        }
-        a.editor().setSpecialKeys(std::move(pairs));
-    }
-    readString(editor, "externalEditor", a.editor(), &ZSettings::Editor::setExternalEditor);
-
-    // Имя своё, а не "images": в этой же области уже живёт значение ключа
-    // editor.imageCacheSizeMb под этим именем.
-    const QJsonObject importGroup = root.value(QStringLiteral("images")).toObject();
-    readInt(importGroup, "maxImportedImageSize", a.images(), &ZSettings::Images::setMaxImportedImageSize);
-    readInt(importGroup, "maxDeletedImageSize", a.images(), &ZSettings::Images::setMaxDeletedImageSize);
-
-    const QJsonObject scroll = root.value(QStringLiteral("scroll")).toObject();
-    readBool(scroll, "smooth", a.ui(), &ZSettings::Ui::setSmoothScroll);
-    readInt(scroll, "smoothMs", a.ui(), &ZSettings::Ui::setSmoothScrollMs);
-
 }
 
-
 }  // namespace
+
+const std::vector<ZSettings::Key>& ZSettings::registry() { return keys(); }
 
 const ZSettings& settings() { return g_settings; }
 // Люк наборов (tests/settings_hook.h): в боевых заголовках его нет.
@@ -834,25 +457,59 @@ QByteArray stripJsonSugar(const QByteArray& json) {
     return stripTrailingCommas(stripComments(json));
 }
 
+namespace {
+
+// Значение ключа так, как его пишут в JSON, одной строкой. Строим через
+// QJsonDocument, а не руками: экранирование кавычек и косых внутри строк
+// (регэксп безымянной подписи — сплошные косые) руками не пишут.
+QByteArray jsonValueText(const QJsonValue& value) {
+    const QByteArray wrapped = QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact);
+    // «[значение]» → «значение».
+    return wrapped.mid(1, wrapped.size() - 2).trimmed();
+}
+
+}  // namespace
+
 QByteArray configTemplate() {
-    // Всё тело — комментарием, снаружи пустой объект. Так файл и остаётся
+    // ВСЁ ТЕЛО — КОММЕНТАРИЕМ, снаружи пустой объект. Так файл и остаётся
     // действующим (отклонений нет), и служит меню: раскомментировал строку —
     // получил отклонение.
-    const QList<QByteArray> lines = defaultSettingsJson().split('\n');
+    //
+    // У каждого ключа своя подпись из реестра. Прежде шаблон был просто
+    // закомментированным дампом умолчаний: двести имён без единого слова о
+    // том, что они значат, — и «в чём тут разобраться» было честным вопросом.
     QByteArray out =
-        "// zametti configuration. EVERYTHING that can be tuned is listed here with\n"
-        "// its default value, and everything is commented out: the effective config\n"
-        "// is the list of DEVIATIONS from the defaults, not a copy of them.\n"
-        "// Uncomment a line (remove the leading \"//\") to make the value yours.\n"
+        "// zametti configuration.\n"
         "//\n"
-        "// Only \"//\" comments to the end of line are understood. They are not\n"
-        "// stripped inside quotes, so \"https://\" is fine.\n"
+        "// Everything the program lets you change is listed here with its default\n"
+        "// value, and everything is commented out: the effective config is the list\n"
+        "// of DEVIATIONS from the defaults, not a copy of them. Uncomment a line\n"
+        "// (remove the leading \"//\") to make that value yours.\n"
+        "//\n"
+        "// Only \"//\" comments to the end of line are understood, and they are not\n"
+        "// stripped inside quotes, so \"https://\" is fine. A trailing comma before\n"
+        "// a closing brace is forgiven too.\n"
+        "//\n"
+        "// Colors are not here: they belong to the theme (see the \"theme\" section).\n"
+        "// Zoom levels are not here either: they are per-machine and live in\n"
+        "// state.json next to this file, changed with Ctrl+= and Ctrl+Alt+=.\n"
         "{\n";
-    for (const QByteArray& line : lines) {
-        const QByteArray trimmed = line.trimmed();
-        if (trimmed.isEmpty() || trimmed == "{" || trimmed == "}") continue;
-        out += "    // " + line.trimmed() + "\n";
+
+    QString section;
+    for (const ZSettings::Key& key : ZSettings::registry()) {
+        const QString mine = QString::fromLatin1(key.section);
+        if (mine != section) {
+            if (!section.isEmpty()) out += "//     },\n//\n";
+            section = mine;
+            out += "//     \"" + section.toUtf8() + "\": {\n";
+        }
+        out += "//         \"" + QByteArray(key.name) + "\": " +
+               jsonValueText(key.get(ZSettings{})) + ",";
+        if (key.note != nullptr && *key.note != '\0')
+            out += "   // " + QByteArray(key.note);
+        out += "\n";
     }
+    if (!section.isEmpty()) out += "//     },\n";
     out += "}\n";
     return out;
 }
@@ -965,20 +622,30 @@ void applyImageAllocationLimit() {
 }
 
 QStringList unknownConfigKeys(const QJsonObject& root) {
-    // Сверяемся с полным списком умолчаний: он и есть словарь всех имён.
-    const QJsonObject known =
-        QJsonDocument::fromJson(defaultSettingsJson()).object();
+    // Словарь — РЕЕСТР, а не дамп умолчаний: имена ключей и так лежат в нём по
+    // одному разу, и разбирать их обратно из напечатанного JSON было бы кругом
+    // через свой же вывод.
+    QSet<QString> sections;
+    QSet<QString> names;
+    for (const ZSettings::Key& key : ZSettings::registry()) {
+        const QString section = QString::fromLatin1(key.section);
+        sections.insert(section);
+        names.insert(section + QLatin1Char('.') + QString::fromLatin1(key.name));
+    }
+
     QStringList out;
     for (auto section = root.begin(); section != root.end(); ++section) {
-        if (!known.contains(section.key())) {
+        // Тема разбирается своими правилами (ролей десятки, и они вложенные) —
+        // её ключи проверяет сама тема, а не эта сверка.
+        if (section.key() == QLatin1String("theme")) continue;
+        if (!sections.contains(section.key())) {
             out << section.key();
             continue;
         }
-        if (!section.value().isObject() || !known.value(section.key()).isObject()) continue;
+        if (!section.value().isObject()) continue;
         const QJsonObject mine = section.value().toObject();
-        const QJsonObject theirs = known.value(section.key()).toObject();
         for (auto item = mine.begin(); item != mine.end(); ++item)
-            if (!theirs.contains(item.key()))
+            if (!names.contains(section.key() + QLatin1Char('.') + item.key()))
                 out << section.key() + QLatin1Char('.') + item.key();
     }
     return out;

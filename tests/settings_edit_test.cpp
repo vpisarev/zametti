@@ -2,7 +2,7 @@
 // контроллер вместе — так же, как их связывает окно.
 //
 // Что спрашивается: конфига нет — открылся шаблон; Tab ставит пробелы до стопа
-// jsonEditing.tabIndent, Enter держит отступ, Ctrl+/ комментирует и снимает
+// editor.tabWidth, Enter держит отступ, Ctrl+/ комментирует и снимает
 // комментарий (строка, выделение, смешанное), Ctrl+S пишет файл, Esc пишет и
 // закрывает режим, undo/redo работают в рамках сеанса, каретка того же цвета и
 // толщины, что в заметке, и правленый конфиг ПРИМЕНЯЕТСЯ (это делает окно —
@@ -93,14 +93,14 @@ void checkOpensTemplate() {
     ZT_TRUE("режим кончился", !rig.controller.active());
 }
 
-// Tab — пробелы до стопа jsonEditing.tabIndent (не знак табуляции), Shift+Tab
+// Tab — пробелы до стопа editor.tabWidth (не знак табуляции), Shift+Tab
 // снимает; Enter держит отступ предыдущей строки.
 void checkTabAndEnter() {
     Rig rig(QStringLiteral("клавиши/config.json"));
     ZT_TRUE("вошли", rig.controller.enter());
     rig.view.setText(QStringLiteral("{\n    \"font\": {\n"), 0, 0);
 
-    const int stop = zametti::settings().jsonEditing().tabIndent();
+    const int stop = zametti::settings().editor().tabWidth();
     rig.putCaret(0, 0);
     QTest::keyClick(&rig.view, Qt::Key_Tab);
     ZT_EQ("Tab — пробелы до стопа", std::string(size_t(stop), ' ') + "{",
@@ -164,14 +164,14 @@ void checkCommentToggle() {
 void checkSaveAndLeave() {
     Rig rig(QStringLiteral("запись/config.json"));
     ZT_TRUE("вошли", rig.controller.enter());
-    rig.view.setText(QStringLiteral("{ \"font\": { \"pointSize\": 13 } }\n"), 0, 0);
+    rig.view.setText(QStringLiteral("{ \"fonts\": { \"noteSize\": 13 } }\n"), 0, 0);
 
     int savedOk = 0;
     QObject::connect(&rig.controller, &zametti::SettingsController::saved, &rig.view,
                      [&savedOk](bool ok, const QString&) { savedOk += ok ? 1 : 0; });
     ZT_TRUE("Ctrl+S записал", rig.controller.save());
     ZT_EQ("и сказал об этом сигналом", std::string("1"), std::to_string(savedOk));
-    ZT_EQ("файл на диске", std::string("{ \"font\": { \"pointSize\": 13 } }\n"), readFile(rig.path));
+    ZT_EQ("файл на диске", std::string("{ \"fonts\": { \"noteSize\": 13 } }\n"), readFile(rig.path));
     ZT_TRUE("режим не кончился", rig.controller.active());
 
     // Набор и отмена — свои, как у обычного текстового редактора.
@@ -203,9 +203,9 @@ void checkSaveAndLeave() {
 void checkBrokenIsWrittenButNotApplied() {
     Rig rig(QStringLiteral("битый/config.json"));
     ZT_TRUE("вошли", rig.controller.enter());
-    rig.view.setText(QStringLiteral("{\n  \"font\": { \"pointSize\": }\n}\n"), 0, 0);
+    rig.view.setText(QStringLiteral("{\n  \"fonts\": { \"noteSize\": }\n}\n"), 0, 0);
     ZT_TRUE("записался", rig.controller.save());
-    ZT_TRUE("файл на диске битый", readFile(rig.path).find("\"pointSize\": }") != std::string::npos);
+    ZT_TRUE("файл на диске битый", readFile(rig.path).find("\"noteSize\": }") != std::string::npos);
     const zametti::ZConfigFile::Check check = zametti::ZConfigFile::check(rig.view.text());
     ZT_TRUE("и проверка о нём говорит", !check.ok && !check.error.isEmpty());
     ZT_EQ("со строкой", std::string("2"), std::to_string(check.line));
@@ -227,13 +227,13 @@ void checkAppliedAfterSave() {
     view.show();
     QTest::qWait(20);
     ZT_TRUE("вошли", controller.enter());
-    view.setText(QStringLiteral("{ \"jsonEditing\": { \"tabIndent\": 8 } }\n"), 0, 0);
+    view.setText(QStringLiteral("{ \"editor\": { \"tabWidth\": 8 } }\n"), 0, 0);
     ZT_TRUE("записали", controller.save());
 
     QString error;
     ZT_TRUE("настройки перечитаны: " + error.toStdString(), zametti::loadSettings(&error));
     ZT_EQ("новый стоп в настройках", std::string("8"),
-          std::to_string(zametti::settings().jsonEditing().tabIndent()));
+          std::to_string(zametti::settings().editor().tabWidth()));
     view.refreshAppearance();
     view.setText(QStringLiteral("x\n"), 0, 0);
     QTest::keyClick(&view, Qt::Key_Tab);
@@ -290,8 +290,11 @@ void checkFontMatchesSourceMode() {
     ZT_EQ("и это гарнитура кода из стиля",
           zametti::settings().style().codeFamily().toStdString(),
           rig.view.font().family().toStdString());
-    ZT_EQ("а кегль — базовый кегль текста",
-          std::to_string(zametti::settings().style().baseFontPoint()),
+    // Кегль у плоских видов СВОЙ (fonts.monospaceSize), а не кегль заметки:
+    // здесь читают колонками, и согласовать моноширинный с основным шрифтом —
+    // дело человека.
+    ZT_EQ("а кегль — кегль моноширинного",
+          std::to_string(zametti::settings().style().monospacePoint()),
           std::to_string(rig.view.font().pointSizeF()));
 
     // И под масштабом: число у плоских видов одно на двоих (его ставит окно,
@@ -316,12 +319,12 @@ void checkNoteOpeningLeavesMode() {
         file.write("# Заголовок\n\nтекст\n");
     }
     ZT_TRUE("вошли", rig.controller.enter());
-    rig.view.setText(QStringLiteral("{ \"font\": { \"pointSize\": 14 } }\n"), 0, 0);
+    rig.view.setText(QStringLiteral("{ \"fonts\": { \"noteSize\": 14 } }\n"), 0, 0);
 
     rig.editor.openFile(note);
     QTest::qWait(20);
     ZT_TRUE("режим закрылся сам", !rig.controller.active());
-    ZT_EQ("и правка конфига записана", std::string("{ \"font\": { \"pointSize\": 14 } }\n"),
+    ZT_EQ("и правка конфига записана", std::string("{ \"fonts\": { \"noteSize\": 14 } }\n"),
           readFile(rig.path));
     ZT_TRUE("заметка открыта", rig.editor.filePath() == note);
 }

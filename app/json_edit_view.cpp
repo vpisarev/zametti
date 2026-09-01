@@ -27,7 +27,7 @@ void JsonEditView::refreshAppearance() {
     PlainEditView::refreshAppearance();
 }
 
-int JsonEditView::tabStop() const { return qMax(1, settings().jsonEditing().tabIndent()); }
+int JsonEditView::tabStop() const { return qMax(1, settings().editor().tabWidth()); }
 
 QColor JsonEditView::wrapMarkColor() const { return settings().jsonEditing().comment(); }
 

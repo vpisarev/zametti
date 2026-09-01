@@ -106,7 +106,7 @@ void ImageViewer::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.fillRect(rect(), look.background());
 
-    QFont captionFont(settings().ui().sidebarFontFamily());
+    QFont captionFont(settings().ui().appFamily());
     captionFont.setPointSizeF(look.captionPoints());
     const QFontMetricsF metrics(captionFont);
     const QString caption = shots_.empty() ? QString() : shots_[size_t(at_)].caption;

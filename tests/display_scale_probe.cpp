@@ -34,7 +34,7 @@ int ztDisplayScaleProbe(int argc, char** argv) {
     file.close();
 
     for (const qreal scale : {1.00, 1.10, 1.25}) {
-        zametti::mutableSettingsForTests().formulas().setDisplayScale(scale);
+        zametti::mutableSettingsForTests().formulas().setMathScale(scale);
         zametti::NoteEditor editor;
         editor.resize(900, 620);
         editor.show();

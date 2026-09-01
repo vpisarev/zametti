@@ -391,7 +391,7 @@ void checkTabIsSpaces() {
     rig.view.setTextCursor(at);
     QTest::keyClick(&rig.view, Qt::Key_Tab);
     QTest::qWait(10);
-    const int stop = zametti::settings().editor().codeTabWidth();
+    const int stop = zametti::settings().editor().tabWidth();
     ZT_EQ("отступ пробелами до стопа", std::string(size_t(stop), ' ') + "раз",
           rig.view.document()->findBlockByNumber(0).text().toStdString());
     ZT_TRUE("знака табуляции в тексте нет", !rig.view.source().contains(QLatin1Char('\t')));

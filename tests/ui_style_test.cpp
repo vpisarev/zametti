@@ -57,7 +57,7 @@ void checkDerivedFromOneSize() {
     const zametti::ZUiStyle& ui = zametti::ZApp::instance().uiStyle();
 
     ZT_EQ("шрифт оболочки — кегль из настроек",
-          std::to_string(zametti::settings().ui().sidebarFontPoint()),
+          std::to_string(zametti::settings().ui().appPoint()),
           std::to_string(ui.appFont().pointSizeF()));
 
     // ПРАВИЛО ИКОНКИ ЦЕЛИКОМ: две высоты заглавной «A». Меряется тем же
@@ -70,7 +70,7 @@ void checkDerivedFromOneSize() {
     // И то самое число, ради которого правило заведено: на умолчании оболочки
     // (11 pt) оно даёт 21 — ровно столько владелец подобрал руками, когда
     // размер иконки был отдельной настройкой.
-    if (std::fabs(zametti::settings().ui().sidebarFontPoint() - 11.0) < 0.01)
+    if (std::fabs(zametti::settings().ui().appPoint() - 11.0) < 0.01)
         ZT_EQ("на умолчании иконка выходит 21 точку", std::to_string(21),
               std::to_string(ui.iconSize()));
 

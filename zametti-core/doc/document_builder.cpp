@@ -784,7 +784,7 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
     // Квант списочного отступа — по масштабу документа (после setDefaultFont:
     // масштаб несёт шрифт). Дальше его двигает только NoteView::setZoom.
     applyIndentScale(target);
-    // Стоп табуляции — тот же, которым Tab ставит пробелы (editor.codeTabWidth).
+    // Стоп табуляции — тот же, которым Tab ставит пробелы (editor.tabWidth).
     // Иначе набранное нами и литеральные табы из старых файлов рисовались бы
     // по-разному, и одинаковый на вид отступ оказывался бы разным.
     //
@@ -796,7 +796,7 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
         QFont codeLine = ctx.base;
         codeLine.setPointSizeF(ctx.basePoint * fontStepFactor(codeStepIn(0, style)));
         QTextOption option = target.defaultTextOption();
-        option.setTabStopDistance(settings().editor().codeTabWidth() *
+        option.setTabStopDistance(settings().editor().tabWidth() *
                                   QFontMetricsF(codeLine).horizontalAdvance(QLatin1Char(' ')));
         target.setDefaultTextOption(option);
     }

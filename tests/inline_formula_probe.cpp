@@ -332,7 +332,7 @@ SeatError measureLanding(RecordingHandler& handler, const QFont& font, qreal dpr
 
 void probeRealLanding() {
     const zametti::ZDocStyle& look = zametti::settings().style();
-    const qreal scale = zametti::settings().formulas().inlineScale();
+    const qreal scale = zametti::settings().formulas().mathScale();
     RecordingHandler handler;
 
     const qreal points[] = {12.0, 15.0, 20.0};
@@ -627,7 +627,7 @@ void probeSelectionOverObject() {
 // дробью выше соседних ровно на рост дроби.
 void shootParagraph() {
     const zametti::ZDocStyle& look = zametti::settings().style();
-    const qreal scale = zametti::settings().formulas().inlineScale();
+    const qreal scale = zametti::settings().formulas().mathScale();
     RecordingHandler handler;
 
     const qreal points[] = {12.0, 15.0, 20.0};

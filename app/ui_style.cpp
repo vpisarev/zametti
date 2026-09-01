@@ -48,10 +48,10 @@ int atLeastOne(qreal value) { return std::max(1, int(std::lround(value))); }
 void ZUiStyle::update(const ZSettings& settings, int zoomSteps) {
     // Гарнитура интерфейса; пусто — гарнитура текста, как это было у всех
     // прежних мест по отдельности.
-    const QString family = settings.ui().sidebarFontFamily().isEmpty()
+    const QString family = settings.ui().appFamily().isEmpty()
                                ? settings.style().fontFamily()
-                               : settings.ui().sidebarFontFamily();
-    const qreal points = settings.ui().sidebarFontPoint() * zoomScale(zoomSteps);
+                               : settings.ui().appFamily();
+    const qreal points = settings.ui().appPoint() * zoomScale(zoomSteps);
 
     const Stamp want{family, points, zoomSteps};
     if (want == stamp_ && icon_ > 0) return;

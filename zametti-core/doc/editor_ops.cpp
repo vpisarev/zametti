@@ -1627,7 +1627,7 @@ Lead leadingIndent(const QString& text, int width) {
     return lead;
 }
 
-int codeTabWidth() { return qMax(1, settings().editor().codeTabWidth()); }
+int codeTabWidth() { return qMax(1, settings().editor().tabWidth()); }
 
 // Переписать отступ строки на columns пробелов. Возвращает, на сколько знаков
 // строка стала длиннее (может быть отрицательным).

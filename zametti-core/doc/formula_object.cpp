@@ -66,8 +66,9 @@ const FormulaRender* FormulaObjects::renderFor(const QString& source, const QStr
             render.displayStyle = spans.front().display;
     }
     // Кегль рода: коэффициент из настроек поверх пиксельного кегля текста.
-    render.pixelSize = pixelSize_ * (display ? settings().formulas().displayScale()
-                                             : settings().formulas().inlineScale());
+    // Одна ручка на строчную и выключную: различаются они посадкой и полями,
+    // а не кеглем (прежние inlineScale и displayScale оба стояли на 1.10).
+    render.pixelSize = pixelSize_ * settings().formulas().mathScale();
     render.colour = colour_;
     render.dpr = dpr_;
     // Предконтроль ДО движка: он молчалив и семь сломанных формул из десяти
