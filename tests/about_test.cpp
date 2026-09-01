@@ -200,7 +200,11 @@ void checkWindow() {
     check(first >= 0, "первая вкладка есть");
     if (first >= 0) {
         const QString text = pageText(tabs, first);
-        check(text.contains(QStringLiteral("zametti")), "имя программы названо");
+        // Имя программы — как его пишет владелец в самом тексте («Zametti
+        // 0.9.0»); набор сверяет НАЛИЧИЕ имени, а не его написание, иначе
+        // всякая правка заглавной буквы красит окно справки в красный.
+        check(text.contains(QStringLiteral("zametti"), Qt::CaseInsensitive),
+              "имя программы названо");
         // Обе половины первой вкладки на месте: чьё это и из чего собрано.
         check(text.contains(QStringLiteral("Copyright")), "copyright на первой вкладке");
         check(text.contains(QStringLiteral("GPL-3.0")), "лицензия названа");
