@@ -32,9 +32,11 @@ std::string s(const QString& q) { return q.toStdString(); }
 std::string b(bool v) { return v ? "да" : "нет"; }
 
 
-// ЛЕНИВАЯ МИГРАЦИЯ МАСШТАБА (refactor3): прежде исходник и правка настроек
-// держали по своему числу (markdownZoom, settingsZoom) и открывались разного
-// размера. Ключ теперь один — plainZoom; старый читается, пока не переписан.
+// ЛЕНИВАЯ МИГРАЦИЯ МАСШТАБА. Дважды переезжал: сперва исходник и правка
+// настроек держали по своему числу (markdownZoom, settingsZoom), потом одно
+// общее (plainZoom), а теперь — ступень шкалы 2^(k/12) внутри секции "zoom".
+// Старые ключи читаются множителями и переводятся в ступени: 1.5 — это
+// 12*log2(1.5) = 7.02, то есть седьмая ступень.
 void checkPlainZoomMigrates() {
     // Пишем СТАРОЕ состояние на штатное место (каталог настроек уже подменён
     // обвязкой набора) и читаем штатной загрузкой: проверяется путь, которым
@@ -47,8 +49,24 @@ void checkPlainZoomMigrates() {
         file.write("{ \"markdownZoom\": 1.5, \"settingsZoom\": 1.0 }\n");
     }
     const zametti::ZAppState old = zametti::ZAppState::load();
-    ZT_TRUE("масштаб исходника стал общим для обоих плоских видов",
-            qFuzzyCompare(old.plainZoom(), 1.5));
+    ZT_EQ("масштаб исходника стал общим для обоих плоских видов и перешёл в ступень",
+          std::to_string(7), std::to_string(old.sourceZoom()));
+
+    // Множитель заметки — тоже в ступень, и с ним же приходит история, у
+    // которой своего ключа в старом файле не было.
+    {
+        QFile file(path);
+        ZT_TRUE("старое состояние записано", file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write("{ \"zoom\": 1.1000000000000003, \"plainZoom\": 1.21 }\n");
+    }
+    const zametti::ZAppState older = zametti::ZAppState::load();
+    ZT_EQ("накопленный множитель заметки округлён до ступени", std::to_string(2),
+          std::to_string(older.noteZoom()));
+    ZT_EQ("и у плоских видов тоже", std::to_string(3), std::to_string(older.sourceZoom()));
+    ZT_EQ("история без своего ключа берёт ступень заметки", std::to_string(2),
+          std::to_string(older.historyZoom()));
+    ZT_EQ("масштаба оболочки в старом файле не было — ступень нулевая", std::to_string(0),
+          std::to_string(older.interfaceZoom()));
 }
 
 }  // namespace
@@ -74,11 +92,13 @@ static int ztRunSuite(int argc, char** argv) {
     out.setSearchHistory({QStringLiteral("айвазовский"), QStringLiteral("cmyk")});
     out.setCaret(4321);
     out.setAnchor(4300);
-    out.setZoom(1.25);
+    out.setNoteZoom(3);
     out.setWindowGeometry(QByteArray("геометрия", 18));
     out.setPanelsHidden(true);
     out.setMarkdownMode(true);
-    out.setPlainZoom(1.75);   // масштаб плоских видов — одно число на оба
+    out.setSourceZoom(-2);   // масштаб плоских видов — одно число на оба
+    out.setHistoryZoom(5);
+    out.setInterfaceZoom(-1);
     out.setHistoryListWidth(233);
     out.setExportDir(QStringLiteral("/tmp/куда-вывозили"));
     out.setExportKeepMeta(true);
@@ -125,13 +145,20 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_EQ("каретка", std::to_string(out.caret()), std::to_string(back.caret()));
     ZT_EQ("якорь выделения", std::to_string(out.anchor()), std::to_string(back.anchor()));
 
-    ZT_EQ("зум", std::to_string(out.zoom()), std::to_string(back.zoom()));
+    ZT_EQ("зум заметки", std::to_string(out.noteZoom()), std::to_string(back.noteZoom()));
     ZT_EQ("геометрия окна", out.windowGeometry().toBase64().toStdString(),
           back.windowGeometry().toBase64().toStdString());
     ZT_EQ("панели убраны", b(out.panelsHidden()), b(back.panelsHidden()));
     ZT_EQ("режим исходника", b(out.markdownMode()), b(back.markdownMode()));
-    ZT_TRUE("масштаб исходника — свой и переживает запись",
-            qFuzzyCompare(out.plainZoom(), back.plainZoom()));
+    // ЧЕТЫРЕ СТУПЕНИ НЕЗАВИСИМЫ И ПЕРЕЖИВАЮТ ЗАПИСЬ КАЖДАЯ СВОЯ. Записаны они
+    // четырьмя разными числами нарочно: перепутанные местами ключи набор
+    // обязан поймать, а на одинаковых числах перепутать можно что угодно.
+    ZT_EQ("масштаб исходника", std::to_string(out.sourceZoom()),
+          std::to_string(back.sourceZoom()));
+    ZT_EQ("масштаб истории", std::to_string(out.historyZoom()),
+          std::to_string(back.historyZoom()));
+    ZT_EQ("масштаб оболочки", std::to_string(out.interfaceZoom()),
+          std::to_string(back.interfaceZoom()));
     // Каталог вывоза переживает перезапуск: начинать каждый раз с «Документов»
     // — значит каждый раз идти по дереву каталогов заново (замечание владельца).
     ZT_EQ("каталог вывоза", s(out.exportDir()), s(back.exportDir()));
@@ -182,7 +209,10 @@ static int ztRunSuite(int argc, char** argv) {
     const zametti::ZAppState fresh = zametti::ZAppState::load(&freshStores);
     ZT_EQ("без файла панели на месте", b(false), b(fresh.panelsHidden()));
     ZT_EQ("без файла режим исходника выключен", b(false), b(fresh.markdownMode()));
-    ZT_EQ("без файла зум единичный", std::to_string(1.0), std::to_string(fresh.zoom()));
+    ZT_EQ("без файла зум заметки нулевой ступени", std::to_string(0),
+          std::to_string(fresh.noteZoom()));
+    ZT_EQ("без файла зум оболочки нулевой ступени", std::to_string(0),
+          std::to_string(fresh.interfaceZoom()));
     ZT_EQ("без файла вывоз чистый", b(false), b(fresh.exportKeepMeta()));
     ZT_EQ("без файла ширина списка истории не задана", std::string("0"),
           std::to_string(fresh.historyListWidth()));

@@ -33,6 +33,7 @@
 #include "editor_widget.h"
 #include "marker.h"
 #include "settings.h"
+#include "zoom_scale.h"
 #include "zoom_target.h"
 
 #include "test_util.h"
@@ -206,8 +207,23 @@ static int ztRunSuite(int argc, char** argv) {
     editor.openFile(path);
     QTest::qWait(20);
 
-    const qreal step = zametti::settings().ui().zoomStep();
-    ZT_TRUE("шаг масштаба задан и больше единицы", step > 1.0);
+    // ОДНА СТУПЕНЬ ШКАЛЫ 2^(k/12): 5.95 %. Прежде шаг брался из настройки
+    // zoom.step, и её из конфига убрали — шаг у шкалы один по построению.
+    const qreal step = zametti::zoomScale(1);
+    ZT_TRUE("шаг масштаба больше единицы", step > 1.0);
+    // Шкала обязана быть ровно двоичной: двенадцать ступеней — ×2, минус
+    // двенадцать — половина, края — 50 % и 400 %. Это и есть весь её договор.
+    ZT_TRUE("двенадцать ступеней дают ровно вдвое",
+            std::fabs(zametti::zoomScale(12) - 2.0) < 1e-9);
+    ZT_TRUE("минус двенадцать — ровно половина",
+            std::fabs(zametti::zoomScale(-12) - 0.5) < 1e-9);
+    ZT_TRUE("край шкалы — четырёхкратный",
+            std::fabs(zametti::zoomScale(zametti::kZoomStepsMax) - 4.0) < 1e-9);
+    // И обратный ход, которым мигрируют старые state.json.
+    ZT_EQ("множитель переводится в свою ступень", std::to_string(12),
+          std::to_string(zametti::zoomStepsFor(2.0)));
+    ZT_EQ("мусор вместо множителя — нулевая ступень", std::to_string(0),
+          std::to_string(zametti::zoomStepsFor(0.0)));
 
     const qreal unitAt100 = textUnit(editor);
     const qreal heightAt100 = documentHeight(editor);
