@@ -32,6 +32,7 @@
 #include "doc_model.h"
 #include "editor_widget.h"
 #include "marker.h"
+#include "reader_view.h"
 #include "settings.h"
 #include "zoom_scale.h"
 #include "zoom_target.h"
@@ -507,6 +508,44 @@ static int ztRunSuite(int argc, char** argv) {
                 zoomTargetFor(true, false, true) == ZoomTarget::Plain);
         ZT_TRUE("история поверх исходника",
                 zoomTargetFor(false, true, true) == ZoomTarget::History);
+    }
+
+    // --- 4a. ВИД ЧТЕНИЯ ДЕРЖИТ МАСШТАБ И НА ВТОРОМ ДОКУМЕНТЕ ---------------
+    //
+    // Архив и папка Info показываются ReaderView, и масштаб ему ставит окно
+    // ПОСЛЕ показа (showDoc). Свежий документ приходит в базовом кегле, а
+    // applyZoom рано выходит, когда просимое число равно нынешнему, — второй
+    // документ подряд открывался на 100 %, сколько бы Ctrl+= до него ни жали.
+    // Лечится тем же, чем у редактора: масштаб прибивается к свежему документу
+    // сразу после подмены (restoreScale в showFile).
+    {
+        const QString first = QDir(dir).filePath(QStringLiteral("читалка-раз.md"));
+        const QString second = QDir(dir).filePath(QStringLiteral("читалка-два.md"));
+        for (const QString& file : {first, second}) {
+            QFile out(file);
+            ZT_TRUE("документ читалки записан",
+                    out.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            out.write("# Заголовок\n\nОбычный абзац, чтобы было что мерить.\n");
+        }
+
+        zametti::ReaderView reader;
+        reader.resize(700, 500);
+        reader.show();
+        QTest::qWait(20);
+        ZT_TRUE("первый документ показан", reader.showFile(first, QStringLiteral("чит-1")));
+        reader.applyZoom(zametti::zoomScale(12));   // ровно вдвое
+        QTest::qWait(20);
+        const qreal big = reader.document()->defaultFont().pointSizeF();
+        ZT_TRUE("масштаб применился к первому: " + std::to_string(big),
+                big > zametti::settings().style().baseFontPoint() * 1.9);
+
+        ZT_TRUE("второй документ показан", reader.showFile(second, QStringLiteral("чит-2")));
+        QTest::qWait(20);
+        // Вот эта строка и краснеет, если снять restoreScale из showFile:
+        // документ приходит в базовом кегле и таким и остаётся.
+        ZT_TRUE("второй документ подряд открылся тем же масштабом: " +
+                    std::to_string(reader.document()->defaultFont().pointSizeF()),
+                std::fabs(reader.document()->defaultFont().pointSizeF() - big) < 0.01);
     }
 
     // --- 5. ГАРНИТУРА НОМЕРА ПРИБИТА К ОСНОВНОМУ ШРИФТУ ЗАМЕТКИ ------------
