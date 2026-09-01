@@ -6,6 +6,7 @@
 #include "note_tree.h"
 
 #include "icons.h"
+#include "zapp.h"
 #include "settings.h"
 #include "test_util.h"
 
@@ -55,9 +56,7 @@ QString titleAt(const NoteTreeModel& model, const QModelIndex& parent, int row) 
 // сглаживании.
 bool iconIs(const NoteTreeModel& model, const QModelIndex& index, const char* name) {
     const zametti::ZSettings::Ui& a = zametti::settings().ui();
-    QFont font;
-    font.setPointSizeF(a.sidebarFontPoint() * a.sidebarFolderScale());
-    const int side = QFontMetrics(font).height();
+    const int side = zametti::ZApp::instance().uiStyle().folderIconSize();
     const qreal dpr = qGuiApp != nullptr ? qGuiApp->devicePixelRatio() : 1.0;
     const QPixmap want =
         zametti::toolbarIcon(QString::fromLatin1(name), side, a.sidebarFolderColor(), dpr);

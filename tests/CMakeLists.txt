@@ -165,6 +165,7 @@ add_executable(zametti-tests
     version_stamp_test.cpp
     resources_test.cpp
     toolbar_test.cpp
+    ui_style_test.cpp
     toolbar_state_test.cpp
     live_title_test.cpp
     caret_scale_test.cpp
@@ -217,6 +218,7 @@ add_executable(zametti-bench
     matrix_probe.cpp
     open_probe.cpp
     zoom_probe.cpp
+    ui_metrics_probe.cpp
     undo_probe.cpp
     paste_bench.cpp
     big_bench.cpp

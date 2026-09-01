@@ -286,7 +286,7 @@ void checkClamping() {
         "  \"editor\": { \"imageCacheSizeMb\": 100000000, \"autosaveDelayMs\": -5,\n"
         "              \"documentCacheSizeMb\": 0, \"undoLimit\": 7 },\n"
         "  \"font\": { \"pointSize\": 1000 },\n"
-        "  \"toolbar\": { \"iconSize\": 3 }\n"
+        "  \"sidebar\": { \"fontSize\": 1000 }\n"
         "}\n");
     file.close();
     QString error;
@@ -303,8 +303,8 @@ void checkClamping() {
           std::to_string(a.editor().undoLimit()));
     ZT_EQ("кегль — до потолка", std::to_string(int(a.style().baseFontPointMax())),
           std::to_string(int(a.style().baseFontPoint())));
-    ZT_EQ("иконка тулбара — до пола", std::to_string(a.ui().toolbarIconSizeMin()),
-          std::to_string(a.ui().toolbarIconSize()));
+    ZT_EQ("кегль оболочки — до потолка", std::to_string(int(a.ui().sidebarFontPointMax())),
+          std::to_string(int(a.ui().sidebarFontPoint())));
 
     // Сеттер сам говорит, приняла ли настройка значение как есть.
     zametti::ZSettings own;
