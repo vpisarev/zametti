@@ -176,6 +176,48 @@ void checkOpenDoesNotTouchFile() {
           "пометка архива переживает открытие и запись");
 }
 
+// ПРОБЕЛ В КОНЦЕ ВНУТРЕННЕЙ СТРОКИ АБЗАЦА (жалоба владельца, 03.09.2026:
+// «невозможно вставить пробел в конце строки, чтобы допечатать после него ещё
+// слова, когда строка — не последняя в параграфе»). Инвариант хвостовых
+// пробелов держит строки БЕЗ каретки; на строке каретки пробел обязан жить,
+// пока за ним не допечатали слово, — и каретка обязана визуально уехать за него.
+void checkSpaceAtEndOfInnerLine() {
+    const QString path =
+        writeNote("пробел-в-конце-строки.md", QStringLiteral("раз два\nтри четыре\n"));
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+    check(firstLine(editor).size() > 7 && firstLine(editor).at(7) == QChar::LineSeparator,
+          "строки абзаца лежат в одном блоке через мягкий перенос");
+    QTextCursor caret = editor.textCursor();
+    caret.setPosition(editor.document()->firstBlock().position() + 7);
+    editor.setTextCursor(caret);
+    QTest::qWait(10);
+    const QRect before = editor.cursorRect();
+    QTest::keyClick(&editor, Qt::Key_Space);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("раз два \u2028три четыре"), firstLine(editor),
+               "пробел в конце первой строки вставлен и не подметён");
+    const QRect after = editor.cursorRect();
+    check(after.y() == before.y() && after.x() > before.x(),
+          "каретка уехала за пробел, а не осталась на месте и не спрыгнула на строку ниже");
+    QTest::keyClicks(&editor, QStringLiteral("i"));
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("раз два i\u2028три четыре"), firstLine(editor),
+               "и слово за пробелом допечатывается");
+    // Уход каретки со строки подметает хвостовой пробел, если он остался один.
+    QTest::keyClick(&editor, Qt::Key_Space);
+    caret = editor.textCursor();
+    caret.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(caret);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("раз два i\u2028три четыре"), firstLine(editor),
+               "хвостовой пробел подметается, когда каретка ушла со строки");
+}
+
 // Слова и строки: когда они верны, когда честно неизвестны и когда снова верны.
 //
 // Проверяется именно ПОВЕДЕНИЕ, а не арифметика (её проверяет text_stats_test):
@@ -3105,6 +3147,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkColumnAcrossMargins();
     checkBlankLinesSurviveSaving();
     checkSeparatorGeometry();
+    checkSpaceAtEndOfInnerLine();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::freshFailures();
