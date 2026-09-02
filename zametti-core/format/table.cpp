@@ -152,6 +152,10 @@ bool startsNewBlock(QStringView s) {
 
 }  // namespace
 
+std::vector<TableCell> rowCells(QStringView row) {
+    return cellsOf(row, Line{0, int(row.size())});
+}
+
 QStringView Table::cell(int row, int column) const {
     const TableCell* found = cellAt(row, column);
     return found == nullptr ? QStringView() : QStringView(found->text);
