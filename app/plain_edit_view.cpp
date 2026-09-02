@@ -19,6 +19,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextLayout>
+#include <QWheelEvent>
 #include <QWidget>
 
 #include <algorithm>
@@ -443,6 +444,19 @@ void PlainEditView::selectLines(int first, int last, bool forward) {
     whole.setPosition(forward ? head : tail);
     whole.setPosition(forward ? tail : head, QTextCursor::KeepAnchor);
     setTextCursor(whole);
+}
+
+void PlainEditView::wheelEvent(QWheelEvent* event) {
+    // Ctrl+колесо — масштаб СТУПЕНЯМИ, тем же правилом, что у NoteView: жест
+    // уходит окну, а не правит шрифт на месте — иначе вид разъезжался бы со
+    // ступенью в ZAppState.
+    if (event->modifiers() & Qt::ControlModifier) {
+        const int y = event->angleDelta().y();
+        if (y != 0) emit zoomStepRequested(y > 0 ? +1 : -1);
+        event->accept();
+        return;
+    }
+    QPlainTextEdit::wheelEvent(event);
 }
 
 void PlainEditView::keyPressEvent(QKeyEvent* event) {

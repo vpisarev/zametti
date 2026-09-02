@@ -490,6 +490,15 @@ void NoteView::keyPressEvent(QKeyEvent* event) {
 }
 
 void NoteView::wheelEvent(QWheelEvent* event) {
+    // Ctrl+колесо — масштаб СТУПЕНЯМИ, до всякой прокрутки и инерции. Отдать
+    // его QTextBrowser нельзя: встроенный zoomInF правит шрифт виджета мимо
+    // ступеней ZAppState (см. сигнал zoomStepRequested).
+    if (event->modifiers() & Qt::ControlModifier) {
+        const int y = event->angleDelta().y();
+        if (y != 0) emit zoomStepRequested(y > 0 ? +1 : -1);
+        event->accept();
+        return;
+    }
     QScrollBar* bar = verticalScrollBar();
     // ИНЕРЦИЯ НУЖНА ТАЧПАДУ, а не колесу. Колесо приходит рывками по «щелчку»
     // (angleDelta) и своей плавностью владельца устраивает; тачпад присылает

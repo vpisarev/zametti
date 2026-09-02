@@ -90,6 +90,9 @@ signals:
     // Найденное пересчитано само (после правки): полосе поиска пора обновить
     // счётчик — число вхождений и их места изменились.
     void matchesChanged();
+    // Ctrl+колесо — просьба шагнуть масштаб; правит ступень окно, той же
+    // развилкой, что и клавиши (то же правило, что у NoteView).
+    void zoomStepRequested(int delta);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -97,6 +100,7 @@ protected:
     void focusOutEvent(QFocusEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
 
     // Стоп табуляции в пробелах: им ставит Tab и им рисуются литеральные табы.
     virtual int tabStop() const;

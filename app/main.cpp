@@ -1098,6 +1098,20 @@ int main(int argc, char** argv) {
     shortcut(QKeySequence(QStringLiteral("Ctrl++")), [&] { stepZoom(+1); });
     shortcut(QKeySequence(QStringLiteral("Ctrl+-")), [&] { stepZoom(-1); });
     shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] { setZoomSteps(zoomTarget(), 0); });
+    // Ctrl+КОЛЕСО — ТЕ ЖЕ СТУПЕНИ, ЧТО У КЛАВИШ. Виды жест не исполняют, а
+    // просят окно (сигнал): встроенный zoomInF read-only-видов правил шрифт
+    // мимо ZAppState, вид и ступень разъезжались, и следующий Ctrl+= попадал
+    // в почти тот же кегль («масштаб не работает»). Развилка «чей масштаб» —
+    // общая, по тому, что на виду, а не по тому, над кем крутили.
+    for (zametti::NoteView* view :
+         std::initializer_list<zametti::NoteView*>{&editor, &archiveView, &docView,
+                                                   &historyView.textView()})
+        QObject::connect(view, &zametti::NoteView::zoomStepRequested, &window,
+                         [&](int delta) { stepZoom(delta); });
+    for (zametti::PlainEditView* view :
+         std::initializer_list<zametti::PlainEditView*>{&markdownView, &settingsView})
+        QObject::connect(view, &zametti::PlainEditView::zoomStepRequested, &window,
+                         [&](int delta) { stepZoom(delta); });
 
     // МАСШТАБ ОБОЛОЧКИ — ОТДЕЛЬНАЯ РУЧКА, Ctrl+Alt+±. Тулбар, дерево, список,
     // полоса сведений, панель поиска и диалоги; текста заметки он не касается,
