@@ -1090,11 +1090,11 @@ source =
     monospaceSize × sourceZoom
 ```
 
-History/diff:
+History/diff (ступень слита с исходником, 02.09.2026):
 
 ```text
 history =
-    monospaceSize × historyZoom
+    monospaceSize × sourceZoom
 ```
 
 UI:
