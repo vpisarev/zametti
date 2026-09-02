@@ -481,33 +481,40 @@ void mergeAdjacentSpans(Ctx& c) {
 // кода приходит пробелом, без указателя в буфер) и якоря у спана нет вовсе.
 // За пустую строку не заходим: там уже чужой блок.
 size_t backOverTicks(const char16_t* buf, size_t from) {
-    size_t k = from;
-    for (;;) {
-        size_t j = k;
-        while (j > 0 && (buf[j - 1] == ' ' || buf[j - 1] == '\t' || buf[j - 1] == '\r')) --j;
-        if (j > 0 && buf[j - 1] == '\n') --j;
-        while (j > 0 && (buf[j - 1] == ' ' || buf[j - 1] == '\t' || buf[j - 1] == '\r')) --j;
-        size_t t = j;
-        while (t > 0 && buf[t - 1] == '`') --t;
-        if (t == j) break;
-        k = t;
-    }
-    return k;
+    // ПРОГОН ВПЛОТНУЮ — ОТВЕТ, и дальше не ходим: спан открылся на своей
+    // строке, а за переносом лежат уже ЧУЖИЕ кавычки (закрывающий забор
+    // соседнего блока кода). Жадный проход через переносы отдавал их абзацу,
+    // экстенты съезжали на строку, и содержимое соседа задваивалось
+    // («`x`» вплотную к забору — порча данных, нашлась фаззером 03.09.2026).
+    // Через перенос — только когда вплотную прогона нет (код через перенос),
+    // и ровно один раз: пустая строка спан обрывает, двух переносов у
+    // закрывающего прогона не бывает.
+    size_t t = from;
+    while (t > 0 && buf[t - 1] == '`') --t;
+    if (t < from) return t;
+    size_t j = from;
+    while (j > 0 && (buf[j - 1] == ' ' || buf[j - 1] == '\t' || buf[j - 1] == '\r')) --j;
+    if (j > 0 && buf[j - 1] == '\n') --j;
+    while (j > 0 && (buf[j - 1] == ' ' || buf[j - 1] == '\t' || buf[j - 1] == '\r')) --j;
+    t = j;
+    while (t > 0 && buf[t - 1] == '`') --t;
+    return t < j ? t : from;
 }
 
 size_t forwardOverTicks(const char16_t* buf, size_t len, size_t from) {
-    size_t k = from;
-    for (;;) {
-        size_t j = k;
-        while (j < len && (buf[j] == ' ' || buf[j] == '\t' || buf[j] == '\r')) ++j;
-        if (j < len && buf[j] == '\n') ++j;
-        while (j < len && (buf[j] == ' ' || buf[j] == '\t' || buf[j] == '\r')) ++j;
-        size_t t = j;
-        while (t < len && buf[t] == '`') ++t;
-        if (t == j) break;
-        k = t;
-    }
-    return k;
+    // Зеркало backOverTicks, и то же правило: прогон вплотную — ответ, через
+    // перенос — только когда вплотную прогона нет, и ровно один раз. Жадный
+    // проход через переносы съедал ОТКРЫВАЮЩИЙ забор следующего блока кода.
+    size_t t = from;
+    while (t < len && buf[t] == '`') ++t;
+    if (t > from) return t;
+    size_t j = from;
+    while (j < len && (buf[j] == ' ' || buf[j] == '\t' || buf[j] == '\r')) ++j;
+    if (j < len && buf[j] == '\n') ++j;
+    while (j < len && (buf[j] == ' ' || buf[j] == '\t' || buf[j] == '\r')) ++j;
+    t = j;
+    while (t < len && buf[t] == '`') ++t;
+    return t > j ? t : from;
 }
 
 bool asciiSpace(QChar c) { return c == u' ' || c == u'\t' || c == u'\n' || c == u'\r'; }
@@ -561,9 +568,16 @@ void endLeaf(Ctx& c) {
     if (spanCount > 0 && c.curMin != kNoOffset) {
         const DraftRun& head = c.draft.runs[size_t(c.spanStart)];
         const DraftRun& tail = c.draft.runs.back();
-        if (head.code() && head.text.start == 0)
+        // Домер кавычек — ТОЛЬКО если прогон ещё не в экстенте (край экстента
+        // не кавычка). Открывающий обычно примерен сканом onText, закрывающий —
+        // leaveSpan; повторный поиск отсюда шагал через перенос строки и
+        // присваивал блоку ЧУЖИЕ кавычки — забор соседнего блока кода. Абзац
+        // «`x`» вплотную к забору забирал его строку, границы съезжали, и
+        // содержимое кода задваивалось (порча данных; фаззер, 03.09.2026).
+        if (head.code() && head.text.start == 0 && c.buf[c.curMin] != u'`')
             mergeOffset(c.curMin, c.curMax, backOverTicks(c.buf, c.curMin), 1);
-        if (tail.code() && qsizetype(tail.text.end) == c.text.size()) {
+        if (tail.code() && qsizetype(tail.text.end) == c.text.size() &&
+            c.buf[c.curMax] != u'`') {
             size_t e = forwardOverTicks(c.buf, c.len, c.curMax + 1);
             if (e > c.curMax + 1) mergeOffset(c.curMin, c.curMax, e - 1, 1);
         }
@@ -1101,6 +1115,15 @@ int leaveSpan(MD_SPANTYPE type, void* detail, void* userdata) {
             return 0;
         }
         const QStringView literal = source.mid(qsizetype(open), qsizetype(close + skip - open));
+        // ЭКСТЕНТ БЛОКА — ВМЕСТЕ С ЗАБОРАМИ. Текстовые колбэки несут только
+        // ТЕЛО формулы, и у голой многострочной (`$$` одиночками на своих
+        // строках) строка закрывающего забора не доставалась никому:
+        // восстановление границ отдавало её отдельным дословным куском, и при
+        // повторном открытии заметки в тексте вырастал лишний `$$` (нашёл
+        // владелец, 03.09.2026; дефект старый, но раскрылся, когда голые
+        // заборы стали обычным делом — их порождают правка формулы и правило
+        // `$$` из-под клавиатуры).
+        mergeOffset(c.curMin, c.curMax, open, close + skip - open);
 
         // КАНОН НАШ, А НЕ MD4C. У него границы считаются по флангам, как у
         // выделения, и «$ x + y$» он считает формулой, а pandoc (и GitHub) —
