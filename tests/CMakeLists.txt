@@ -146,6 +146,7 @@ add_executable(zametti-tests
     markdown_history_test.cpp
     settings_edit_test.cpp
     editor_test.cpp
+    type_rules_test.cpp
     image_insert_test.cpp
     image_viewer_test.cpp
     formula_ink_test.cpp
