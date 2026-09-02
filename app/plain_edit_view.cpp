@@ -452,6 +452,23 @@ void PlainEditView::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
+    // Home/End — начало и конец СТРОКИ, то же правило, что у NoteView (на
+    // маке умолчание Qt прыгало по документу — решение владельца, 03.09.2026).
+    const bool home = event->key() == Qt::Key_Home;
+    const bool end = event->key() == Qt::Key_End;
+    if ((home || end) &&
+        (event->modifiers() & ~(Qt::ShiftModifier | Qt::KeypadModifier)) == 0) {
+        QTextCursor cursor = textCursor();
+        cursor.movePosition(home ? QTextCursor::StartOfLine : QTextCursor::EndOfLine,
+                            event->modifiers() & Qt::ShiftModifier
+                                ? QTextCursor::KeepAnchor
+                                : QTextCursor::MoveAnchor);
+        setTextCursor(cursor);
+        ensureCursorVisible();
+        event->accept();
+        return;
+    }
+
     // ДНО СТЕКА ОТМЕНЫ: отменять в тексте больше нечего — решает контроллер
     // (в исходнике отмена уходит заметке, иначе режим был бы тупиком, где
     // Ctrl+Z молча ничего не делает).

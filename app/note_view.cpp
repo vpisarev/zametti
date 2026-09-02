@@ -464,6 +464,26 @@ void NoteView::applyContentWidth() {
     syncImageSpace();
 }
 
+void NoteView::keyPressEvent(QKeyEvent* event) {
+    // Home/End — по СТРОКЕ (см. заголовок). Модель поведения та же, что у
+    // Qt на Linux/Windows; на маке его умолчание прыгало по документу.
+    const bool home = event->key() == Qt::Key_Home;
+    const bool end = event->key() == Qt::Key_End;
+    if ((home || end) &&
+        (event->modifiers() & ~(Qt::ShiftModifier | Qt::KeypadModifier)) == 0) {
+        QTextCursor cursor = textCursor();
+        cursor.movePosition(home ? QTextCursor::StartOfLine : QTextCursor::EndOfLine,
+                            event->modifiers() & Qt::ShiftModifier
+                                ? QTextCursor::KeepAnchor
+                                : QTextCursor::MoveAnchor);
+        setTextCursor(cursor);
+        ensureCursorVisible();
+        event->accept();
+        return;
+    }
+    QTextBrowser::keyPressEvent(event);
+}
+
 void NoteView::wheelEvent(QWheelEvent* event) {
     QScrollBar* bar = verticalScrollBar();
     // ИНЕРЦИЯ НУЖНА ТАЧПАДУ, а не колесу. Колесо приходит рывками по «щелчку»
