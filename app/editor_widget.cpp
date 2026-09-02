@@ -1964,6 +1964,26 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     if (event->text() == QStringLiteral("`") &&
         runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.applyCodeSpanRule(at); }))
         setCurrentCharFormat(textCursor().block().charFormat());
+    // Доллар: закрывающий `$` замыкает строчную формулу по канону math_scan
+    // (пара помечается раскрытой — свернёт судья при уходе каретки), а `$$` в
+    // начале строки раскрывает выключную с кареткой между заборами.
+    if (event->text() == QStringLiteral("$") &&
+        runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.applyMathRule(at); })) {
+        // После замкнутой пары набор продолжается СНАРУЖИ формулы, и формат
+        // сбрасывается ЧИСТЫМ (формат блока не годится: когда математикой
+        // помечен весь абзац, он сам математика). Внутри раскрытой выключной
+        // каретка стоит между заборами — там формат оставляем: набор идёт
+        // математикой, судья свернёт по тексту.
+        const QTextCursor caret = textCursor();
+        bool insideOpen = false;
+        if (caret.positionInBlock() < caret.block().length() - 1) {
+            QTextCursor probe(caret);
+            probe.setPosition(caret.position() + 1);
+            insideOpen = (probe.charFormat().intProperty(zametti::SpanStyleProperty) &
+                          zametti::SpanMathOpen) != 0;
+        }
+        if (!insideOpen) setCurrentCharFormat(QTextCharFormat());
+    }
 }
 
 

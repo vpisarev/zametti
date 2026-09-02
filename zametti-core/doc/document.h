@@ -564,6 +564,13 @@ public:
     bool applyInputRule(QTextCursor& at);
     bool applyCodeSpanRule(QTextCursor& at);
     bool applyDividerRule(QTextCursor& at);
+    // Доллар (спрашивается после набора `$`): закрывающий доллар, замкнувший
+    // пару по канону math_scan, помечает её раскрытой строчной формулой (как
+    // Ctrl+4 — свернёт судья при уходе каретки); `$$` в начале строки
+    // становится раскрытой выключной с кареткой между заборами. Руками
+    // набранный `\$` — намеренный литерал, правило на нём молчит (решение
+    // владельца, 02.09.2026).
+    bool applyMathRule(QTextCursor& at);
 
     // --- ФОТОГРАФИЯ -------------------------------------------------------
     //
@@ -728,6 +735,13 @@ protected:
     bool insertAfterObject(QTextCursor& at, int blockIndex, bool continueItem);
     // Судья: заменить блок тем, что прочёл бы файл из этого исходника.
     bool rejudgeBlock(QTextCursor& at, int number, const QString& source);
+    // Ветка `$$` правила доллара: хвостовая строка абзаца из одних `$$` —
+    // раскрытая выключная формула (состояние openFormula), каретка между
+    // заборами.
+    bool displayMathFromTyping(QTextCursor& at);
+    // Enter после строки-шапки `|…|`: достроить разделитель и новый ряд,
+    // раскрытое состояние таблицы (как у openTable). Зовёт breakBlock.
+    bool startTableFromHeader(QTextCursor& at);
     // Tab на выделении из нескольких блоков под списком: новый последний пункт.
     bool attachRunAsLastItem(QTextCursor& at);
 

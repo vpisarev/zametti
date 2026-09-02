@@ -1111,8 +1111,10 @@ namespace {
 // СТРОЧНАЯ ПАРА ПОМЕЧАЕТСЯ РАСКРЫТОЙ (SpanMathOpen): человек прямо сейчас
 // набирает формулу, и сворачивать её в объект под руками нельзя; уход каретки
 // (или Esc) позовёт судью closeInlineFormula — и обёрнутое станет объектом,
-// если это формула. Это и есть путь «формула с клавиатуры»: набранные без
-// жеста доллары остаются текстом (семантика писателя, math_ir_test).
+// если это формула. Это и есть путь «формула с клавиатуры». Набранные без
+// жеста доллары остаются текстом (семантика писателя, math_ir_test) — с одним
+// исключением: доллар, ЗАМКНУВШИЙ пару по канону math_scan, судится правилом
+// applyMathRule и помечает пару этой же дорогой (02.09.2026).
 void markInlineMathOpen(QTextCursor& at, int from, int to) {
     QTextCharFormat open;
     open.setProperty(SpanStyleProperty, SpanMath | SpanMathOpen);
@@ -3269,6 +3271,12 @@ bool ZDocument::breakBlock(QTextCursor& at, BreakKind kind) {
         if (isLiteralBlock(block) && at.positionInBlock() == block.length() - 1)
             return insertAfterObject(at, block.blockNumber(), true);
     }
+    // Enter после строки-шапки `|…|` — достроить таблицу (см.
+    // startTableFromHeader). До runLocalEdit: замена блоков держит скобку
+    // отмены сама, тем же узором, что openTable.
+    if (kind == BreakKind::Plain && at.document() == &d_->text && !at.hasSelection() &&
+        startTableFromHeader(at))
+        return true;
     return runLocalEdit(at, [this, kind](QTextCursor& edit) {
         switch (kind) {
             case BreakKind::Plain:
@@ -3881,6 +3889,148 @@ bool ZDocument::toggleDisplayMath(QTextCursor& at) {
     });
 }
 
+namespace {
+
+// Ветка строчной формулы правила доллара: только что набранный `$` замкнул
+// пару по канону math_scan — пара помечается РАСКРЫТОЙ (SpanMathOpen), ровно
+// как после Ctrl+4; сворачивание в объект — дело судьи closeInlineFormula при
+// уходе каретки. Немедленно не сворачиваем нарочно: абзац, ставший формулой
+// целиком, судья поднял бы в выключную прямо под руками набора («$E$ — а я
+// ещё фразу не дописал»).
+//
+// Канон границ ОДИН — scanMath: «нечётное число долларов слева» он покрывает
+// строже (экраны `\$`, пробелы у краёв, «не перед цифрой», пустое тело), и
+// дублировать его предикаты здесь запрещено. Скан — по видимой строке, O(её
+// длины), не по документу.
+bool inlineMathFromTyping(QTextDocument& doc, QTextCursor& cursor) {
+    const QTextBlock block = cursor.block();
+    if (!block.isValid() || isRawBlock(block) || kindOf(block) == Kind::Code) return false;
+
+    // Курсор стоит сразу за только что набранным долларом.
+    const int end = cursor.positionInBlock();
+    const QString text = block.text();
+    if (end < 2 || text.at(end - 1) != QLatin1Char('$')) return false;
+
+    // Пределы видимой строки: разметка через мягкий перенос не тянется, а
+    // ПРАВЫЙ хвост строки канону нужен — закрывающий доллар не перед цифрой
+    // («цена $5 и $10» — не математика).
+    const int lineStart = lineStartAt(doc, block.position() + end - 1) - block.position();
+    const int lineEnd = lineEndAt(doc, block.position() + end) - block.position();
+
+    const std::vector<MathSpan> spans =
+        scanMath(QStringView(text).mid(lineStart, lineEnd - lineStart));
+    int open = -1;
+    for (const MathSpan& span : spans) {
+        if (span.display || lineStart + span.end != end) continue;
+        open = lineStart + span.start;
+        break;
+    }
+    if (open < 0) return false;
+
+    // Внутри пары не место ни объектам, ни уже размеченным кускам: во
+    // встроенном коде текст буквальный, в чужой математике — своя пара.
+    for (int i = open; i < end; ++i) {
+        if (text.at(i) == QChar::ObjectReplacementCharacter) return false;
+        QTextCursor probe(&doc);
+        probe.setPosition(block.position() + i + 1);
+        if ((probe.charFormat().intProperty(SpanStyleProperty) &
+             (SpanCode | SpanMath | SpanMathOpen)) != 0)
+            return false;
+    }
+
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    markInlineMathOpen(edit, block.position() + open, block.position() + end);
+    edit.endEditBlock();
+    return true;
+}
+
+}  // namespace
+
+// Ветка выключной формулы правила доллара: строка из одних `$$` (перед ними —
+// только пробельные) становится РАСКРЫТОЙ выключной — тем самым состоянием,
+// что строит openFormula: абзац `$$⏎⏎$$` одним куском математики и кареткой
+// на пустой средней строке. Отдельно вставлять «парные $$ на следующей
+// строке» не нужно: раскрытая формула и есть оба забора с местом между ними,
+// а Esc и уход каретки судят её тем же closeFormula.
+bool ZDocument::displayMathFromTyping(QTextCursor& at) {
+    const QTextBlock block = at.block();
+    if (!block.isValid() || isRawBlock(block) || kindOf(block) != Kind::Paragraph ||
+        hasOpenInlineFormula(block))
+        return false;
+    // Каретка — в конце блока, хвостовая видимая строка — ровно `$$`.
+    if (at.positionInBlock() != block.length() - 1) return false;
+    const QString text = block.text();
+    const int lineStart = lineStartAt(d_->text, at.position()) - block.position();
+    if (QStringView(text).mid(lineStart).trimmed() != QLatin1String("$$")) return false;
+
+    const int number = block.blockNumber();
+    const std::vector<Piece> now = piecesOfBlocks(d_->text, number, number);
+    if (now.size() != 1 || now.front().raw) return false;
+    const Piece& whole = now.front();
+
+    std::vector<Piece> replaced;
+    // Головные строки абзаца остаются собой: блок режется по последнему
+    // переносу, куски головы обрезаются по разрезу (объекты и разметка головы
+    // лежат целиком в ней — хвостовая строка по проверке выше из одних `$$`).
+    const qsizetype cut = whole.text.lastIndexOf(QLatin1Char('\n'));
+    if (cut >= 0) {
+        Piece head = whole;
+        head.text = whole.text.left(cut);
+        head.runs.clear();
+        for (Run run : whole.runs) {
+            if (run.start >= int32_t(cut)) continue;
+            run.end = qMin(run.end, int32_t(cut));
+            if (!run.empty()) head.runs.push_back(run);
+        }
+        replaced.push_back(std::move(head));
+    }
+    Piece opened;
+    opened.text = QStringLiteral("$$\n\n$$");
+    opened.level = whole.level;
+    Run run;
+    run.start = 0;
+    run.end = int32_t(opened.text.size());
+    run.flags = InlineMath | InlineMathOpen;
+    opened.runs.push_back(run);
+    replaced.push_back(std::move(opened));
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(number, number, replaced);
+    settleSeam(number, number + int(replaced.size()) - 1);
+    edit.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    // Каретка — на пустую среднюю строку раскрытой формулы. Блок ищется ПО
+    // СОДЕРЖИМОМУ, а не арифметикой: шов вправе вставить между головой и
+    // формулой пустую строку (абзац и `$$` вплотную слились бы при чтении
+    // файла), и номера съезжают.
+    int formulaBlock = number;
+    for (int i = number; i < number + int(replaced.size()) + 2; ++i) {
+        const QTextBlock candidate = d_->text.findBlockByNumber(i);
+        if (candidate.isValid() && hasOpenInlineFormula(candidate)) {
+            formulaBlock = i;
+            break;
+        }
+    }
+    at = caretAtBlock(formulaBlock);
+    const QTextBlock openedBlock = d_->text.findBlockByNumber(formulaBlock);
+    if (openedBlock.isValid())
+        at.setPosition(openedBlock.position() + qBound(0, 3, openedBlock.length() - 1));
+    return true;
+}
+
+bool ZDocument::applyMathRule(QTextCursor& at) {
+    if (at.document() != &d_->text || at.hasSelection()) return false;
+    // Сначала выключная: `$$` в начале строки — заявка на неё (строчная ветка
+    // на пустом теле молчит и сама, но порядок закреплён).
+    if (displayMathFromTyping(at)) return true;
+    return inlineMathFromTyping(d_->text, at);
+}
+
 // --- ПРАВКА ФОРМУЛЫ ---------------------------------------------------------
 
 bool ZDocument::openFormula(QTextCursor& at) {
@@ -4160,6 +4310,99 @@ bool ZDocument::rewriteInlineFormula(QTextCursor& at, int position, const QStrin
 // получилось: одна таблица (объект снова), таблица и абзац после пустой
 // строки, или вовсе не таблица. Так «закрыл» == «перечитал файл», и картина
 // после Esc та же, что после ухода-возврата.
+
+// ТАБЛИЦА ИЗ-ПОД ENTER: строка-шапка `|…|` и Enter достраивают разделитель
+// `|:--:|…|` (колонок — сколько в шапке, разрез по правилам rowCells: `\|` —
+// литерал) и новый ряд `| `, а блок становится РАСКРЫТЫМ состоянием таблицы —
+// тем же дословным блоком, что строит openTable; Esc и уход каретки судят его
+// тем же closeTable → объект-таблица. Правило владельца: шапка начинается с
+// `|` или `\|`, кончается `|` или `\|`, палка — не единственный знак строки;
+// в коде, дословных блоках и раскрытых формулах правило молчит. Выравнивание
+// разделителя — по центру (`:--:`), как назвал владелец.
+bool ZDocument::startTableFromHeader(QTextCursor& at) {
+    const QTextBlock block = at.block();
+    if (!block.isValid() || isRawBlock(block) || kindOf(block) != Kind::Paragraph ||
+        hasOpenInlineFormula(block))
+        return false;
+    if (at.positionInBlock() != block.length() - 1) return false;
+
+    const QString text = block.text();
+    const int lineStart = lineStartAt(d_->text, at.position()) - block.position();
+    const QString line = text.mid(lineStart).trimmed();
+    if (line.size() < 2) return false;
+    if (line == QLatin1String("|") || line == QLatin1String("\\|")) return false;
+    if (!line.startsWith(QLatin1Char('|')) && !line.startsWith(QLatin1String("\\|")))
+        return false;
+    if (!line.endsWith(QLatin1Char('|'))) return false;
+    // Шапка — литеральный текст: ни объектов, ни размеченных кусков (код,
+    // математика, ссылки в исходник дословного блока честно не унести).
+    for (int i = lineStart; i < text.size(); ++i) {
+        if (text.at(i) == QChar::ObjectReplacementCharacter) return false;
+        QTextCursor probe(&d_->text);
+        probe.setPosition(block.position() + i + 1);
+        if (probe.charFormat().intProperty(SpanStyleProperty) != 0) return false;
+        if (!probe.charFormat().anchorHref().isEmpty()) return false;
+    }
+
+    const std::vector<TableCell> cells = rowCells(line);
+    if (cells.empty()) return false;
+
+    const int number = block.blockNumber();
+    const std::vector<Piece> now = piecesOfBlocks(d_->text, number, number);
+    if (now.size() != 1 || now.front().raw) return false;
+    const Piece& whole = now.front();
+
+    std::vector<Piece> replaced;
+    // Головные строки абзаца остаются собой (как у ветки `$$` правила доллара).
+    const qsizetype cut = whole.text.lastIndexOf(QLatin1Char('\n'));
+    if (cut >= 0) {
+        Piece head = whole;
+        head.text = whole.text.left(cut);
+        head.runs.clear();
+        for (Run run : whole.runs) {
+            if (run.start >= int32_t(cut)) continue;
+            run.end = qMin(run.end, int32_t(cut));
+            if (!run.empty()) head.runs.push_back(run);
+        }
+        replaced.push_back(std::move(head));
+    }
+    QString source = line;
+    source += QLatin1String("\n|");
+    for (size_t i = 0; i < cells.size(); ++i) source += QLatin1String(":--:|");
+    source += QLatin1String("\n| ");
+    Piece opened;
+    opened.raw = true;
+    opened.text = source + QLatin1Char('\n');
+    opened.trailingNewline = true;
+    opened.level = whole.level;
+    replaced.push_back(std::move(opened));
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(number, number, replaced);
+    settleSeam(number, number + int(replaced.size()) - 1);
+    edit.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    // Каретка — в конец нового ряда, за `| `: человек сразу набирает ячейку.
+    // Блок ищется ПО СОДЕРЖИМОМУ (дословный), а не арифметикой: шов вправе
+    // вставить пустую строку между головой и таблицей.
+    int tableBlock = number;
+    for (int i = number; i < number + int(replaced.size()) + 2; ++i) {
+        const QTextBlock candidate = d_->text.findBlockByNumber(i);
+        if (candidate.isValid() && isRawBlock(candidate)) {
+            tableBlock = i;
+            break;
+        }
+    }
+    at = caretAtBlock(tableBlock);
+    const QTextBlock openedBlock = d_->text.findBlockByNumber(tableBlock);
+    if (openedBlock.isValid())
+        at.setPosition(openedBlock.position() + openedBlock.length() - 1);
+    return true;
+}
 
 bool ZDocument::openTable(QTextCursor& at, int sourceOffset) {
     if (at.document() != &d_->text) return false;
