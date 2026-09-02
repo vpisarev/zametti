@@ -47,11 +47,12 @@ QColor tintOf(diff::Mark mark, const ZDocStyle& style) {
 
 qreal ZDocument::diffGutterWidth(const ZDocStyle& style) {
     // Три знака строки разности: левый — под полосу текущего куска (F4), два
-    // правых — под глиф «+»/«−» и воздух рядом. Считается ОТ ШРИФТА СТРОК
-    // базового кегля — той же меркой, что и поля сборщика (sideMargin × «A»).
-    QFont code = layoutBaseFont(style);
-    if (!style.codeFamily().isEmpty()) code.setFamily(QString(style.codeFamily()));
-    code.setPointSizeF(code.pointSizeF() * fontStepFactor(style.diffStep()));
+    // правых — под глиф «+»/«−» и воздух рядом. Считается ОТ ШРИФТА СТРОК —
+    // моноширинного кегля плоских видов (codeFamily × monospacePoint, как у
+    // правки исходника; решение владельца, 02.09.2026).
+    QFont code{QString(!style.codeFamily().isEmpty() ? style.codeFamily()
+                                                     : style.fontFamily())};
+    code.setPointSizeF(style.monospacePoint());
     return 3.0 * QFontMetricsF(code).horizontalAdvance(QLatin1Char('0'));
 }
 
@@ -78,10 +79,11 @@ ZDocument ZDocument::fromDiff(const diff::Result& result, std::shared_ptr<const 
     rootFormat.setBottomMargin(look.verticalMargin() * lineUnit);
     target.rootFrame()->setFrameFormat(rootFormat);
 
-    // Гарнитура кода (строки — markdown-исходник), кегль — ступенью diffStep.
+    // Гарнитура кода (строки — markdown-исходник). Кегль отдельно не ставится:
+    // его несёт шрифт документа, который вид разности строит от monospacePoint
+    // (zoomedBaseFont) — тем же кеглем, что и правка исходника.
     QTextCharFormat text;
     if (!look.codeFamily().isEmpty()) text.setFontFamilies({QString(look.codeFamily())});
-    setFontStep(text, look.diffStep());
 
     QTextCursor caret(&target);
     bool first = true;
@@ -125,8 +127,9 @@ ZDocument ZDocument::fromDiff(const diff::Result& result, std::shared_ptr<const 
     // чтобы у документа был хотя бы один блок с ответом.
     if (first) addBlock(diff::Mark::Same, QString(), -1);
     // Строки — сырой markdown: расцветить (убранные строки подсветчик
-    // пропускает сам — они не часть слепка).
-    out.highlightMarkdown(look.diffStep());
+    // пропускает сам — они не часть слепка). Ступень строк нулевая — кегль
+    // разности задаёт шрифт документа, а не ступень.
+    out.highlightMarkdown(0);
     return out;
 }
 

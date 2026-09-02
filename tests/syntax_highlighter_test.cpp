@@ -69,7 +69,9 @@ void checkRules() {
     const zametti::ZSettings::MarkdownHighlighting& rules = zametti::settings().markdownHighlighting();
     const QColor accent = rules.accent();
     const QColor code = rules.codeBackground();
-    const int headingStep = zametti::settings().style().diffStep() + rules.headingStep();
+    // Ступень строк документа разности нулевая: кегль несёт шрифт документа
+    // (monospacePoint у вида), ступеней diffStep больше нет.
+    const int headingStep = rules.headingStep();
     const auto isAccent = [&](const QTextCharFormat& f) { return f.foreground().color() == accent; };
     const auto isBoldAccent = [&](const QTextCharFormat& f) {
         return f.foreground().color() == accent && f.fontWeight() == QFont::Bold;

@@ -87,6 +87,12 @@ signals:
     void stepForwardRequested();
 
 protected:
+    // Строки разности — markdown-исходник: кегль моноширинный
+    // (codeFamily × monospacePoint), тот же, что у правки исходника, — у
+    // плоских видов один масштаб и один размер букв (решение владельца,
+    // 02.09.2026; прежде было baseFontPoint × diffStep, и дифф расходился с
+    // исходником и по кеглю, и по ступени масштаба).
+    QFont zoomedBaseFont(qreal zoom) const override;
     // Найденное лежит у слепка (как у заметки — при заметке).
     NoteSearch& searchCache() override;
     const NoteSearch& searchCache() const override;

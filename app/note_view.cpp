@@ -196,11 +196,16 @@ qreal NoteView::plateScale() const {
 }
 
 qreal NoteView::displayScale() const {
-    const qreal base = docStyle().baseFontPoint();
+    // База — тот же хук, что и у setZoom: у вида разности она моноширинная,
+    // и мерить его кегль от baseFontPoint значило бы врать при разных кеглях
+    // облика.
+    const qreal base = zoomedBaseFont(1.0).pointSizeF();
     if (base <= 0.0) return 1.0;
     const qreal shown = baseFont().pointSizeF();
     return shown > 0.0 ? shown / base : 1.0;
 }
+
+QFont NoteView::zoomedBaseFont(qreal zoom) const { return baseFontFor(zoom, docStyle()); }
 
 void NoteView::setZoom(qreal zoom) {
     zoom_ = zoom;
@@ -209,10 +214,10 @@ void NoteView::setZoom(qreal zoom) {
     // Раньше его не применял никто: сборщик ставил документу базовый кегль без
     // масштаба, а сюда число только записывалось.
     //
-    // Кегль строится ОТ ОБЛИКА (baseFontFor), а не от нынешнего шрифта
+    // Кегль строится ОТ ОБЛИКА (zoomedBaseFont), а не от нынешнего шрифта
     // документа: baseFont() отдаёт как раз его, и сравнение вышло бы с самим
     // собой — масштаб не менялся бы никогда.
-    const QFont want = baseFontFor(zoom_, docStyle());
+    const QFont want = zoomedBaseFont(zoom_);
     // Сравниваются ОБА шрифта — документа и виджета. Раньше сравнивался только
     // документ, и на совпадении мы уходили, не объявив шрифт виджету: вид
     // оставался «без своего шрифта», а такому Qt раздаёт общий шрифт программы

@@ -55,8 +55,8 @@ class ZSyntaxHighlighterMD : public QSyntaxHighlighter {
 public:
     // Прикрепляется к документу (становится его ребёнком). Цвета и ступень
     // заголовков — своя часть настроек (секция markdownHighlighting) параметром,
-    // как у всех классов проекта; baseStep — ступень кегля строк документа (у
-    // строк разности diffStep, у сырого markdown 0): заголовки крупнее неё.
+    // как у всех классов проекта; baseStep — ступень кегля строк документа
+    // (обычно 0: кегль строк несёт шрифт документа): заголовки крупнее неё.
     ZSyntaxHighlighterMD(QTextDocument* document, ZSettings::MarkdownHighlighting rules,
                          int baseStep = 0);
 

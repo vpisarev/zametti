@@ -21,6 +21,15 @@ namespace zametti {
 
 // --- DiffTextView -----------------------------------------------------------
 
+QFont DiffTextView::zoomedBaseFont(qreal zoom) const {
+    const ZDocStyle& look = docStyle();
+    QFont font{QString(!look.codeFamily().isEmpty() ? look.codeFamily()
+                                                    : look.fontFamily())};
+    font.setPointSizeF(look.monospacePoint() * zoom);
+    font.setStyleHint(QFont::Monospace);
+    return font;
+}
+
 DiffTextView::DiffTextView(QWidget* parent) : NoteView(parent) {
     setReadOnly(true);
     setFocusPolicy(Qt::StrongFocus);
@@ -240,10 +249,9 @@ void DiffTextView::paintBlockMargin(QPainter& painter, const QTextBlock& block, 
                       block.layout() != nullptr && block.layout()->lineCount() > 0
                           ? block.layout()->lineAt(0).height()
                           : rect.height());
-    // Тем же шрифтом, что и строки: гарнитура кода, ступень diffStep, масштаб вида.
+    // Тем же шрифтом, что и строки: baseFont() вида разности — уже гарнитура
+    // кода моноширинного кегля с масштабом (zoomedBaseFont).
     QFont font = baseFont();
-    if (!look.codeFamily().isEmpty()) font.setFamily(QString(look.codeFamily()));
-    font.setPointSizeF(font.pointSizeF() * fontStepFactor(look.diffStep()));
     // Не влезает в поле (крупный масштаб) — ужимаем: поле в пикселях и от
     // масштаба не растёт, а глиф растёт.
     const qreal advance = QFontMetricsF(font).horizontalAdvance(QLatin1Char('+'));
@@ -280,11 +288,7 @@ void DiffTextView::paintUnderlay(QPainter& painter, const QRectF& visible) {
     const qreal right = width - document()->rootFrame()->frameFormat().rightMargin();
     // Ширина знака строк (они моноширинные по построению) — под отступ плашки
     // у строк, которым не хватает знаков до колонки забора (пустая строка кода).
-    const ZDocStyle& look = docStyle();
-    QFont mono = baseFont();
-    if (!look.codeFamily().isEmpty()) mono.setFamily(QString(look.codeFamily()));
-    mono.setPointSizeF(mono.pointSizeF() * fontStepFactor(look.diffStep()));
-    const qreal space = QFontMetricsF(mono).horizontalAdvance(QLatin1Char(' '));
+    const qreal space = QFontMetricsF(baseFont()).horizontalAdvance(QLatin1Char(' '));
     for (; block.isValid(); block = block.next()) {
         const QRectF rect = layout->blockBoundingRect(block);
         if (rect.top() > visible.bottom()) break;

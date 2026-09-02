@@ -22,12 +22,12 @@ ZSyntaxHighlighterMD::ZSyntaxHighlighterMD(QTextDocument* document,
     comment_.setForeground(rules_.comment());
     // Заголовки: НЕ абсолютный кегль, а ступень от шрифта документа — иначе
     // масштаб (setDefaultFont) их не тронул бы. Ступень прибавляется к ступени
-    // строки: у строк разности она diffStep, у сырого markdown — 0.
+    // строки baseStep (обычно нулевой — кегль строк несёт шрифт документа).
     heading_.setProperty(QTextFormat::FontSizeAdjustment,
                          std::clamp(baseStep + rules_.headingStep(), kFontStepMin, kFontStepMax));
     heading_.setFontWeight(QFont::Bold);
     // Глубокие заголовки: размер не трогаем вовсе (строка остаётся своего
-    // кегля — у строк разности diffStep), только начертание.
+    // кегля), только начертание.
     headingSmall_.setFontWeight(QFont::Bold);
     headingSmall_.setFontItalic(true);
     bold_.setFontWeight(QFont::Bold);
