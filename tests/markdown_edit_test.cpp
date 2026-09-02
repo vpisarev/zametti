@@ -912,25 +912,27 @@ void checkUndoAtBottomLeavesToHistory() {
 }
 
 
-// НЕРАЗРЫВНЫЕ ПРОБЕЛЫ В НАЧАЛЕ СТРОК ПЕРЕЖИВАЮТ РЕЖИМ (нашёл владелец:
-// стихотворение с отступами U+00A0 теряло их на выходе из исходника, хотя
-// внешний редактор их сохранял). QTextDocument::toPlainText() подменяет U+00A0
-// обычным пробелом — а обычный пробел в начале строки markdown съедает.
+// ВЕДУЩИЕ ПРОБЕЛЫ ПЕРЕЖИВАЮТ РЕЖИМ ИСХОДНИКА. С канона 03.09.2026 отступы
+// живут ОБЫЧНЫМИ пробелами (U+00A0 в исходнике не бывает: прежде он был нужен,
+// потому что markdown съедал обычные ведущие, а теперь их держит чтение с
+// NOINDENTEDCODEBLOCKS), и круг «режим → наложение» обязан их не терять.
 void checkNbspSurvives() {
-    const QString body = QStringLiteral("   стих\n   второй\n\nобычный\n");
+    const QString body = QStringLiteral("   стих\n   второй\n\nобычный\n");
     const QString path = writeNote(QStringLiteral("нбсп.md"), body);
     Rig rig;
     rig.editor.openFile(path);
     QTest::qWait(20);
     ZT_TRUE("вошли", rig.controller.enter());
-    ZT_TRUE("вид показывает неразрывные как есть", rig.view.source().contains(QChar(0xa0)));
+    ZT_TRUE("вид показывает отступ обычными пробелами",
+            rig.view.source().contains(QStringLiteral("   стих")) &&
+                !rig.view.source().contains(QChar(0xa0)));
     // Правка в другом месте — чтобы наложение вообще состоялось.
     QTextCursor edit = rig.view.textCursor();
     edit.movePosition(QTextCursor::End);
     edit.insertText(QStringLiteral("хвост\n"));
     ZT_TRUE("вышли, наложив", rig.controller.leave() > 0);
-    ZT_EQ("неразрывные отступы целы, хвост на месте",
-          (QStringLiteral("   стих\n   второй\n\nобычный\nхвост\n")).toStdString(),
+    ZT_EQ("отступы целы, хвост на месте",
+          (QStringLiteral("   стих\n   второй\n\nобычный\nхвост\n")).toStdString(),
           textOf(rig.editor));
 }
 

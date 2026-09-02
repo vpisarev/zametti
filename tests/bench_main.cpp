@@ -21,6 +21,7 @@
 //   zametti-bench matrix        матрица правок
 //   zametti-bench open          открытие заметки
 //   zametti-bench zoom          ВОРОТА к ZDocument: что делает Ctrl+= с документом
+//   zametti-bench md-spaces     обычные ведущие пробелы против md4c (NOINDENTEDCODEBLOCKS)
 //   zametti-bench ui-metrics    из чего выводить размер иконки и строки
 //   zametti-bench undo          штатный стек отмены: чем именно мы его теряем
 //   zametti-bench paste         цена вставки против размера заметки
@@ -47,6 +48,7 @@ int ztDisplayScaleProbe(int argc, char** argv);
 int ztMatrixProbe(int argc, char** argv);
 int ztOpenProbe(int argc, char** argv);
 int ztZoomProbe(int argc, char** argv);
+int ztMdSpacesProbe(int argc, char** argv);
 int ztUiMetricsProbe(int argc, char** argv);
 int ztUndoProbe(int argc, char** argv);
 int ztPasteBench(int argc, char** argv);
@@ -78,6 +80,7 @@ const Bench kBenches[] = {
     {"matrix", ztMatrixProbe},
     {"open", ztOpenProbe},
     {"zoom", ztZoomProbe},
+    {"md-spaces", ztMdSpacesProbe},
     {"ui-metrics", ztUiMetricsProbe},
     {"undo", ztUndoProbe},
     {"paste", ztPasteBench},

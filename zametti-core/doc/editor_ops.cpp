@@ -419,53 +419,14 @@ int outermostLevel(const std::vector<Piece>& pieces) {
 
 }  // namespace
 
-// Пробелы при переходе в код и обратно.
-//
-// В КОДЕ пробел значим сам по себе: его копируют в терминал, и неразрывный там
-// не нужен, а нужен ровно тот, что виден. Поэтому в блоке кода неразрывные
-// становятся обычными.
-//
-// В АБЗАЦЕ наоборот: markdown схлопывает несколько пробелов в один и съедает
-// ведущие. Столбик из кода — "int a     = 5" — превратился бы в "int a = 5", и
-// выравнивание пропало бы навсегда. Поэтому обратный ход делает неразрывными и
-// ведущие пробелы, и СЕРИИ из двух и более в середине строки. Одиночные не
-// трогаем: между словами неразрывный пробел не нужен, а мусор из чужих
-// выгрузок мы как раз убираем (см. spacesNormalised в document_saver.cpp).
+// Пробелы при переходе в код. Неразрывные в коде не живут — там значим сам
+// пробел, его копируют в терминал; всё, что приехало хитрыми знаками,
+// становится обычными пробелами. Обратному ходу (код → проза) делать нечего:
+// с 03.09.2026 отступы и выравнивание живут обычными пробелами и в прозе
+// (канон — шапка serializer.h), текст переходит как есть.
 QString spacesForCode(QString text) {
     text.replace(QChar::Nbsp, QLatin1Char(' '));
     return text;
-}
-
-QString spacesForProse(QStringView text) {
-    QString out;
-    out.reserve(text.size());
-    qsizetype i = 0;
-    while (i < text.size()) {
-        qsizetype lineEnd = text.indexOf(u'\n', i);
-        if (lineEnd < 0) lineEnd = text.size();
-        bool leading = true;
-        qsizetype at = i;
-        while (at < lineEnd) {
-            if (text.at(at) != u' ') {
-                leading = false;
-                out += text.at(at);
-                ++at;
-                continue;
-            }
-            qsizetype run = 0;
-            while (at + run < lineEnd && text.at(at + run) == u' ') ++run;
-            // Ведущие — всегда, серия из двух и более — всегда: и то и другое
-            // markdown иначе потеряет. Одиночный пробел между словами остаётся
-            // обычным.
-            const bool hold = leading || run > 1;
-            out += QString(run, hold ? QChar(QChar::Nbsp) : QChar(u' '));
-            at += run;
-            leading = false;
-        }
-        if (lineEnd < text.size()) out += u'\n';
-        i = lineEnd + 1;
-    }
-    return out;
 }
 
 // Выделенное — в блок кода и обратно. Блоки диапазона отдаются вызывающему
@@ -588,7 +549,9 @@ static CodeBlockEdit toggleCodeBlock(QTextDocument& doc, const QTextCursor& curs
             while (body.endsWith(u'\n')) body.chop(1);
             Piece plain;
             plain.level = piece.level;
-            plain.text = spacesForProse(body);
+            // Пробелы — как есть: отступы и выравнивание в прозе живут
+            // обычными пробелами (канон — шапка serializer.h).
+            plain.text = body.toString();
             result.push_back(std::move(plain));
         }
     } else {

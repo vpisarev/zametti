@@ -340,7 +340,6 @@ void dropLeaf(Ctx& c) {
 void demote(Ctx& c) {
     if (c.raw) return;
     if (c.stack.size() < 2) return;   // на уровне документа деградировать нечего
-
     c.raw = true;
     c.rawMin = kNoOffset;
     c.rawMax = kNoOffset;
@@ -1216,11 +1215,13 @@ int leaveSpan(MD_SPANTYPE type, void* detail, void* userdata) {
     return 0;
 }
 
-// ВЕДУЩИЕ ПРОБЕЛЫ СТРОКИ АБЗАЦА СОХРАНЯЮТСЯ (решение владельца, сессия 9):
-// стихотворение с отступами, текст псевдографикой — markdown съедает ведущие
-// пробелы, и у нас они держатся неразрывными (U+00A0; см. normaliseSpaces в
-// писателе). md4c отдаёт текст строки уже без них, поэтому смотрим в исходник:
-// от начала строки до первого знака текста. Структурный отступ — не в счёт:
+// ВЕДУЩИЕ ПРОБЕЛЫ СТРОКИ АБЗАЦА СОХРАНЯЮТСЯ (решение владельца, сессия 9;
+// с 03.09.2026 — ОБЫЧНЫМИ пробелами, без U+00A0): стихотворение с отступами,
+// текст псевдографикой — markdown съедает ведущие пробелы, но с флагом
+// NOINDENTEDCODEBLOCKS они хотя бы не становятся код-блоком, а сам отступ
+// восстанавливается отсюда. md4c отдаёт текст строки уже без него, поэтому
+// смотрим в исходник: от начала строки до первого знака текста. Структурный
+// отступ — не в счёт:
 // у пункта это его колонка содержимого (отступ + маркер + пробел, у задачи
 // чекбокс не в счёт), у абзаца вне списка — ноль. Всё правее структурного
 // отступа и до текста, если это одни пробелы/табы (таб — до стопа 4), —
@@ -1245,8 +1246,25 @@ void keepDecorativeIndent(Ctx& c, const MD_CHAR* text) {
         return col;
     };
 
-    // Структурный отступ: колонка содержимого ближайшего пункта.
-    int structural = 0;
+    // МАРКЕРЫ ЦИТАТ — СТРУКТУРА, а не текст: «>   отступ» держит отступ
+    // содержимого обычными пробелами, и они стоят ЗА маркером. Пропускаем по
+    // одному «>» (с одним необязательным пробелом за ним) на каждый уровень
+    // цитаты из стека; строка без своих маркеров (ленивое продолжение) отступа
+    // не несёт — уходим, не рискуя принять содержимое за структуру.
+    size_t qend = ls;
+    int quotes = 0;
+    for (const Frame& frame : c.stack)
+        if (frame.type == MD_BLOCK_QUOTE) ++quotes;
+    for (int q = 0; q < quotes; ++q) {
+        while (qend < k && isWs(c.buf[qend])) ++qend;
+        if (qend >= k || c.buf[qend] != '>') return;
+        ++qend;
+        if (qend < k && c.buf[qend] == ' ') ++qend;
+    }
+
+    // Структурный отступ: колонка содержимого ближайшего пункта; вне пункта —
+    // колонка сразу за маркерами цитаты (вне цитаты — ноль).
+    int structural = columnAt(qend);
     Frame* li = nullptr;
     for (size_t i = c.stack.size(); i-- > 0;) {
         if (c.stack[i].type == MD_BLOCK_LI) { li = &c.stack[i]; break; }
@@ -1257,7 +1275,7 @@ void keepDecorativeIndent(Ctx& c, const MD_CHAR* text) {
             // Выводим из этой строки: отступ, маркер, пробел. Не вышло (первый
             // текст пункта стоит не на строке маркера) — отступа у пункта не
             // знаем, и ведущие пробелы в нём не трогаем.
-            size_t p = ls;
+            size_t p = qend;
             while (p < k && isWs(c.buf[p])) ++p;
             size_t m = p;
             if (m < k && (c.buf[m] == '-' || c.buf[m] == '*' || c.buf[m] == '+')) {
@@ -1282,14 +1300,32 @@ void keepDecorativeIndent(Ctx& c, const MD_CHAR* text) {
         structural = li->contentColumn;
     }
 
-    // От структурного отступа до текста — одни пробелы? Иначе это разметка.
-    int col = 0;
-    for (size_t p = ls; p < k; ++p) {
-        if (col >= structural && !isWs(c.buf[p])) return;
-        col = c.buf[p] == '\t' ? col + 4 - col % 4 : col + 1;
+    // Отступ — пробельные колонки от структурного отступа до ПЕРВОГО знака.
+    // Сам знак бывает и разметкой (курсив, ссылка, код в кавычках): текст
+    // тогда приходит из глубины спана, но отступ стоит левее разметки, и
+    // считается он до неё. Маркеры цитаты уже пройдены (qend); знаки ниже
+    // структурной колонки — маркер пункта, их не считаем.
+    int col = columnAt(qend);
+    int decorative = 0;
+    for (size_t p = qend; p < k; ++p) {
+        const char16_t ch = c.buf[p];
+        const int next = ch == '\t' ? col + 4 - col % 4 : col + 1;
+        if (col >= structural) {
+            if (!isWs(ch)) break;
+            decorative = next - structural;
+        }
+        col = next;
     }
-    const int decorative = col - structural;
-    if (decorative > 0) c.text.append(QString(decorative, QChar(QChar::Nbsp)));
+    if (decorative <= 0) return;
+    const size_t at = size_t(c.text.size());
+    c.text.append(QString(decorative, QChar(u' ')));
+    // Отступ стоит ЛЕВЕЕ разметки. Спан, открывшийся до первого текста строки
+    // (курсив, ссылка), уже записал своё начало в text — сдвигаем его за
+    // отступ, иначе отступ въехал бы внутрь прогона и разметка «начиналась бы
+    // пробелом», чего канон записи не выражает (withTrimmedSpans).
+    if (c.runStart == at) c.runStart = at + size_t(decorative);
+    for (size_t& start : c.styleStart)
+        if (start == at) start = at + size_t(decorative);
 }
 
 int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) {
@@ -1996,8 +2032,17 @@ void parsePieces(QStringView markdown, std::vector<Piece>& blocks, NoteHeader& h
     // формулы, и `$\int_0^1 x^2 \, dx$` возвращается из круга как
     // `$\int_0^1 x^2 , dx$` — тонкий пробел исчезает молча. Границы у md4c
     // при этом свои, и наш канон проверяется поверх (leaveSpan).
+    // NOINDENTEDCODEBLOCKS — ради обычных пробелов в отступах (решение
+    // владельца, 03.09.2026): 4+ ведущих пробела перестают быть код-блоком, и
+    // ведущие пробелы абзацев читаются назад обычными (keepDecorativeIndent
+    // достаёт их из сырого исходника — md4c ведущие всё равно срезает).
+    // Побочный эффект замерен пробником md-spaces: маркеры списков, цитат,
+    // заголовков, заборы, setext и черта распознаются на любой глубине
+    // отступа — их экранирует писатель (appendEscaped, первый значащий знак
+    // строки). Код остаётся только заборным.
     parser.flags = MD_FLAG_TABLES | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS |
-                   MD_FLAG_PERMISSIVEAUTOLINKS | MD_FLAG_LATEXMATHSPANS;
+                   MD_FLAG_PERMISSIVEAUTOLINKS | MD_FLAG_LATEXMATHSPANS |
+                   MD_FLAG_NOINDENTEDCODEBLOCKS;
     parser.enter_block = enterBlock;
     parser.leave_block = leaveBlock;
     parser.enter_span = enterSpan;
@@ -2049,6 +2094,10 @@ void parsePieces(QStringView markdown, std::vector<Piece>& blocks, NoteHeader& h
         }
         blocks.push_back(std::move(piece));
     }
+    // Кодировка ведущих отступов — та же канонизация, что и на записи (см.
+    // settleLeadingSpaces): разбор обязан отдать те же знаки, какие выбрал бы
+    // писатель, иначе круг «разбор → запись → разбор» не неподвижен.
+    settleLeadingSpaces(blocks);
 }
 
 }  // namespace zametti

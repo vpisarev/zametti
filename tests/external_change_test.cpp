@@ -298,8 +298,9 @@ void checkExternalBodyEdit() {
 }
 
 // ВНЕШНЯЯ ПРАВКА И ВОЗВРАТ ИЗ РЕЖИМА ИСХОДНИКА — ОДИН ПУТЬ (applySourceText):
-// неразрывные отступы целы, ведущие обычные пробелы становятся неразрывными,
-// нетронутые блоки не перекладываются, а undo возвращает всё одним шагом.
+// отступы живут ОБЫЧНЫМИ пробелами (канон 03.09.2026): старые неразрывные из
+// файла мигрируют в обычные при чтении, набранные снаружи обычные остаются
+// собой, а undo возвращает всё одним шагом.
 void checkExternalKeepsIndent() {
     const QString nbsp(QChar(0xa0));
     const QString path = g_dir + QStringLiteral("/отступы.md");
@@ -312,14 +313,13 @@ void checkExternalKeepsIndent() {
     QTest::qWait(20);
 
     writeFile(path, nbsp + nbsp + QStringLiteral("стих\n   второй\n\nобычный\n"));
-    const QString expected = nbsp + nbsp + QStringLiteral("стих\n") + nbsp + nbsp + nbsp +
-                             QStringLiteral("второй\n\nобычный\n");
+    const QString expected = QStringLiteral("  стих\n   второй\n\nобычный\n");
     waitForWatcher(editor, expected);
     checkEqual(expected, textOf(editor),
-               "неразрывные целы, ведущие пробелы стали неразрывными");
+               "старые неразрывные мигрировали, обычные ведущие целы");
     editor.undo();
     QTest::qWait(20);
-    checkEqual(nbsp + nbsp + QStringLiteral("стих\n\nобычный\n"), textOf(editor),
+    checkEqual(QStringLiteral("  стих\n\nобычный\n"), textOf(editor),
                "undo возвращает состояние до внешнего изменения одним шагом");
 }
 
