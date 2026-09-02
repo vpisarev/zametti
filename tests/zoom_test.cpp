@@ -500,14 +500,13 @@ static int ztRunSuite(int argc, char** argv) {
                 zoomTargetFor(true, false, false) == ZoomTarget::Plain);
         // Вот эта строка и краснела бы при беде 27.08.2026: клавиши в истории
         // доставались обычному виду, и живая заметка меняла кегль втихую.
-        ZT_TRUE("история — разности, а НЕ заметке",
-                zoomTargetFor(false, false, true) == ZoomTarget::History);
-        // Порядок тот же, что у выбора страницы стека: настройки выше истории,
-        // история выше исходника.
+        // Разность — плоский вид (слияние 02.09.2026), но НЕ заметка.
+        ZT_TRUE("история — плоским видам, а НЕ заметке",
+                zoomTargetFor(false, false, true) == ZoomTarget::Plain);
         ZT_TRUE("настройки поверх истории",
                 zoomTargetFor(true, false, true) == ZoomTarget::Plain);
         ZT_TRUE("история поверх исходника",
-                zoomTargetFor(false, true, true) == ZoomTarget::History);
+                zoomTargetFor(false, true, true) == ZoomTarget::Plain);
     }
 
     // --- 4a. ВИД ЧТЕНИЯ ДЕРЖИТ МАСШТАБ И НА ВТОРОМ ДОКУМЕНТЕ ---------------

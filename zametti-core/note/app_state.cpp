@@ -37,7 +37,7 @@ bool ZAppState::knowsCaret(const QString& noteId) const {
     return false;
 }
 
-// ЧЕТЫРЕ СТУПЕНИ МАСШТАБА — СВОЕЙ СЕКЦИЕЙ, и это же отличает их от старого
+// ТРИ СТУПЕНИ МАСШТАБА — СВОЕЙ СЕКЦИЕЙ, и это же отличает их от старого
 // файла. Прежде масштабы лежали в корне дробными числами (zoom: 1.1,
 // plainZoom, historyZoom, ещё раньше markdownZoom); теперь в корне лежит
 // ОБЪЕКТ zoom с целыми ступенями. Разобрать одно от другого можно ровно по
@@ -48,10 +48,13 @@ void ZAppState::readZoom(const QJsonObject& root) {
     if (zoom.isObject()) {
         const QJsonObject steps = zoom.toObject();
         setNoteZoom(steps.value(QStringLiteral("note")).toInt(0));
-        setSourceZoom(steps.value(QStringLiteral("source")).toInt(0));
-        // Нет своей ступени — берём ступень заметки: режим истории открывается
-        // тем же кеглем, каким человек читает саму заметку.
-        setHistoryZoom(steps.value(QStringLiteral("history")).toInt(noteZoom()));
+        // Ступень «history» слита в source (решение владельца, 02.09.2026):
+        // разность и исходник — плоские виды одного кегля. Файл, писанный до
+        // слияния, несёт оба ключа — побеждает source (режим исходника
+        // переживает перезапуск, им пользуются чаще); файл без source, но с
+        // history отдаёт объединённой ступени свою.
+        setSourceZoom(steps.value(QStringLiteral("source"))
+                          .toInt(steps.value(QStringLiteral("history")).toInt(0)));
         setInterfaceZoom(steps.value(QStringLiteral("interface")).toInt(0));
         return;
     }
@@ -59,13 +62,12 @@ void ZAppState::readZoom(const QJsonObject& root) {
     // Старый файл: множители переводим в ступени. Числа при этом слегка
     // округляются (1.1 — это не ровно ступень, а 1.98 от неё), и это верно:
     // шкала теперь одна, и промежуточных множителей на ней не бывает.
+    // Дробный historyZoom не читается вовсе: его ступень слита в source.
     setNoteZoom(zoomStepsFor(zoom.toDouble(1.0)));
     const QJsonValue source = root.contains(QStringLiteral("plainZoom"))
                                   ? root.value(QStringLiteral("plainZoom"))
                                   : root.value(QStringLiteral("markdownZoom"));
     setSourceZoom(zoomStepsFor(source.toDouble(1.0)));
-    setHistoryZoom(zoomStepsFor(root.value(QStringLiteral("historyZoom"))
-                                    .toDouble(zoom.toDouble(1.0))));
     // Масштаба оболочки в старых файлах не было вовсе — ступень нулевая.
     setInterfaceZoom(0);
 }
@@ -142,7 +144,6 @@ void ZAppState::save(const ZStorageManager& stores) const {
                   {QStringLiteral("zoom"),
                    QJsonObject{{QStringLiteral("note"), session.noteZoom()},
                                {QStringLiteral("source"), session.sourceZoom()},
-                               {QStringLiteral("history"), session.historyZoom()},
                                {QStringLiteral("interface"), session.interfaceZoom()}}},
                   {QStringLiteral("windowGeometry"),
                    QString::fromLatin1(session.windowGeometry().toBase64())},

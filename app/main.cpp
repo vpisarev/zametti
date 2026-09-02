@@ -1036,7 +1036,8 @@ int main(int argc, char** argv) {
     // обычный вид — отжал [M], а заметка вдруг крупнее, хотя её масштаб не
     // трогали. 27.08.2026 владелец нашёл ту же беду у ИСТОРИИ: Ctrl+− на
     // разности уменьшал живую заметку, и это обнаруживалось только при выходе
-    // из режима. Лечение то же, и число у режима своё (ZAppState::historyZoom).
+    // из режима. Лечение то же; ступень у разности общая с плоскими видами
+    // (sourceZoom — слияние 02.09.2026), но НЕ с заметкой.
     //
     // Архивная заметка и документация — НЕ режимы: это те же документы теми же
     // глазами, и масштаб у них общий с обычным видом.
@@ -1049,13 +1050,11 @@ int main(int argc, char** argv) {
         switch (zoomTarget()) {
             case zametti::ZoomTarget::Plain:
                 // ПЛОСКИЕ ВИДЫ ДЕРЖАТ ОДИН МАСШТАБ (решение владельца):
-                // исходник и конфиг — один и тот же текст тем же шрифтом, и
-                // открываться разного размера они не должны. Ставим обоим
-                // сразу, какой бы из них ни был на виду.
+                // исходник, конфиг и разность — один и тот же моноширинный
+                // текст тем же кеглем, и открываться разного размера они не
+                // должны. Ставим всем трём сразу, какой бы ни был на виду.
                 markdownView.applyZoom(value);
                 settingsView.applyZoom(value);
-                return;
-            case zametti::ZoomTarget::History:
                 historyView.textView().applyZoom(value);
                 return;
             case zametti::ZoomTarget::Note:
@@ -1078,7 +1077,6 @@ int main(int argc, char** argv) {
     const auto zoomStepsOf = [&](zametti::ZoomTarget target) {
         switch (target) {
             case zametti::ZoomTarget::Plain: return zapp.state().sourceZoom();
-            case zametti::ZoomTarget::History: return zapp.state().historyZoom();
             case zametti::ZoomTarget::Note: break;
         }
         return zapp.state().noteZoom();
@@ -1086,7 +1084,6 @@ int main(int argc, char** argv) {
     auto setZoomSteps = [&](zametti::ZoomTarget target, int steps) {
         switch (target) {
             case zametti::ZoomTarget::Plain: zapp.state().setSourceZoom(steps); break;
-            case zametti::ZoomTarget::History: zapp.state().setHistoryZoom(steps); break;
             case zametti::ZoomTarget::Note: zapp.state().setNoteZoom(steps); break;
         }
         // Обрезку по краям шкалы делает сеттер — читаем то, что он принял.
@@ -3226,7 +3223,7 @@ int main(int argc, char** argv) {
     // после фокуса: входить в режим нечем, пока показывать нечего.
     markdownView.applyZoom(zametti::zoomScale(session.sourceZoom()));
     settingsView.applyZoom(zametti::zoomScale(session.sourceZoom()));
-    historyView.textView().applyZoom(zametti::zoomScale(session.historyZoom()));
+    historyView.textView().applyZoom(zametti::zoomScale(session.sourceZoom()));
     if (session.markdownMode()) markdown.enter();
 
 

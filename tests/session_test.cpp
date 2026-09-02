@@ -52,8 +52,7 @@ void checkPlainZoomMigrates() {
     ZT_EQ("масштаб исходника стал общим для обоих плоских видов и перешёл в ступень",
           std::to_string(7), std::to_string(old.sourceZoom()));
 
-    // Множитель заметки — тоже в ступень, и с ним же приходит история, у
-    // которой своего ключа в старом файле не было.
+    // Множитель заметки — тоже в ступень.
     {
         QFile file(path);
         ZT_TRUE("старое состояние записано", file.open(QIODevice::WriteOnly | QIODevice::Truncate));
@@ -63,10 +62,28 @@ void checkPlainZoomMigrates() {
     ZT_EQ("накопленный множитель заметки округлён до ступени", std::to_string(2),
           std::to_string(older.noteZoom()));
     ZT_EQ("и у плоских видов тоже", std::to_string(3), std::to_string(older.sourceZoom()));
-    ZT_EQ("история без своего ключа берёт ступень заметки", std::to_string(2),
-          std::to_string(older.historyZoom()));
     ZT_EQ("масштаба оболочки в старом файле не было — ступень нулевая", std::to_string(0),
           std::to_string(older.interfaceZoom()));
+
+    // СЛИЯНИЕ СТУПЕНИ ИСТОРИИ (02.09.2026): ключ «history» больше не пишется,
+    // но файлы, писанные до слияния, несут его. При обоих ключах побеждает
+    // source; файл без source отдаёт объединённой ступени history.
+    {
+        QFile file(path);
+        ZT_TRUE("состояние до слияния записано",
+                file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write("{ \"zoom\": { \"note\": 1, \"source\": 3, \"history\": 5 } }\n");
+    }
+    ZT_EQ("оба ключа — побеждает source", std::to_string(3),
+          std::to_string(zametti::ZAppState::load().sourceZoom()));
+    {
+        QFile file(path);
+        ZT_TRUE("состояние c одной history записано",
+                file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write("{ \"zoom\": { \"note\": 1, \"history\": 5 } }\n");
+    }
+    ZT_EQ("без source ступень отдаёт history", std::to_string(5),
+          std::to_string(zametti::ZAppState::load().sourceZoom()));
 }
 
 }  // namespace
@@ -96,8 +113,7 @@ static int ztRunSuite(int argc, char** argv) {
     out.setWindowGeometry(QByteArray("геометрия", 18));
     out.setPanelsHidden(true);
     out.setMarkdownMode(true);
-    out.setSourceZoom(-2);   // масштаб плоских видов — одно число на оба
-    out.setHistoryZoom(5);
+    out.setSourceZoom(-2);   // масштаб плоских видов — одно число на всех
     out.setInterfaceZoom(-1);
     out.setHistoryListWidth(233);
     out.setExportDir(QStringLiteral("/tmp/куда-вывозили"));
@@ -150,13 +166,11 @@ static int ztRunSuite(int argc, char** argv) {
           back.windowGeometry().toBase64().toStdString());
     ZT_EQ("панели убраны", b(out.panelsHidden()), b(back.panelsHidden()));
     ZT_EQ("режим исходника", b(out.markdownMode()), b(back.markdownMode()));
-    // ЧЕТЫРЕ СТУПЕНИ НЕЗАВИСИМЫ И ПЕРЕЖИВАЮТ ЗАПИСЬ КАЖДАЯ СВОЯ. Записаны они
-    // четырьмя разными числами нарочно: перепутанные местами ключи набор
+    // ТРИ СТУПЕНИ НЕЗАВИСИМЫ И ПЕРЕЖИВАЮТ ЗАПИСЬ КАЖДАЯ СВОЯ. Записаны они
+    // тремя разными числами нарочно: перепутанные местами ключи набор
     // обязан поймать, а на одинаковых числах перепутать можно что угодно.
-    ZT_EQ("масштаб исходника", std::to_string(out.sourceZoom()),
+    ZT_EQ("масштаб плоских видов", std::to_string(out.sourceZoom()),
           std::to_string(back.sourceZoom()));
-    ZT_EQ("масштаб истории", std::to_string(out.historyZoom()),
-          std::to_string(back.historyZoom()));
     ZT_EQ("масштаб оболочки", std::to_string(out.interfaceZoom()),
           std::to_string(back.interfaceZoom()));
     // Каталог вывоза переживает перезапуск: начинать каждый раз с «Документов»

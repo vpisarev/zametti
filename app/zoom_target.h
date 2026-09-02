@@ -15,7 +15,11 @@
 // считался бы от одного вида, а применялся к другому.
 //
 // Архивная заметка и документация — НЕ режимы: это те же документы теми же
-// глазами, и масштаб у них общий с обычным видом (Target::Note).
+// глазами, и масштаб у них общий с обычным видом (Target::Note). Разность
+// слепка — ПЛОСКИЙ вид (решение владельца, 02.09.2026): те же моноширинные
+// строки markdown тем же кеглем, что у правки исходника, и ступень у них
+// одна (sourceZoom). Прежний инвариант цел: Ctrl+= в истории по-прежнему не
+// трогает скрытую заметку — он ходит по ступени плоских видов.
 
 #ifndef ZAMETTI_ZOOM_TARGET_H
 #define ZAMETTI_ZOOM_TARGET_H
@@ -24,18 +28,15 @@ namespace zametti {
 
 // Что сейчас на виду и, значит, чей масштаб меняют клавиши.
 enum class ZoomTarget {
-    Note,     // обычный вид заметки (с ним же архивная и документация)
-    Plain,    // плоские виды: правка исходника и правка настроек — масштаб общий
-    History,  // разность слепка
+    Note,   // обычный вид заметки (с ним же архивная и документация)
+    Plain,  // плоские виды: исходник, настройки, разность — масштаб общий
 };
 
 // ПОРЯДОК ТОТ ЖЕ, ЧТО У ВЫБОРА СТРАНИЦЫ СТЕКА (main.cpp, showPage): настройки >
 // история > исходник > редактор. Иначе клавиши достанутся не тому, что человек
 // видит перед собой.
 inline ZoomTarget zoomTargetFor(bool settingsActive, bool markdownActive, bool historyActive) {
-    if (settingsActive) return ZoomTarget::Plain;
-    if (historyActive) return ZoomTarget::History;
-    if (markdownActive) return ZoomTarget::Plain;
+    if (settingsActive || historyActive || markdownActive) return ZoomTarget::Plain;
     return ZoomTarget::Note;
 }
 

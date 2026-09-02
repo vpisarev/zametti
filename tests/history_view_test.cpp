@@ -587,9 +587,11 @@ void checkZoomKeepsSnapshot() {
     ZT_TRUE("и метки не потерялись", anyMark);
     ZT_TRUE("масштаб применился", rig.text().zoom() > 1.3);
 
-    // МАСШТАБ РЕЖИМА — СВОЙ, И ЖИВУЮ ЗАМЕТКУ ОН НЕ ТРОГАЕТ (беда владельца
-    // 27.08.2026: «Ctrl+− в истории — а при выходе текст заметки стал меньше»).
-    // Спрашивается в обе стороны, как у режима исходника.
+    // МАСШТАБ РАЗНОСТИ ЖИВУЮ ЗАМЕТКУ НЕ ТРОГАЕТ (беда владельца 27.08.2026:
+    // «Ctrl+− в истории — а при выходе текст заметки стал меньше»). Ступень у
+    // разности теперь общая с плоскими видами (sourceZoom), но инвариант тот
+    // же: вид разности и вид заметки держат каждый свой кегль, и проверяется
+    // это в обе стороны.
     const qreal noteZoom = rig.editor->zoom();
     ZT_TRUE("заметка своего масштаба не меняла", qFuzzyCompare(noteZoom, rig.editor->zoom()));
     rig.text().applyZoom(1.8);
@@ -601,6 +603,20 @@ void checkZoomKeepsSnapshot() {
     rig.editor->applyZoom(1.3);
     ZT_TRUE("заметка увеличилась", rig.editor->zoom() > noteZoom);
     ZT_TRUE("а разность осталась со своим", qFuzzyCompare(rig.text().zoom(), 1.8));
+
+    // КЕГЛЬ РАЗНОСТИ — МОНОШИРИННЫЙ ПЛОСКИХ ВИДОВ (решение владельца,
+    // 02.09.2026): codeFamily × monospacePoint × масштаб, как у правки
+    // исходника, а не baseFontPoint со ступенью. Тест обязан краснеть при
+    // снятой починке: прежний путь давал baseFontPoint × 1.2.
+    {
+        const zametti::ZDocStyle& look = zametti::settings().style();
+        const QFont shown = rig.text().document()->defaultFont();
+        ZT_EQ("гарнитура разности — кода", look.codeFamily().toStdString(),
+              (shown.families().isEmpty() ? shown.family() : shown.families().first())
+                  .toStdString());
+        ZT_TRUE("кегль разности = monospacePoint × масштаб",
+                qFuzzyCompare(shown.pointSizeF(), look.monospacePoint() * 1.8));
+    }
     rig.text().applyZoom(1.0);
 }
 
