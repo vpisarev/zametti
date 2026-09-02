@@ -2349,9 +2349,19 @@ bool NoteEditor::insertTyped(const QString& text, Qt::KeyboardModifiers modifier
     // накопленной области; теперь чинить снаружи нечего.
     recordingSuspended_ = true;
     note_->doc().insertText(cursor, text, currentCharFormat());
+    // КАРЕТКУ СТАВИМ ДО ЗАКРЫТИЯ СКОБКИ, как и у остальных глаголов
+    // (runNoteEdit). Заметка пересобирает тронутый блок вырезом и вставкой, и
+    // всякий чужой курсор внутри выреза — в том числе собственный курсор
+    // виджета — Qt уносит В КОНЕЦ вставленного. Скобка закрывается сигналом
+    // contentsChanged, а обработчик подметает хвостовые пробелы «везде, кроме
+    // строки каретки» — и строкой каретки считал ПОСЛЕДНЮЮ строку блока. Так
+    // пробел, набранный в конце любой другой строки абзаца, исчезал в тот же
+    // миг (жалоба владельца 03.09.2026: «невозможно вставить пробел в конце
+    // строки, когда строка — не последняя в параграфе»; замер — набор Editor,
+    // checkSpaceAtEndOfInnerLine).
+    setTextCursor(cursor);
     recordingSuspended_ = false;
     cursor.endEditBlock();
-    setTextCursor(cursor);
 
     current_.runChars += int(text.size());
     current_.runCursor = cursor.position();
