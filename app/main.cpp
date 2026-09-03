@@ -7,6 +7,7 @@
 #include "editor_widget.h"
 #include "key_binding.h"
 #include "formula.h"
+#include "font_dpi.h"
 #include "heif_handler.h"
 #include "find_bar.h"
 #include "history_controller.h"
@@ -490,7 +491,10 @@ int main(int argc, char** argv) {
     // Заданную снаружи переменную не перебиваем. Попутно мельчает «ступенька»
     // масштаба: движок квантует кегль до целых пикселей (zoom-ladder), и при
     // 96 dpi шаг ступени чаще дотягивает до пикселя.
-    if (qEnvironmentVariableIsEmpty("QT_FONT_DPI")) qputenv("QT_FONT_DPI", "96");
+    //
+    // НЕ ПРОСТО QT_FONT_DPI: на маке она делала dpr дробным (2,667) и
+    // оставляла следы каретки — см. font_dpi.h, набор FontDpi.
+    zametti::prepareFontDpi(96);
 #endif
 
     QApplication app(argc, argv);

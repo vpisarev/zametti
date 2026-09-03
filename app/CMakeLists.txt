@@ -102,6 +102,8 @@ add_library(zametti-ui STATIC
     table_object.cpp
     caret_blink.h
     caret_blink.cpp
+    font_dpi.h
+    font_dpi.cpp
     line_field.h
     line_field.cpp
     note_view.h
