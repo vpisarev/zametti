@@ -423,7 +423,9 @@ QString sourceTextOf(const QTextBlock& block) {
             case BreakCarriageReturn: piece.replace(QChar::LineSeparator, QLatin1Char('\r')); break;
             case BreakParagraph:      piece.replace(QChar::LineSeparator,
                                                     QChar(QChar::ParagraphSeparator)); break;
-            default: break;   // непомеченный U+2028 — знак самого текста
+            // Непомеченный — тоже перевод строки (канон 04.09.2026: в файле
+            // разделители строк юникода не живут, normaliseLineSeparators).
+            default:                  piece.replace(QChar::LineSeparator, QLatin1Char('\n')); break;
         }
         source += piece;
     }
@@ -497,8 +499,7 @@ BlockFormulaRef blockFormulaRef(const QTextBlock& block) {
             case BreakCarriageReturn: piece.replace(QChar::LineSeparator, QLatin1Char('\r')); break;
             case BreakParagraph:      piece.replace(QChar::LineSeparator,
                                                     QChar(QChar::ParagraphSeparator)); break;
-            case BreakNewline:        piece.replace(QChar::LineSeparator, QLatin1Char('\n')); break;
-            default: break;
+            default:                  piece.replace(QChar::LineSeparator, QLatin1Char('\n')); break;
         }
         source += piece;
     }

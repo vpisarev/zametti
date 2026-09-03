@@ -1094,7 +1094,19 @@ bool looksLikeLinkDefinition(QStringView raw) {
 // собой список), решает ПИСАТЕЛЬ по месту блока в последовательности
 // (settleLeadingSpaces в document_saver.cpp) — обе кодировки читаются назад
 // одинаково, и файлы старого канона мигрируют сами при первом сохранении.
-QString normaliseSpaces(const QString& text) {
+QString normaliseLineSeparators(const QString& text) {
+    if (!text.contains(QChar::LineSeparator) && !text.contains(QChar::ParagraphSeparator))
+        return text;
+    QString out = text;
+    out.replace(QChar::LineSeparator, QLatin1Char('\n'));
+    out.replace(QChar::ParagraphSeparator, QLatin1Char('\n'));
+    return out;
+}
+
+QString normaliseSpaces(const QString& given) {
+    // Сперва разделители строк: дальше строки считаются по '\n', и U+2028
+    // посреди «строки» прятал бы от забора и отступа половину текста.
+    const QString text = normaliseLineSeparators(given);
     QString out;
     out.reserve(text.size());
     // Между заборами блока кода: знак забора и его длина. ЗАБОРЫ — ПО
@@ -1305,6 +1317,11 @@ void Writer::push(const Piece& b) {
                 sink.bol = false;
                 sink.hasLinkDefs = hasLinkDefs;
                 appendInlineText(sink, b);
+                // Заголовок однострочен: перевод строки внутри (непомеченный
+                // разделитель, отданный gatherLine за перевод) — пробел, как у
+                // withHeadingOnOneLine, только ступенью позже: сюда приходят и
+                // блоки, не проходившие приведение (writePieces, буфер).
+                sink.out.replace(u'\n', u' ');
                 if (!sink.out.isEmpty()) {
                     out += u' ';
                     // Хвостовой прогон '#' Markdown считает закрывающей
@@ -1551,10 +1568,14 @@ bool isPhantomBlock(const QTextDocument& doc, const QTextBlock& block) {
 // Один QTextBlock: и текст, и куски с начертанием. Смещение копится в единицах
 // UTF-16 — куски идут подряд и покрывают блок целиком.
 //
-// Разделитель строк превращается обратно в исходный знак ТОЛЬКО там, где стоит
-// пометка BreakSourceProperty. Без неё это чужой U+2028 из самого текста
-// заметки — заметки из Apple Notes им кишат, — и трогать его нельзя.
+// Разделитель строк превращается обратно в исходный знак там, где стоит
+// пометка BreakSourceProperty. БЕЗ ПОМЕТКИ — это разделитель, попавший в
+// документ мимо глаголов заметки (набор мимо Shift+Enter, система ввода); в
+// файле он не живёт (канон 04.09.2026: normaliseLineSeparators), и писатель
+// отдаёт его переводом строки — последний рубеж. Дословный блок — байт в
+// байт, там не трогаем.
 void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
+    const bool raw = isRawBlock(block);
     for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
         const QTextFragment fragment = it.fragment();
         if (!fragment.isValid()) continue;
@@ -1572,7 +1593,8 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
                 text.replace(QChar::LineSeparator, QChar(QChar::ParagraphSeparator));
                 break;
             default:
-                break;   // чужой U+2028 из самого текста — трогать нельзя
+                if (!raw) text.replace(QChar::LineSeparator, QLatin1Char('\n'));
+                break;
         }
 
         // ОБЪЕКТ ОТДАЁТ СВОЙ ИСХОДНИК, А НЕ СЕБЯ. В документе он занимает один

@@ -31,6 +31,13 @@ namespace zametti {
 // QString, а байты файла переводятся в текст до неё, один раз.
 QString normaliseSpaces(const QString& text);
 
+// РАЗДЕЛИТЕЛИ СТРОК ЮНИКОДА (U+2028, U+2029) — ПЕРЕВОДЫ СТРОКИ (решение
+// владельца 04.09.2026). В файле заметки они не живут: так пишет Apple Notes,
+// так же их вставлял Qt-шный Shift+Enter мимо пометки, — а для заметки это
+// перевод строки и ничего больше. Зовёт normaliseSpaces (файл, ввоз, вставка
+// разбором) и вставка буквой в букву (replaceRange): все двери — одна.
+QString normaliseLineSeparators(const QString& text);
+
 }  // namespace zametti
 
 #endif  // ZAMETTI_SERIALIZER_H

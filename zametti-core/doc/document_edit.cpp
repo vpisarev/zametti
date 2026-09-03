@@ -98,8 +98,12 @@ QString ZDocument::markdownOf(const QTextCursor& range) const {
     return text;
 }
 
-bool ZDocument::replaceRange(QTextCursor& at, const QString& markdown, PasteMode mode) {
+bool ZDocument::replaceRange(QTextCursor& at, const QString& given, PasteMode mode) {
     if (at.document() != &d_->text) return false;
+    // РАЗДЕЛИТЕЛИ СТРОК ЮНИКОДА — ПЕРЕВОДЫ СТРОКИ, в обоих режимах вставки:
+    // U+2028 из буфера иначе ложился в блок непомеченным и уезжал в файл собой,
+    // а U+2029 рвал блок кода надвое (Qt рвёт блок на нём; набор FileCanon).
+    const QString markdown = normaliseLineSeparators(given);
     // ИСХОДНИК СЕЙЧАС ПРАВЯТ СНАРУЖИ: истина уехала в текст, и принимать правку
     // здесь значило бы завести вторую точку правки — ту самую, о которой
     // заметка не знает (см. sourceEditing в document.h).
