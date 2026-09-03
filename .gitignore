@@ -91,3 +91,6 @@ sandbox/
 # Метаданные просмотрщиков картинок (gThumb кладёт .comments/<файл>.xml рядом
 # с картинкой). К проекту отношения не имеют, а в resources/ появляются сами.
 .comments/
+
+# erased and recovered data
+.recovery/
