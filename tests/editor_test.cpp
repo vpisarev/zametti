@@ -308,6 +308,40 @@ void checkHomeEndMoveWithinLine() {
     QTest::qWait(10);
     checkEqual(QStringLiteral("вторая строка"), editor.textCursor().selectedText(),
                "Shift+End выделяет до конца строки");
+
+    // И ФИЗИЧЕСКАЯ СТРОКА, а не логическая (уточнение владельца, 04.09.2026):
+    // длинный абзац, переносимый по ширине окна, — End идёт в конец ЭКРАННОЙ
+    // строки (та же высота каретки, позиция внутри блока), Home со второй
+    // экранной строки — в её начало, а не в начало абзаца.
+    QString longText;
+    for (int i = 0; i < 60; ++i) longText += QStringLiteral("слово%1 ").arg(i);
+    const QString wrappedPath = writeNote("home-end-перенос.md", longText.trimmed() + QLatin1Char('\n'));
+    editor.openFile(wrappedPath);
+    QTest::qWait(30);
+    const QTextBlock block = editor.document()->firstBlock();
+    caret = QTextCursor(editor.document());
+    caret.setPosition(block.position() + 3);
+    editor.setTextCursor(caret);
+    QTest::qWait(10);
+    const int yFirst = editor.cursorRect().y();
+    QTest::keyClick(&editor, Qt::Key_End);
+    QTest::qWait(10);
+    const int endOfFirst = editor.textCursor().positionInBlock();
+    check(endOfFirst > 3 && endOfFirst < block.length() - 1 && editor.cursorRect().y() == yFirst,
+          "End на переносимом абзаце — конец экранной строки, не абзаца (" +
+              std::to_string(endOfFirst) + " из " + std::to_string(block.length() - 1) + ")");
+    QTest::keyClick(&editor, Qt::Key_Right);
+    QTest::keyClick(&editor, Qt::Key_Right);
+    QTest::keyClick(&editor, Qt::Key_Right);
+    QTest::qWait(10);
+    const int ySecond = editor.cursorRect().y();
+    check(ySecond > yFirst, "три шага вправо — уже на второй экранной строке");
+    QTest::keyClick(&editor, Qt::Key_Home);
+    QTest::qWait(10);
+    const int startOfSecond = editor.textCursor().positionInBlock();
+    check(startOfSecond > 0 && startOfSecond <= endOfFirst + 1 && editor.cursorRect().y() == ySecond,
+          "Home на второй экранной строке — её начало, не начало абзаца (" +
+              std::to_string(startOfSecond) + ")");
 }
 
 // Слова и строки: когда они верны, когда честно неизвестны и когда снова верны.
