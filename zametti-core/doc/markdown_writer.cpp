@@ -128,6 +128,34 @@ bool runCanDelimit(QStringView s, qsizetype begin, qsizetype end) {
     return leftFlanking || rightFlanking;
 }
 
+// Может ли прогон тильд [begin, end) стать меткой зачёркивания у md4c (см.
+// md4c.c, md_analyze_tilde): длина 1–2, слева начало/пробел/пунктуация — открыть,
+// справа то же — закрыть; и есть ли в тексте другой прогон той же длины, с
+// которым он спарится. Перенос строки — пробел.
+bool tildeRunMayPair(QStringView s, qsizetype begin, qsizetype end) {
+    const qsizetype length = end - begin;
+    if (length < 1 || length > 2) return false;
+    const auto boundary = [&](qsizetype k) {
+        if (k < 0 || k >= s.size()) return true;
+        const QChar ch = s.at(k);
+        return isAsciiSpace(ch) || isAsciiPunct(ch) || ch == QChar::Nbsp;
+    };
+    if (!boundary(begin - 1) && !boundary(end)) return false;
+    // Пара: другой прогон ровно той же длины где угодно в тексте.
+    const auto hasPartner = [&](qsizetype from, qsizetype to) {
+        qsizetype k = from;
+        while (k < to) {
+            if (s.at(k) != u'~') { ++k; continue; }
+            qsizetype r = k;
+            while (r < to && s.at(r) == u'~') ++r;
+            if (r - k == length) return true;
+            k = r;
+        }
+        return false;
+    };
+    return hasPartner(0, begin) || hasPartner(end, s.size());
+}
+
 bool looksLikeEntity(QStringView s, qsizetype i) {
     qsizetype j = i + 1;
     if (j < s.size() && s.at(j) == u'#') {
@@ -394,16 +422,18 @@ void appendEscaped(TextSink& sink, QStringView text, qsizetype begin, qsizetype 
             case u'~': {
                 qsizetype j = i;
                 while (j < text.size() && text.at(j) == c) ++j;
-                bool escape = runCanDelimit(text, i, j);
-                // ОДИНОКАЯ ТИЛЬДА ЗАЧЁРКИВАНИЯ НЕ ОТКРОЕТ: ей нужна пара, а
-                // другой тильды в тексте нет. Без этого «~подпись» — спрятанная
-                // подпись картинки (см. isNonameCaption) — уезжала бы в файл
-                // как «\~подпись», и написанное человеком руками менялось бы
-                // при первой же записи. Судья — md4c: пробег без пары читается
-                // буквально (Roundtrip/Corpus стерегут).
-                if (escape && c == u'~' && text.indexOf(c, j) < 0 &&
-                    (i == 0 || text.left(i).indexOf(c) < 0))
-                    escape = false;
+                // ТИЛЬДЫ — ПО ПРАВИЛУ md4c, А НЕ ПО ФЛАНКИРОВАНИЮ ЭМФАЗЫ (фаззер,
+                // случай 1; класс 1 из known_bugs 31.08). У зачёркивания в md4c
+                // правило мягче: прогон в 1–2 тильды открывает, если слева
+                // начало строки, пробел или пунктуация, и закрывает, если то
+                // же справа; одиночная тильда между пробелами — и то и другое,
+                // и два таких прогона одной длины спариваются даже через
+                // перенос строки («~\n~» — зачёркнутый перевод). Экранируем,
+                // когда прогон может стать меткой И у него есть пара той же
+                // длины где-то в блоке. Без пары — буквально: «~подпись»
+                // (спрятанная подпись картинки, isNonameCaption) уходит в файл
+                // как написана. Судья — md4c (Roundtrip/Corpus/FileCanon).
+                bool escape = c == u'~' ? tildeRunMayPair(text, i, j) : runCanDelimit(text, i, j);
                 for (qsizetype k = i; k < j && !escape; ++k)
                     if ((markAt(sink, k) & kMarkDelimEdge) != 0) escape = true;
                 const qsizetype stop = j < end ? j : end;

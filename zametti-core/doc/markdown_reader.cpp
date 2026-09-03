@@ -1209,6 +1209,24 @@ int leaveSpan(MD_SPANTYPE type, void* detail, void* userdata) {
         return 0;
     }
 
+    // СПАН ИЗ ОДНИХ ПРОБЕЛОВ И ПЕРЕНОСОВ — тот же случай, что пустой (фаззер,
+    // случай 1, 03.09.2026). md4c спаривает одиночные тильды через пробел и
+    // перенос строки: «~\n~» — зачёркнутый перевод строки. Разметка на пустоте
+    // ничего не помечает: приведение к файлу её снимает (withTrimmedSpans), и
+    // тильды, написанные человеком, пропадали бы при следующей записи. Кусок
+    // остаётся дословным — байты целы.
+    if ((c.styles.back().flags & InlineImage) == 0) {
+        bool blank = true;
+        for (qsizetype k = qsizetype(c.styleStart.back()); blank && k < c.text.size(); ++k) {
+            const QChar ch = c.text.at(k);
+            blank = ch == u' ' || ch == u'\t' || ch == u'\n' || ch == u'\r' || ch == QChar::Nbsp;
+        }
+        if (blank) {
+            demote(c);
+            return 0;
+        }
+    }
+
     flushRun(c);
     c.styles.pop_back();
     c.styleStart.pop_back();

@@ -266,6 +266,16 @@ bool hasContent(const Piece& block) {
     return false;
 }
 
+// ПУСТОЙ ПУНКТ — ОДНО ПОНЯТИЕ НА ВСЕХ (фаззер, случай 4, 03.09.2026): нет
+// содержимого И это не задача. У задачи содержимое — сам чекбокс: «- [ ]» для
+// md4c не пуст, и абзац с отступом через пустую строку после неё читается
+// ВНУТРИ пункта (замерено). Прежде это было записано трижды в трёх местах
+// разными словами, и проход отцепления считал пустой задачей то, что чтение
+// считает пунктом с содержимым: абзац выносился наружу, а читался внутри.
+bool isEmptyItem(const Piece& block) {
+    return !hasContent(block) && block.marker != Marker::Task;
+}
+
 // Текст блока укоротили — куски, вылезшие за его конец, выбрасываем. Вывод от
 // этого не меняется: писатель такие куски и так пропускал, а инвариант «кусок
 // внутри текста своего блока» остаётся целым. Картинка за концом текста
@@ -989,8 +999,8 @@ std::vector<Piece> withoutEmptyNested(std::vector<Piece> doc) {
     out.reserve(doc.size());
     for (size_t i = 0; i < doc.size(); ++i) {
         const Piece& block = doc[i];
-        const bool drop = !block.raw && !hasContent(block) && block.level > 0 &&
-                          block.kind == Kind::ListItem && block.marker != Marker::Task;
+        const bool drop = !block.raw && isEmptyItem(block) && block.level > 0 &&
+                          block.kind == Kind::ListItem;
         if (!drop) {
             out.push_back(std::move(doc[i]));
             continue;
@@ -1248,7 +1258,7 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched, bool*
                 // значит его родителя больше нет: прижимаем к возможному.
                 if (block.level > deepest + 1) block.level = deepest + 1;
                 deepest = block.level;
-                emptyItem = !hasContent(block);
+                emptyItem = isEmptyItem(block);
                 blankSince = false;
                 continue;
             }
@@ -1270,7 +1280,7 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched, bool*
         if (!spaced.empty() &&
             wouldMerge(spaced.back().kind, spaced.back().raw,
                        spaced.back().isClosedHtmlComment(), block.kind, block.raw, block.level,
-                       !hasContent(block) && block.marker != Marker::Task))
+                       isEmptyItem(block)))
             spaced.push_back(vspacePiece());
         spaced.push_back(std::move(block));
     }
