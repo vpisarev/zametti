@@ -458,3 +458,40 @@ TEST(FileCanon, IndentInsideTextlessItemIsNbsp) {
     EXPECT_EQ(0, back[2].level);
     EXPECT_TRUE(back[2].text.startsWith(QChar::Nbsp)) << back[2].text.toStdString();
 }
+
+// ЗАПИСЬ — НЕПОДВИЖНАЯ ТОЧКА НА СВОЁМ ЖЕ ВЫХОДЕ (фаззер, случай 2; требование
+// владельца: лечение один раз). Живой документ с разметкой поверх кода —
+// курсив и зачёркивание, налезающие на код в кавычках, — писатель приводит к
+// выразимому; но прочитав записанное и записав снова, получал ДРУГИЕ байты
+// (`*ML is introduc*~~ed~~` → `*ML is ~~introduc~~*~~ed~~`). Сам текст —
+// мусор (Obsidian из Apple Notes), сохранять его байты незачем; сходиться за
+// один шаг он обязан.
+TEST(FileCanon, StylesOverCodeConvergeInOneStep) {
+    Piece p;
+    p.kind = Kind::ListItem;
+    p.marker = Marker::Bullet;
+    p.level = 0;
+    p.text = QString::fromUtf8(
+        "Abs\ntract: OpenCV_ (Oтекстpen те`кстSource Compter~~~ for computing, CV -[ and ML is introduced.");
+    const auto run = [&](int from, int to, bool code, bool italic, bool strike) {
+        zametti::Run r;
+        r.start = from;
+        r.end = to;
+        r.set(InlineCode, code);
+        r.set(InlineItalic, italic);
+        r.set(InlineStrike, strike);
+        p.runs.push_back(r);
+    };
+    run(17, 44, true, false, false);
+    run(44, 73, true, true, false);
+    run(73, 82, true, true, true);
+    run(82, 85, true, false, false);
+    run(85, 88, true, true, true);
+    run(88, 103, false, true, true);
+    run(103, 105, false, false, true);
+    // Той же дорогой, что запись заметки: живой документ → байты файла →
+    // документ из файла → байты.
+    const QByteArray w1 = ZDocument::fromPieces({p}).fileBytes(NoteHeader{});
+    const QByteArray w2 = bodyOf(std::string(w1.constData(), size_t(w1.size()))).fileBytes(NoteHeader{});
+    EXPECT_EQ(w1.toStdString(), w2.toStdString());
+}

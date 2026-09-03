@@ -218,14 +218,24 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
         // Случайное место и, с некоторой вероятностью, выделение. Место берём
         // блоком и смещением в нём: позиций заметка наружу не показывает.
         QTextCursor cursor = note.caretAtBlock(int(rng() % uint32_t(blocks)));
+        // МЕСТО — НА ГРАНИЦЕ ЗНАКА, А НЕ КОДОВОЙ ЕДИНИЦЫ. Смещение случайное в
+        // UTF-16, и оно попадало внутрь суррогатной пары (эмодзи в заметке):
+        // выделение с половиной эмодзи человеку недоступно (каретка Qt ходит
+        // по знакам), а набор находил «расхождение» — одинокий суррогат в
+        // документе, которого в файле не бывает (фаззер, случай 3, 03.09.2026).
+        const auto snap = [&cursor](int pos) {
+            return pos > 0 && cursor.document()->characterAt(pos - 1).isHighSurrogate() ? pos - 1
+                                                                                          : pos;
+        };
         cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::MoveAnchor);
         const int inBlock = cursor.positionInBlock();
-        cursor.setPosition(cursor.position() - int(rng() % uint32_t(inBlock + 1)));
+        cursor.setPosition(snap(cursor.position() - int(rng() % uint32_t(inBlock + 1))));
         if (rng() % 3 == 0) {
             QTextCursor other = note.caretAtBlock(int(rng() % uint32_t(blocks)));
             other.movePosition(QTextCursor::EndOfBlock);
-            cursor.setPosition(other.position() - int(rng() % uint32_t(other.positionInBlock() + 1)),
-                               QTextCursor::KeepAnchor);
+            cursor.setPosition(
+                snap(other.position() - int(rng() % uint32_t(other.positionInBlock() + 1))),
+                QTextCursor::KeepAnchor);
         }
 
         std::string what;
