@@ -11,6 +11,7 @@
 #include "zlogs.h"
 
 #include <QDateTime>
+#include <QTimeZone>
 #include <QFileInfo>
 #include <QSet>
 #include <QDir>
@@ -699,24 +700,9 @@ int StoreCli::cmdHistoryAudit() {
 
     // Шапка — строками, без штампов; тело — тем же каноном, что показывает
     // история (diff::bodyOf).
-    struct Split {
-        QStringList header;   // строки шапки без modified/version
-        std::string body;
-    };
+    using Split = NoteEssence;
     const auto split = [](const QByteArray& bytes) {
-        Split out;
-        std::vector<Piece> blocks;
-        NoteHeader header;
-        parsePieces(QString::fromUtf8(bytes), blocks, header);
-        for (const std::string& line : header.lines()) {
-            const QString text = QString::fromStdString(line);
-            if (text.startsWith(QStringLiteral("modified:")) ||
-                text.startsWith(QStringLiteral("version:")))
-                continue;
-            out.header.append(text);
-        }
-        out.body = diff::bodyOf(std::string_view(bytes.constData(), size_t(bytes.size())));
-        return out;
+        return essenceOf(std::string_view(bytes.constData(), size_t(bytes.size())));
     };
     const auto keyOf = [](const QString& line) { return line.section(QLatin1Char(':'), 0, 0).trimmed(); };
 
@@ -767,7 +753,7 @@ int StoreCli::cmdHistoryAudit() {
             if (detail && !havePrev)
                 std::printf("  #%-3d %-9s %s  %-32s %7lld b\n", i,
                             kindNames[qBound(0, int(entry.kind()), 5)],
-                            QDateTime::fromMSecsSinceEpoch(entry.time(), Qt::UTC)
+                            QDateTime::fromMSecsSinceEpoch(entry.time(), QTimeZone::UTC)
                                 .toString(Qt::ISODate)
                                 .toUtf8()
                                 .constData(),
@@ -809,7 +795,7 @@ int StoreCli::cmdHistoryAudit() {
                     }
                     std::printf("  #%-3d %-9s %s  %-32s %7lld b  %s\n", i,
                                 kindNames[qBound(0, int(entry.kind()), 5)],
-                                QDateTime::fromMSecsSinceEpoch(entry.time(), Qt::UTC)
+                                QDateTime::fromMSecsSinceEpoch(entry.time(), QTimeZone::UTC)
                                     .toString(Qt::ISODate)
                                     .toUtf8()
                                     .constData(),

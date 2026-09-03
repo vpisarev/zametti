@@ -7,6 +7,7 @@
 
 #include "document.h"
 #include "document_pieces.h"
+#include "note_header.h"
 #include "list_line.h"
 #include "serializer.h"
 
@@ -1411,6 +1412,28 @@ SaveOutcome ZDocument::saveTo(const QString& path, const QString& timestamp,
                               const QByteArray* prebuiltText) {
     return saveDocument(d_->text, path, timestamp, std::move(reader), meta, known,
                         prebuiltBlocks, prebuiltText);
+}
+
+NoteEssence essenceOf(std::string_view fileBytes) {
+    NoteEssence out;
+    std::vector<Piece> blocks;
+    NoteHeader header;
+    // Тот же ввоз, что у ZDocument::loadMarkdown: нормализация пробелов — часть
+    // чтения, иначе слепок читался бы не так, как читает программа.
+    parsePieces(normaliseSpaces(QString::fromUtf8(fileBytes.data(), qsizetype(fileBytes.size()))),
+                blocks, header);
+    for (const std::string& line : header.lines()) {
+        if (line.rfind("modified:", 0) == 0 || line.rfind("version:", 0) == 0) continue;
+        out.header.append(QString::fromStdString(line));
+    }
+    out.body = writePieces(blocks, NoteHeader{});
+    return out;
+}
+
+bool sameNoteEssence(const QByteArray& a, const QByteArray& b) {
+    if (NoteHeader::sameFileApartFromStamps(a, b)) return true;
+    return essenceOf(std::string_view(a.constData(), size_t(a.size()))) ==
+           essenceOf(std::string_view(b.constData(), size_t(b.size())));
 }
 
 QByteArray ZDocument::fileBytes(const NoteHeader& envelope, std::vector<Piece>* fileBlocks,

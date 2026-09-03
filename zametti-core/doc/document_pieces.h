@@ -20,6 +20,7 @@
 #include "note_header.h"
 
 #include <QString>
+#include <QStringList>
 #include <QStringView>
 
 #include <cstddef>
@@ -169,6 +170,25 @@ QString writePieces(const std::vector<Piece>& blocks, const NoteHeader& header =
 // тому, кто держит инвариант «в кэше только равное файлу», это надо знать.
 std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched = nullptr,
                                    bool* reshaped = nullptr);
+
+// СУТЬ ЗАМЕТКИ — то, по чему две копии файла считаются ОДНОЙ заметкой: шапка
+// без штампов (modified, version) и тело после разбора, записанное живым
+// каноном без шапки — ровно то, что человек видит в истории. Байты при этом
+// вправе различаться: экранирование, пробелы, хвостовая пустая строка, канон
+// другого дня или другого устройства. Спрашивают журнал (одинаковых записей
+// не бывает — по сути, а не по байтам; решение владельца, 03.09.2026),
+// выравнивание синка (файл, равный голове по сути, выровнен) и разность
+// истории (строки).
+struct NoteEssence {
+    QStringList header;   // строки шапки без modified/version
+    QString body;
+    bool operator==(const NoteEssence& other) const {
+        return header == other.header && body == other.body;
+    }
+};
+NoteEssence essenceOf(std::string_view fileBytes);
+// Та же заметка? Сперва дёшево — байты (без штампов), потом по сути.
+bool sameNoteEssence(const QByteArray& a, const QByteArray& b);
 
 // КОДИРОВКА ВЕДУЩЕГО ОТСТУПА — канонизация последовательности блоков (канон
 // 03.09.2026): отступ живёт обычными пробелами везде, где markdown прочтёт

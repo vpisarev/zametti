@@ -21,6 +21,7 @@
 // — только пере-запечатать своими байтами.
 
 #include "zstorage.h"
+#include "document_pieces.h"   // sameNoteEssence
 
 #include "folder_cloud.h"
 #include "keyfile.h"
@@ -1336,6 +1337,23 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                 const int last = frames.lastSnapshotIndex();
                 if (last >= 0 && frames.at(last).digest() == fileHash) continue;
             }
+            // ТА ЖЕ ЗАМЕТКА ДРУГИМИ БАЙТАМИ — выровнено. Файл переписан при
+            // открытии в свежий канон, или штамп обновили без правки: по сути
+            // (sameNoteEssence) он равен голове, и external здесь был бы пустой
+            // записью «+0/−0» — по одной на каждую открытую заметку на каждой
+            // смене канона (аудит хранилища владельца, 03.09.2026). Бухгалтерия
+            // запоминает файл, чтобы stat-скан не возвращался к нему каждый
+            // прогон.
+            if (head >= 0 && frames.at(head).hasSnapshot()) {
+                QByteArray headBytes;
+                QString ignored;
+                if (journalSnapshot(id, head, &headBytes, &ignored) &&
+                    sameNoteEssence(headBytes, bytes)) {
+                    const QFileInfo info(pathOf(id));
+                    ledger.setFileStat(id, {info.lastModified().toMSecsSinceEpoch(), info.size()});
+                    continue;
+                }
+            }
             // Файл разошёлся с головой (правка снаружи, оборванное сохранение,
             // файл поверх надгробия) — дописать external: правка побеждает.
             if (!journalFor(id, options.journalRules)
@@ -2176,6 +2194,14 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             // сверила; сверка здесь — та самая паранойя, что и в сохранении).
             if (hashBytes(snap) != h.digest()) {
                 complain(QStringLiteral("head snapshot of %1 does not match its digest").arg(id));
+                continue;
+            }
+            // Файл — та же заметка другими байтами (свежий канон поверх старого
+            // слепка): класть поверх него старые байты значило бы гонять файл по
+            // кругу с открытием заметки. Он и есть голова; оставить.
+            if (haveFile && sameNoteEssence(snap, current)) {
+                const QFileInfo info(path);
+                ledger.setFileStat(id, {info.lastModified().toMSecsSinceEpoch(), info.size()});
                 continue;
             }
             if (!writeFileBytes(path, std::string(snap.constData(), size_t(snap.size())), &why)) {

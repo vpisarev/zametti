@@ -123,16 +123,9 @@ Text textOf(const std::vector<Piece>& blocks) {
 
 namespace {
 
-QString canonicalBody(std::string_view fileBytes) {
-    // Тот же ввоз, что у ZDocument::loadMarkdown: нормализация пробелов —
-    // часть чтения, а не отдельный шаг, иначе слепок читался бы не так, как
-    // читает программа.
-    std::vector<Piece> blocks;
-    NoteHeader header;
-    parsePieces(normaliseSpaces(QString::fromUtf8(fileBytes.data(), qsizetype(fileBytes.size()))),
-                blocks, header);
-    return writePieces(blocks, NoteHeader{});
-}
+// Тело — из сути заметки (essenceOf): та же дверь, что у правила журнала и у
+// выравнивания синка, иначе «одинаково» в истории и в журнале разошлись бы.
+QString canonicalBody(std::string_view fileBytes) { return essenceOf(fileBytes).body; }
 
 }  // namespace
 

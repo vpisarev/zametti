@@ -2,7 +2,7 @@
 #include <cstdio>
 #include "zstorage.h"
 
-#include "note_header.h"   // NoteHeader::sameFileApartFromStamps — про формат заметки
+#include "document_pieces.h"   // sameNoteEssence — «та же заметка» решает формат, не журнал
 
 #include "zstd.h"
 
@@ -1003,6 +1003,26 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
     // Схлопывание — ТОЛЬКО для обычного сохранения, и чужую вешку оно не
     // перепрыгивает: восстановление из истории и приход правки снаружи —
     // вешки, поставленные не набором, и стирать их нельзя ничем.
+    // ТА ЖЕ ЗАМЕТКА, ЧТО В ГОЛОВЕ, — НЕ ЗАПИСЬ, какого бы вида и возраста
+    // голова ни была (решение владельца, 03.09.2026). «Та же» — по сути
+    // (sameNoteEssence): шапка без штампов и тело после разбора, а не байты.
+    // Байты расходятся у одной и той же заметки сплошь и рядом — канон другого
+    // дня, перепись файла при открытии, штамп с другого устройства, — и каждая
+    // такая пара лежала в истории записью «+0/−0». Возраст головы здесь не
+    // важен: ничего не гасится и не теряется, просто нечего писать. Возврат к
+    // ЧУЖОЙ вешке (External, Restore) — тоже: побеждать нечему.
+    {
+        const int head = journal.lastSnapshotIndex();
+        if (head >= 0 && !journal.isVoided(head)) {
+            const QByteArray older = snapshotOf(head);
+            if (!older.isNull() && sameNoteEssence(older, fresh)) {
+                step.writeNew = false;
+                step.dropped = 1;
+                return step;
+            }
+        }
+    }
+
     int sameAs = -1;
     for (int i = kind == ZJournal::Kind::Save ? journal.size() - 1 : -1; i >= 0; --i) {
         const ZJournal::Record& entry = journal.at(i);
@@ -1010,7 +1030,7 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
         if (!entry.hasSnapshot()) break;   // надгробие: за него не заглядываем
         const QByteArray older = snapshotOf(i);
         if (older.isNull()) break;         // слепок не собрался — дальше не идём
-        if (NoteHeader::sameFileApartFromStamps(older, fresh)) {
+        if (sameNoteEssence(older, fresh)) {
             sameAs = i;   // нашли; но, может, ещё старее лежит такая же
             continue;
         }
