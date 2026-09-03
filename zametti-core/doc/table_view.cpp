@@ -204,8 +204,13 @@ TableLayout layoutTable(const Table& table, const TableSpace& space, const ZDocS
     // поля до ширины окна (правило владельца «как картинки»).
     const qreal room = qMax(space.columnWidth, space.fullWidth);
 
+    // МАСШТАБ ВИДА — ОСНОВАНИЕ РАСКЛАДКИ. Ctrl+= растит шрифт документа, и
+    // таблица обязана расти с ним: шрифт ячеек меряется при space.zoom, а не
+    // при единице (владелец увидел живьём: текст рос, сетка стояла).
+    const qreal zoom = space.zoom > 0.0 ? space.zoom : 1.0;
+
     // Пол усадки — ниже него шрифт не ужимаем; вместо этого разрешаем рвать
-    // слова где угодно.
+    // слова где угодно. Пол — доля ОТ МАСШТАБА: при зуме 2 усадка идёт от 2 вниз.
     constexpr qreal kFloor = 0.55;
 
     // Разбор ячеек — ОДИН РАЗ: от масштаба он не зависит.
@@ -287,8 +292,8 @@ TableLayout layoutTable(const Table& table, const TableSpace& space, const ZDocS
     // Из второго правила само собой следует то, чего и хотелось: переносится
     // ровно та колонка, которой досталось меньше её max, а колонки с min == max
     // (числа, даты, короткие слова) не переносятся никогда.
-    Measure m = measure(1.0);
-    qreal scale = 1.0;
+    Measure m = measure(zoom);
+    qreal scale = zoom;
     bool wrapped = false;
     QVector<qreal> widths;
 
@@ -304,7 +309,7 @@ TableLayout layoutTable(const Table& table, const TableSpace& space, const ZDocS
 
     if (m.maxTotal <= room) {
         widths = m.maxWidth;
-    } else if (measureMins(m, 1.0), m.minTotal <= room) {
+    } else if (measureMins(m, zoom), m.minTotal <= room) {
         widths = distribute(m);
         wrapped = true;
     } else {
@@ -312,7 +317,7 @@ TableLayout layoutTable(const Table& table, const TableSpace& space, const ZDocS
         // кеглю, значит нужный масштаб считается сразу: Σmin × scale = W.
         // Перебор стоил бы десяти полных раскладок таблицы (2.5 мс каждая на
         // 50×8) ровно там, где таблица и так самая тяжёлая.
-        scale = qBound(kFloor, room / m.minTotal, 1.0);
+        scale = qBound(kFloor * zoom, zoom * room / m.minTotal, zoom);
         m = measure(scale);
         measureMins(m, scale);
         if (m.maxTotal <= room) {
