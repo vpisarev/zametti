@@ -32,7 +32,11 @@ set(FORBIDDEN
     "QProcess"
     "std::remove"            "std::rename"
     "::unlink"               "::rmdir"                "::rename"
-    "system"                 "popen"
+    # system — и голое, и через пространство имён: граница слова слева не
+    # пускает двоеточие, и «std::system(» проходило мимо голого «system»
+    # (нашлось 04.09.2026 на zstd_test.cpp — rm -rf через std::system).
+    "system"                 "std::system"            "::system"
+    "popen"
     "execl"                  "execlp"                 "execle"
     "execv"                  "execvp"                 "execvpe"
     "_wunlink"               "_wremove"               "_wrename")
