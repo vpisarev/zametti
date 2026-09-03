@@ -1458,31 +1458,19 @@ void NoteEditor::mousePressEvent(QMouseEvent* event) {
     // заводят Enter'ом или из меню.
     if (event->button() == Qt::LeftButton &&
         (event->modifiers() & Qt::ShiftModifier) == 0) {
-        const int hitAt = document()->documentLayout()->hitTest(
-            QPointF(event->position()) + QPointF(horizontalScrollBar()->value(),
-                                                 verticalScrollBar()->value()),
-            Qt::FuzzyHit);
-        QTextBlock under = hitAt >= 0 ? document()->findBlock(hitAt) : QTextBlock();
-        for (int step = 0; step < 2 && under.isValid(); ++step) {
-            const QRectF photo = imageRectInViewport(under);
-            // Показанная подпись — та, что человек видит под снимком
-            // (безымянная и вики-вложение её не показывают, целиться там не во
-            // что).
-            const bool hasCaption = !blockImageRef(under).shownCaption().isEmpty();
-            const QRectF caption =
-                hasCaption ? imageCaptionRectInViewport(under) : QRectF();
-            if (!caption.isEmpty() && caption.contains(event->position())) {
+        QTextBlock under;
+        switch (imagePartAt(event->position(), &under)) {
+            case ImagePart::Caption:
                 setTextCursor(QTextCursor(under));
                 editImageCaption(under.blockNumber());
                 event->accept();
                 return;
-            }
-            if (!photo.isEmpty() && photo.contains(event->position())) {
+            case ImagePart::Photo:
                 setTextCursor(QTextCursor(under));
                 event->accept();
                 return;
-            }
-            under = step == 0 ? under.previous() : QTextBlock();
+            case ImagePart::None:
+                break;
         }
     }
 
@@ -1508,15 +1496,70 @@ void NoteEditor::mousePressEvent(QMouseEvent* event) {
     runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.toggleTask(at); });
 }
 
+NoteEditor::ImagePart NoteEditor::imagePartAt(const QPointF& pos, QTextBlock* block) {
+    const int hitAt = document()->documentLayout()->hitTest(
+        pos + QPointF(horizontalScrollBar()->value(), verticalScrollBar()->value()),
+        Qt::FuzzyHit);
+    QTextBlock under = hitAt >= 0 ? document()->findBlock(hitAt) : QTextBlock();
+    for (int step = 0; step < 2 && under.isValid(); ++step) {
+        const QRectF photo = imageRectInViewport(under);
+        // Показанная подпись — та, что человек видит под снимком (безымянная
+        // и вики-вложение её не показывают, целиться там не во что).
+        const bool hasCaption = !blockImageRef(under).shownCaption().isEmpty();
+        const QRectF caption = hasCaption ? imageCaptionRectInViewport(under) : QRectF();
+        if (!caption.isEmpty() && caption.contains(pos)) {
+            if (block != nullptr) *block = under;
+            return ImagePart::Caption;
+        }
+        if (!photo.isEmpty() && photo.contains(pos)) {
+            if (block != nullptr) *block = under;
+            return ImagePart::Photo;
+        }
+        under = step == 0 ? under.previous() : QTextBlock();
+    }
+    if (block != nullptr) *block = QTextBlock();
+    return ImagePart::None;
+}
+
 void NoteEditor::mouseDoubleClickEvent(QMouseEvent* event) {
     // По рамке — молча: первый щелчок уже переключил задачу, а выделять слово
     // под рамкой человек не собирался.
     if (checkboxUnder(*event).isValid()) return;
 
+    // ПО КАРТИНКЕ (решение владельца, 05.09.2026): смотрят снимки чаще, чем
+    // правят подписи, — двойной щелчок по СНИМКУ просит полноэкранный
+    // просмотр (просмотрщик у окна, редактор лишь просит; окно само отсекает
+    // режимы исходника, настроек и истории), а по ПОДПИСИ — её правку, как
+    // Enter на снимке. Первый щелчок пары уже открыл поле на этой же
+    // подписи — заново его не заводим. Просмотр законен и в read-only
+    // (документация, архив): там правки нет, а смотреть можно.
+    {
+        QTextBlock under;
+        const ImagePart part = imagePartAt(event->position(), &under);
+        if (part == ImagePart::Caption && !isReadOnly()) {
+            setTextCursor(QTextCursor(under));
+            if (captionEditor_ == nullptr || captionBlock_ != under.blockNumber())
+                editImageCaption(under.blockNumber());
+            event->accept();
+            return;
+        }
+        if (part == ImagePart::None) {
+            // Блок картинки вне снимка и подписи (поле рядом, рамка): всё
+            // равно картинка — просмотр.
+            const QTextCursor at = cursorForPosition(event->pos());
+            if (objectOf(at.block()).kind == ObjectKind::Image) under = at.block();
+        }
+        if (under.isValid()) {
+            setTextCursor(QTextCursor(under));
+            emit fullscreenShotRequested();
+            event->accept();
+            return;
+        }
+    }
+
     // ДВОЙНОЙ ЩЕЛЧОК ПО ФОРМУЛЕ — это правка её исходника, а не выделение слова
     // в пустоте: текста под вёрсткой нет вовсе, и выделять там нечего. То же
     // правило, что у Enter на ней, — и то же, что у таблицы.
-    // ПО КАРТИНКЕ — правка подписи, ровно как Enter на ней.
     if (!isReadOnly()) {
         QTextCursor at = cursorForPosition(event->pos());
         // ПО СТРОЧНОЙ ФОРМУЛЕ — раскрыть её исходник на месте: слова под
@@ -1544,12 +1587,6 @@ void NoteEditor::mouseDoubleClickEvent(QMouseEvent* event) {
             runNoteEdit([](ZDocument& note, QTextCursor& caret) {
                 return note.openFormula(caret);
             });
-            event->accept();
-            return;
-        }
-        if (object.kind == ObjectKind::Image) {
-            setTextCursor(at);
-            editImageCaption(object.first);
             event->accept();
             return;
         }
