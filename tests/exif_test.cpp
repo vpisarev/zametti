@@ -303,7 +303,7 @@ void checkZamettiXmp() {
 // exiftool необязателен: нет его — проверка молча пропускается, но говорит об
 // этом вслух, чтобы «зелено» не означало «не проверяли».
 void checkAgainstExiftool(const std::filesystem::path& root) {
-    if (std::system("exiftool -ver > /dev/null 2>&1") != 0) {
+    if (!zametti::ZSystem::runTool(QStringLiteral("exiftool"), {QStringLiteral("-ver")})) {
         std::printf("exiftool не найден — сверка разбора EXIF пропущена\n");
         return;
     }

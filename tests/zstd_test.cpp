@@ -10,12 +10,19 @@
 #include "zstd.h"
 
 #include "test_util.h"
+#include "zsystem.h"
+
+#include <QString>
+#include <QStringList>
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -46,12 +53,16 @@ std::string noteLike(int lines) {
     return out;
 }
 
-bool haveTool() { return std::system("zstd --version > /dev/null 2>&1") == 0; }
+// Утилита и её запуск — через дверь ZSystem (таб'у № 0 в наборах действует
+// наравне с программой); оболочки нет, аргументы списком.
+bool haveTool() { return zametti::ZSystem::runTool(QStringLiteral("zstd"), {QStringLiteral("--version")}); }
 
 // Запуск команды с ответом «получилось ли». Ответ спрашивается обязательно:
 // молча брошенный код возврата превращает «утилита не запустилась» в
 // «распакованное не совпало», и набор врёт о том, что именно сломалось.
-bool runShell(const std::string& command) { return std::system(command.c_str()) == 0; }
+bool runZstd(const QStringList& args) { return zametti::ZSystem::runTool(QStringLiteral("zstd"), args); }
+
+QString q(const std::string& path) { return QString::fromStdString(path); }
 
 std::string readFile(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
@@ -113,20 +124,31 @@ static int ztRunSuite() {
         std::fprintf(stderr, "ПРОПУЩЕНО: утилиты zstd в системе нет, "
                              "совместимость не проверена\n");
     } else {
-        const std::string dir = "/tmp/zametti-zstd-test";
-        ZT_TRUE("каталог под опыт заведён", runShell("rm -rf " + dir + " && mkdir -p " + dir));
+        // Каталог опыта — во временной зоне системы ($TMPDIR у песочницы мака —
+        // ~/ai/tmp, а /tmp там закрыт), снос — только дверью для песочниц.
+        const fs::path scratch = fs::temp_directory_path() / "zametti-zstd-test";
+        const std::string dir = scratch.string();
+        if (fs::exists(scratch)) {
+            QString error;
+            ZT_TRUE("прежний каталог опыта снесён (" + error.toStdString() + ")",
+                    zametti::ZSystem::removeScratchTree(q(dir), &error));
+        }
+        fs::create_directories(scratch);
+        ZT_TRUE("каталог под опыт заведён", fs::is_directory(scratch));
         const std::string source = noteLike(500);
 
         // Наш поток → системная утилита.
         writeFile(dir + "/наш.zst", compress(source, 3));
         ZT_TRUE("утилита распаковала без жалоб",
-                runShell("zstd -d -q -f " + dir + "/наш.zst -o " + dir + "/наш.out"));
+                runZstd({QStringLiteral("-d"), QStringLiteral("-q"), QStringLiteral("-f"), q(dir + "/наш.zst"),
+                         QStringLiteral("-o"), q(dir + "/наш.out")}));
         ZT_EQ("системная утилита распаковала наш поток", source, readFile(dir + "/наш.out"));
 
         // Системная утилита → мы.
         writeFile(dir + "/чужой.txt", source);
         ZT_TRUE("утилита сжала без жалоб",
-                runShell("zstd -q -f -19 " + dir + "/чужой.txt -o " + dir + "/чужой.zst"));
+                runZstd({QStringLiteral("-q"), QStringLiteral("-f"), QStringLiteral("-19"), q(dir + "/чужой.txt"),
+                         QStringLiteral("-o"), q(dir + "/чужой.zst")}));
         ZT_EQ("мы распаковали поток системной утилиты", source,
               decompress(readFile(dir + "/чужой.zst"), source.size()));
     }
