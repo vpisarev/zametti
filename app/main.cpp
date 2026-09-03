@@ -3347,6 +3347,33 @@ int main(int argc, char** argv) {
             QTimer::singleShot(ms * 3 / 4, &window, [&window, shot] {
                 window.grab().save(QString::fromLocal8Bit(shot));
             });
+        // ZAMETTI_PROBE_SWITCH=<id,id,…> — переключение заметок В ЖИВОМ ОКНЕ:
+        // той же дверью, что список (openFile + всё, что окно делает по
+        // fileChanged), два круга, каждое — от команды до отрисованного кадра.
+        // Это то, что человек чувствует; разрез самого openFile печатает
+        // ZAMETTI_TRACE_OPEN=1. Числа — в stderr.
+        if (const QByteArray ids = qgetenv("ZAMETTI_PROBE_SWITCH"); !ids.isEmpty())
+            QTimer::singleShot(ms / 4, &window, [&, ids] {
+                if (!model.isStore()) return;
+                const QStringList list = QString::fromLocal8Bit(ids).split(QLatin1Char(','), Qt::SkipEmptyParts);
+                for (int round = 0; round < 2; ++round)
+                    for (const QString& id : list) {
+                        const QString path = zapp.storage()->pathOf(id.trimmed());
+                        QElapsedTimer t;
+                        t.start();
+                        editor.openFile(path, true);
+                        const qint64 opened = t.nsecsElapsed() / 1000;
+                        QCoreApplication::processEvents();
+                        const qint64 events = t.nsecsElapsed() / 1000;
+                        editor.viewport()->repaint();
+                        window.repaint();
+                        const qint64 frame = t.nsecsElapsed() / 1000;
+                        std::fprintf(stderr, "probe switch %d %s: open %lld, +events %lld, +frame %lld, total %lld us\n",
+                                     round, id.toUtf8().constData(), (long long)opened,
+                                     (long long)(events - opened), (long long)(frame - events),
+                                     (long long)frame);
+                    }
+            });
         QTimer::singleShot(ms, &app, &QCoreApplication::quit);
     }
     return app.exec();

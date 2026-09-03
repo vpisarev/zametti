@@ -60,6 +60,7 @@ protected:
     int cmdResurrect();
     int cmdThin();
     int cmdHistory();
+    int cmdHistoryAudit();
     int cmdRecompress();
     int cmdVerify();
 

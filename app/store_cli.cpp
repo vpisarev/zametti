@@ -1,5 +1,7 @@
 #include "store_cli.h"
 
+#include "diff.h"
+#include "document_pieces.h"
 #include "journal.h"
 #include "keyfile.h"
 #include "keyring_secrets.h"
@@ -9,8 +11,11 @@
 #include "zlogs.h"
 
 #include <QDateTime>
+#include <QFileInfo>
+#include <QSet>
 #include <QDir>
 
+#include <algorithm>
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -75,6 +80,7 @@ int StoreCli::usage() const {
                  "  zametti store verify --root <dir>\n"
                  "  zametti store thin --root <dir> [--dry-run]\n"
                  "  zametti store history compress <id | path to .md> [--root <dir>]\n"
+                 "  zametti store history audit --root <dir>\n"
                  "  zametti store recompress --root <dir> --id <id|all>\n"
                  "  zametti store resurrect --root <dir> --id <id>\n"
                  "  zametti store remove --root <dir> --id <id>\n"
@@ -667,7 +673,196 @@ int StoreCli::cmdThin() {
 //
 // Штатного пути чистить историю руками у человека нет и не будет: чистка
 // ленивая и пер-заметочная (решение владельца).
+// АУДИТ ЖУРНАЛОВ: откуда берутся записи, у которых в истории «+0/−0».
+//
+// Правило журнала сравнивает слепки БАЙТАМИ (без строк modified/version), а
+// вид истории показывает строки после разбора и записи нынешним каноном без
+// шапки. Между этими двумя «одинаково» и живут пустые записи. Аудит идёт по
+// всем журналам хранилища и раскладывает соседние пары слепков по классам:
+// байты равны; только шапка (и какие ключи); только канон (шапка та же, тело
+// после разбора то же, байты разные); настоящая правка. Плюс вид записи,
+// которой пара кончается, — Save это или External, — и заметки, где пустых
+// пар больше всего. Числа, не догадки.
+int StoreCli::cmdHistoryAudit() {
+    if (root_.isEmpty()) return usage();
+    ZStorage storage(root_);
+    if (!takeLock(storage)) return 1;
+
+    const QDir history(QDir(root_).filePath(QStringLiteral("history")));
+    // --id <id> — одна заметка, и по ней каждая запись строкой: номер, вид,
+    // время, класс против предыдущего слепка, размер, первая разошедшаяся
+    // строка. Без --id — сводка по хранилищу.
+    const QStringList names = id_.isEmpty()
+        ? history.entryList({QStringLiteral("*.zm")}, QDir::Files, QDir::Name)
+        : QStringList{id_ + QStringLiteral(".zm")};
+    const bool detail = !id_.isEmpty();
+
+    // Шапка — строками, без штампов; тело — тем же каноном, что показывает
+    // история (diff::bodyOf).
+    struct Split {
+        QStringList header;   // строки шапки без modified/version
+        std::string body;
+    };
+    const auto split = [](const QByteArray& bytes) {
+        Split out;
+        std::vector<Piece> blocks;
+        NoteHeader header;
+        parsePieces(QString::fromUtf8(bytes), blocks, header);
+        for (const std::string& line : header.lines()) {
+            const QString text = QString::fromStdString(line);
+            if (text.startsWith(QStringLiteral("modified:")) ||
+                text.startsWith(QStringLiteral("version:")))
+                continue;
+            out.header.append(text);
+        }
+        out.body = diff::bodyOf(std::string_view(bytes.constData(), size_t(bytes.size())));
+        return out;
+    };
+    const auto keyOf = [](const QString& line) { return line.section(QLatin1Char(':'), 0, 0).trimmed(); };
+
+    enum Class { Identical, StampsOnly, HeaderOnly, CanonOnly, Real, ClassCount };
+    const char* const classNames[ClassCount] = {"identical bytes", "stamps only (modified/version)",
+                                                "header only", "canon only", "real change"};
+    const char* const kindNames[6] = {"?", "Save", "External", "Restore", "Tombstone", "Amendment"};
+    qint64 byClass[ClassCount] = {0, 0, 0, 0, 0};
+    qint64 byClassAndKind[ClassCount][6] = {};
+    QHash<QString, qint64> headerKeys;   // какие ключи шапки различали пары
+    struct NoteScore {
+        QString id;
+        qint64 empty = 0;
+        qint64 pairs = 0;
+    };
+    QVector<NoteScore> scores;
+    qint64 journals = 0;
+    qint64 records = 0;
+    qint64 bytes = 0;
+    qint64 emptyBytes = 0;   // сколько занимают в файлах слепки пустых пар
+
+    for (const QString& name : names) {
+        const QString id = name.left(name.size() - 3);
+        ZJournal jrn;
+        QString error;
+        if (!storage.readJournal(id, &jrn, &error)) {
+            std::fprintf(stderr, "%s: %s\n", name.toUtf8().constData(), error.toUtf8().constData());
+            continue;
+        }
+        ++journals;
+        records += jrn.size();
+        bytes += QFileInfo(storage.journalPath(id)).size();
+        NoteScore score;
+        score.id = id;
+        QByteArray prev;
+        Split prevSplit;
+        bool havePrev = false;
+        for (int i = 0; i < jrn.size(); ++i) {
+            const ZJournal::Record& entry = jrn.at(i);
+            if (!entry.hasSnapshot() || jrn.isVoided(i) || jrn.isDamaged(i)) continue;
+            QByteArray snap;
+            if (!storage.journalSnapshot(id, i, &snap, &error)) {
+                std::fprintf(stderr, "%s #%d: %s\n", name.toUtf8().constData(), i,
+                             error.toUtf8().constData());
+                break;
+            }
+            Split now = split(snap);
+            if (detail && !havePrev)
+                std::printf("  #%-3d %-9s %s  %-32s %7lld b\n", i,
+                            kindNames[qBound(0, int(entry.kind()), 5)],
+                            QDateTime::fromMSecsSinceEpoch(entry.time(), Qt::UTC)
+                                .toString(Qt::ISODate)
+                                .toUtf8()
+                                .constData(),
+                            "(first)", (long long)entry.plainSize());
+            if (havePrev) {
+                Class cls = Real;
+                if (snap == prev) {
+                    cls = Identical;
+                } else if (now.body == prevSplit.body) {
+                    if (now.header == prevSplit.header) {
+                        cls = NoteHeader::sameFileApartFromStamps(prev, snap) ? StampsOnly : CanonOnly;
+                    } else {
+                        cls = HeaderOnly;
+                        QSet<QString> a;
+                        QSet<QString> b;
+                        for (const QString& line : prevSplit.header) a.insert(line);
+                        for (const QString& line : now.header) b.insert(line);
+                        for (const QString& line : a)
+                            if (!b.contains(line)) ++headerKeys[keyOf(line)];
+                        for (const QString& line : b)
+                            if (!a.contains(line)) ++headerKeys[keyOf(line)];
+                    }
+                }
+                ++byClass[cls];
+                ++byClassAndKind[cls][qBound(0, int(entry.kind()), 5)];
+                if (detail) {
+                    QString firstDiff;
+                    if (cls != Identical && cls != Real) {
+                        const QList<QByteArray> a = prev.split('\n');
+                        const QList<QByteArray> b = snap.split('\n');
+                        for (int k = 0; k < qMax(a.size(), b.size()); ++k) {
+                            if (a.value(k) == b.value(k)) continue;
+                            firstDiff = QStringLiteral("line %1: [%2] -> [%3]")
+                                            .arg(k + 1)
+                                            .arg(QString::fromUtf8(a.value(k)).left(60),
+                                                 QString::fromUtf8(b.value(k)).left(60));
+                            break;
+                        }
+                    }
+                    std::printf("  #%-3d %-9s %s  %-32s %7lld b  %s\n", i,
+                                kindNames[qBound(0, int(entry.kind()), 5)],
+                                QDateTime::fromMSecsSinceEpoch(entry.time(), Qt::UTC)
+                                    .toString(Qt::ISODate)
+                                    .toUtf8()
+                                    .constData(),
+                                classNames[cls], (long long)entry.plainSize(),
+                                firstDiff.toUtf8().constData());
+                }
+                ++score.pairs;
+                if (cls != Real) {
+                    ++score.empty;
+                    emptyBytes += entry.packedSize();
+                }
+            }
+            prev = snap;
+            prevSplit = std::move(now);
+            havePrev = true;
+        }
+        if (score.pairs > 0) scores.append(score);
+    }
+
+    std::printf("journals %lld, records %lld, %.1f MB on disk\n", (long long)journals,
+                (long long)records, double(bytes) / 1048576.0);
+    std::printf("adjacent snapshot pairs by class (and by kind of the newer record):\n");
+    qint64 pairs = 0;
+    for (int c = 0; c < ClassCount; ++c) pairs += byClass[c];
+    for (int c = 0; c < ClassCount; ++c) {
+        std::printf("  %-32s %6lld", classNames[c], (long long)byClass[c]);
+        for (int k = 1; k < 6; ++k)
+            if (byClassAndKind[c][k] > 0)
+                std::printf("  %s %lld", kindNames[k], (long long)byClassAndKind[c][k]);
+        std::printf("\n");
+    }
+    std::printf("  %-32s %6lld\n", "total", (long long)pairs);
+    std::printf("empty pairs hold %.1f MB packed\n", double(emptyBytes) / 1048576.0);
+    if (!headerKeys.isEmpty()) {
+        std::printf("header keys that differed in header-only pairs:\n");
+        for (auto it = headerKeys.cbegin(); it != headerKeys.cend(); ++it)
+            std::printf("  %s: %lld\n", it.key().toUtf8().constData(), (long long)it.value());
+    }
+    std::sort(scores.begin(), scores.end(),
+              [](const NoteScore& a, const NoteScore& b) { return a.empty > b.empty; });
+    std::printf("notes with most empty pairs (empty/pairs):\n");
+    int shown = 0;
+    for (const NoteScore& s : scores) {
+        if (s.empty == 0 || shown++ >= 15) break;
+        std::printf("  %s  %lld/%lld  %s\n", s.id.toUtf8().constData(), (long long)s.empty,
+                    (long long)s.pairs,
+                    storage.titleOf(s.id).toUtf8().constData());
+    }
+    return 0;
+}
+
 int StoreCli::cmdHistory() {
+    if (positional_ == QStringLiteral("audit")) return cmdHistoryAudit();
     if (positional_ != QStringLiteral("compress") || positional2_.isEmpty()) return usage();
     // Цель — id или путь к файлу заметки; разбирает хранилище (ZStorage::locate).
     const ZStorage::Target target = ZStorage::locate(positional2_, root_);
