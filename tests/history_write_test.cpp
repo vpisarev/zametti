@@ -749,7 +749,50 @@ void checkLazyTimeMigration() {
 
 }  // namespace
 
-static int ztRunSuite(int argc, char** argv) {
+static // ОДИНАКОВОЕ — ЭТО ОДИНАКОВОЕ СОДЕРЖИМОЕ, А НЕ ОДИНАКОВЫЕ БАЙТЫ (решение
+// владельца, 03.09.2026). В истории у владельца лежали слепки «+0/−0»:
+// правило журнала сравнивало байты без строк modified/version, а история
+// показывает строки после разбора и записи нынешним каноном. Между двумя
+// «одинаково» и жили пустые записи: смена канона (экранирование, пробелы),
+// перепись файла при открытии, приезд той же заметки с другого устройства с
+// другим штампом. Теперь журнал спрашивает СУТЬ: шапка без штампов и тело
+// после разбора — и не пишет ни Save, ни External, равные голове по сути,
+// сколько бы лет голове ни было.
+void checkSameEssenceIsNotRecorded() {
+    const QString id = QStringLiteral("01essenceaaaaa");
+    zametti::ZStorage h(g_root);
+    const QByteArray v1 =
+        "<!-- zametti\ncreated: 2020-01-01T00:00:00+03:00\nmodified: 2020-01-02T00:00:00+03:00\n-->\n\n"
+        "# Заметка\n\nстрока с \\~x внутри\n";
+    // Та же заметка другим каноном: тильда без экранирования (чтение даёт тот
+    // же текст) и хвостовая пустая строка, которой в файле не бывает.
+    const QByteArray v2 =
+        "<!-- zametti\ncreated: 2020-01-01T00:00:00+03:00\nmodified: 2020-01-03T00:00:00+03:00\n-->\n\n"
+        "# Заметка\n\nстрока с ~x внутри\n\n";
+    // Настоящая правка.
+    const QByteArray v3 =
+        "<!-- zametti\ncreated: 2020-01-01T00:00:00+03:00\nmodified: 2020-01-04T00:00:00+03:00\n-->\n\n"
+        "# Заметка\n\nстрока с ~x внутри и ещё\n";
+    std::shared_ptr<zametti::ZJournal> journal = h.journalFor(id, zametti::ZJournal::Rules{});
+    // Опорная запись СТАРАЯ — трое суток, дальше окна слияния: прежнее правило
+    // за такое окно не заглядывало вовсе и писало новую запись.
+    journal->ensureBaseline(v1, QDateTime::currentMSecsSinceEpoch() - 3 * 24 * 3600 * 1000LL);
+    ZT_EQ("опорная запись есть", std::string("1"), std::to_string(recordCount(id)));
+
+    journal->record(zametti::ZJournal::Kind::Save, v2);
+    ZT_EQ("Save той же сути другим каноном и штампом — не запись", std::string("1"),
+          std::to_string(recordCount(id)));
+    journal->record(zametti::ZJournal::Kind::External, v2);
+    ZT_EQ("External той же сути — тоже не запись", std::string("1"),
+          std::to_string(recordCount(id)));
+    journal->record(zametti::ZJournal::Kind::Save, v3);
+    ZT_EQ("а настоящая правка пишется", std::string("2"), std::to_string(recordCount(id)));
+    journal->record(zametti::ZJournal::Kind::External, v3 + "\n");
+    ZT_EQ("и внешняя той же сути после неё — нет", std::string("2"),
+          std::to_string(recordCount(id)));
+}
+
+int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
     QTemporaryDir tmp;
@@ -766,6 +809,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkSmallEditsReplace();
     checkUndoDoesNotDuplicate();
     checkLazyTimeMigration();
+    checkSameEssenceIsNotRecorded();
     checkAcrossRestart();
     checkNoEqualNeighbours();
     checkSaveMigrates();

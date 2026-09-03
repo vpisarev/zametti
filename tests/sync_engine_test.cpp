@@ -383,6 +383,30 @@ void checkEditTravelsAndMaterializes() {
     ZT_EQ("ноль заливок в устойчивом", num(0), num(rig.rb->counters().puts));
 }
 
+// ФАЙЛ, РАВНЫЙ ГОЛОВЕ ЖУРНАЛА ПО СУТИ, ВЫРОВНЕН — external не пишется. Так
+// бывает после переписи файла при открытии (канон сменился) или когда штамп
+// modified обновили без правки: у владельца это дало по одной пустой записи
+// «+0/−0» на каждую открытую заметку на каждой смене канона (аудит 03.09.2026:
+// 11 из 12 пар «только канон» — External выравнивания).
+void checkSameEssenceFileIsAligned() {
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("раз"));
+    rig.syncOne(*rig.sa, "синк A");
+    const QByteArray journalBefore = rig.journalOf(rig.a, id);
+
+    // Тот же текст: другой штамп в шапке и хвостовая пустая строка.
+    TwoDevices::writeRaw(rig.a, id,
+                         QByteArray("<!-- zametti\nversion: 1\nmodified: 2026-09-03T21:00:00+03:00\n-->\n\n# Заметка\n\nраз\n\n"));
+    ZStorage::SyncReport push = rig.syncOne(*rig.sa, "синк A после переписи");
+    ZT_EQ("файл той же сути — external не записан", num(0), num(push.externalRecorded));
+    ZT_TRUE("журнал A не изменился", rig.journalOf(rig.a, id) == journalBefore);
+    // И следующий прогон не возвращается к этому файлу: бухгалтерия видела его.
+    ZStorage::SyncReport again = rig.syncOne(*rig.sa, "синк A ещё раз");
+    ZT_EQ("stat-скан больше не находит его", num(0), num(again.statScanned));
+    ZT_EQ("и ничего не дописывает", num(0), num(again.externalRecorded));
+}
+
 void checkConcurrentEditsMerge() {
     TwoDevices rig;
     const QString id = QStringLiteral("01n6cqevaaaaaa");
@@ -1141,6 +1165,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkLedgerPathsDoNotCollide();
     checkFirstSyncAndSteadyState();
     checkEditTravelsAndMaterializes();
+    checkSameEssenceFileIsAligned();
     checkConcurrentEditsMerge();
     checkLedgerLossChangesNothing();
     checkEtagReissueCostsOneGet();
