@@ -426,3 +426,35 @@ TEST(FileCanon, WhitespaceOnlySpanKeepsItsTildes) {
     EXPECT_NE(std::string::npos, bytes.toStdString().find("~")) << bytes.toStdString();
     checkStable(src, "тильды на своих строках между абзацами");
 }
+
+// ОТСТУП АБЗАЦА ВНУТРИ ПУНКТА БЕЗ ТЕКСТА — НЕРАЗРЫВНЫМИ (фаззер, случай 4,
+// вторая половина). Читатель восстанавливает отступ автора внутри пункта от
+// его колонки содержимого, а её выводит из строки первого текста пункта; у
+// пункта без текста («- [ ]», «-») колонки нет — и обычные пробелы абзаца
+// после пустой строки md4c съедает безвозвратно. Писатель обязан это знать.
+TEST(FileCanon, IndentInsideTextlessItemIsNbsp) {
+    Piece item;
+    item.kind = Kind::ListItem;
+    item.marker = Marker::Task;
+    item.level = 0;
+    Piece blank;
+    blank.kind = Kind::VSpace;
+    Piece para;
+    para.kind = Kind::Paragraph;
+    para.level = 0;
+    para.text = QStringLiteral("    ки");
+    zametti::Run strike;
+    strike.start = 4;
+    strike.end = 6;
+    strike.set(InlineStrike, true);
+    para.runs.push_back(strike);
+    std::vector<Piece> forFile = documentForFile({item, blank, para});
+    const QString bytes = writePieces(forFile);
+    std::vector<Piece> back;
+    NoteHeader header;
+    parsePieces(normaliseSpaces(bytes), back, header);
+    EXPECT_EQ(dumpPieces(forFile), dumpPieces(back)) << bytes.toStdString();
+    ASSERT_EQ(3u, back.size());
+    EXPECT_EQ(0, back[2].level);
+    EXPECT_TRUE(back[2].text.startsWith(QChar::Nbsp)) << back[2].text.toStdString();
+}
