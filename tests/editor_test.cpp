@@ -218,6 +218,58 @@ void checkSpaceAtEndOfInnerLine() {
                "хвостовой пробел подметается, когда каретка ушла со строки");
 }
 
+// ТО ЖЕ В ПРАВКЕ ФОРМУЛЫ — так владелец это и увидел («пробел в конце строки
+// при правке формулы»): Enter на выключной формуле раскрывает исходник, каретка
+// в конец первой строки исходника, пробел и буква.
+void checkSpaceAtEndOfFormulaSourceLine() {
+    const QString path = writeNote("пробел-в-формуле.md",
+                                   QStringLiteral("до\n\n$$\nx^2\n+ y\n$$\n\nпосле\n"));
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(40);
+    int formula = -1;
+    for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
+        if (b.text().contains(QChar::ObjectReplacementCharacter) ||
+            b.text().contains(QStringLiteral("x^2"))) {
+            formula = b.blockNumber();
+            break;
+        }
+    check(formula >= 0, "формула найдена в документе");
+    if (formula < 0) return;
+    editor.setTextCursor(QTextCursor(editor.document()->findBlockByNumber(formula)));
+    QTest::qWait(20);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(40);
+    // Исходник раскрыт: ищем строку «x^2» и встаём в её конец.
+    QTextBlock source;
+    int lineEnd = -1;
+    for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next()) {
+        const int at = b.text().indexOf(QStringLiteral("x^2"));
+        if (at >= 0) {
+            source = b;
+            lineEnd = at + 3;
+            break;
+        }
+    }
+    check(source.isValid(), "исходник формулы раскрыт");
+    if (!source.isValid()) return;
+    const QString textBefore = source.text();
+    QTextCursor caret(editor.document());
+    caret.setPosition(source.position() + lineEnd);
+    editor.setTextCursor(caret);
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_Space);
+    QTest::keyClicks(&editor, QStringLiteral("z"));
+    QTest::qWait(10);
+    const QString textAfter = editor.document()->findBlock(source.position()).text();
+    QString expected = textBefore;
+    expected.insert(lineEnd, QStringLiteral(" z"));
+    checkEqual(expected, textAfter, "в исходнике формулы пробел и буква встали в конец строки");
+}
+
 // Слова и строки: когда они верны, когда честно неизвестны и когда снова верны.
 //
 // Проверяется именно ПОВЕДЕНИЕ, а не арифметика (её проверяет text_stats_test):
@@ -3148,6 +3200,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkBlankLinesSurviveSaving();
     checkSeparatorGeometry();
     checkSpaceAtEndOfInnerLine();
+    checkSpaceAtEndOfFormulaSourceLine();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::freshFailures();
