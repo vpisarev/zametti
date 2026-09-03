@@ -228,7 +228,9 @@ void checkThemeFromConfig() {
     writeConfig(QStringLiteral(R"({
   "theme": {
     "accent": "#00a0a0",
+    "added": "#101010",
     "bacground": "#000000",
+    "diff": { "removed": "#654321" },
     "markdown": { "marker": "#207020", "markr": "#000000" }
   }
 })"));
@@ -241,8 +243,13 @@ void checkThemeFromConfig() {
               hex(zametti::settings().style().checkboxCheckedColor()));
     ZT_EQ("вложенная роль тоже", std::string("#207020"),
           hex(zametti::settings().markdownHighlighting().accent()));
-    ZT_EQ("а обе опечатки названы поимённо",
-          std::string("theme.bacground, theme.markdown.markr"),
+    // Цвета разности живут группой "diff" (решение владельца 04.09.2026):
+    // вложенное имя применяется, а СТАРОЕ ПЛОСКОЕ ("added") — неизвестное, и
+    // называется вслух, а не читается молча по старой памяти.
+    ZT_EQ("роль из группы diff применена", std::string("#654321"),
+          hex(zametti::settings().style().diffRemoved()));
+    ZT_EQ("опечатки и старый плоский ключ названы поимённо",
+          std::string("theme.added, theme.bacground, theme.markdown.markr"),
           s(unknown.join(QStringLiteral(", "))));
 
     // Конфиг без темы — светлая: цвета возвращаются к умолчанию.
