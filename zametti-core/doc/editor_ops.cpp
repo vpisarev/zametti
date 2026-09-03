@@ -3262,6 +3262,11 @@ bool ZDocument::insertText(QTextCursor& at, const QString& text,
 }
 
 bool ZDocument::breakBlock(QTextCursor& at, BreakKind kind) {
+    // Shift+Enter В РАСКРЫТОЙ ТАБЛИЦЕ — новый ряд (просьба владельца
+    // 04.09.2026). РАНЬШЕ правила «конец литерального блока → абзац под ним»:
+    // конец последнего ряда — самое ходовое место для «ещё ряд», и абзац под
+    // таблицей достаётся Esc и Ctrl+Enter на объекте.
+    if (kind == BreakKind::Otherwise && insertTableRow(at)) return true;
     // Shift+Enter В КОНЦЕ ЛИТЕРАЛЬНОГО БЛОКА (код, дословный кусок) — продолжить
     // текст ПОД ним, на том же уровне пункта (решение владельца, сессия 5): в
     // пункт кладут код и продолжают пункт словами. Внутри блока Shift+Enter —
@@ -4402,6 +4407,62 @@ bool ZDocument::startTableFromHeader(QTextCursor& at) {
     if (openedBlock.isValid())
         at.setPosition(openedBlock.position() + openedBlock.length() - 1);
     return true;
+}
+
+// НОВЫЙ РЯД ПОД КАРЕТКОЙ (Shift+Enter в раскрытой таблице; просьба владельца
+// 04.09.2026). Раскрытая таблица — один дословный блок, строки — по U+2028 с
+// пометкой перевода строки, как в коде. Ряд вставляется ПОД строкой каретки
+// целиком, из любого её места («Shift+Enter == End + Shift+Enter»); с шапки и
+// с разделителя — после разделителя, первым рядом тела: ряд между ними
+// таблицу бы сломал. Колонок — сколько в шапке (канон GFM: ряды тела
+// подгоняются под неё), в каждой ячейке два пробела, каретка — между ними в
+// первой ячейке: набранное ложится `| текст |  |`.
+bool ZDocument::insertTableRow(QTextCursor& at) {
+    if (at.document() != &d_->text || at.hasSelection()) return false;
+    const QTextBlock block = at.block();
+    if (!block.isValid() || !isRawBlock(block) || isTableObjectBlock(block)) return false;
+    if (!looksLikeTable(sourceTextOf(block))) return false;
+
+    const QString text = block.text();
+    const QStringList lines = text.split(QChar::LineSeparator);
+    if (lines.size() < 2) return false;
+    const std::vector<TableCell> header = rowCells(QStringView(lines.at(0)).trimmed());
+    if (header.empty()) return false;
+
+    int caretLine = 0;
+    for (int i = 0; i < at.positionInBlock() && i < text.size(); ++i)
+        if (text.at(i) == QChar::LineSeparator) ++caretLine;
+    const int target = qMax(caretLine, 1);
+    if (target >= lines.size()) return false;
+    int lineEnd = 0;
+    for (int i = 0; i <= target; ++i) lineEnd += int(lines.at(i).size()) + (i < target ? 1 : 0);
+
+    QString row = QStringLiteral("|");
+    for (size_t i = 0; i < header.size(); ++i) row += QLatin1String("  |");
+
+    return runLocalEdit(at, [&block, lineEnd, &row](QTextCursor& edit) {
+        // Тот же узор, что у строки кода (insertCodeLine): разделитель с
+        // пометкой перевода строки, текст ряда — чистым форматом, иначе Qt
+        // влил бы его в кусок разделителя вместе с пометкой.
+        QTextCharFormat separator = block.charFormat();
+        separator.setProperty(BreakSourceProperty, int(BreakNewline));
+        QTextCharFormat plain = block.charFormat();
+        plain.clearProperty(BreakSourceProperty);
+
+        edit.setPosition(block.position() + lineEnd);
+        edit.insertText(QString(QChar::LineSeparator), separator);
+        const int rowStart = edit.position();
+        edit.insertText(row, plain);
+        if (!block.blockFormat().boolProperty(TrailingNewlineProperty)) {
+            QTextBlockFormat format = block.blockFormat();
+            format.setProperty(TrailingNewlineProperty, true);
+            QTextCursor fix(edit.document());
+            fix.setPosition(block.position());
+            fix.setBlockFormat(format);
+        }
+        edit.setPosition(rowStart + 2);
+        return true;
+    });
 }
 
 bool ZDocument::openTable(QTextCursor& at, int sourceOffset) {

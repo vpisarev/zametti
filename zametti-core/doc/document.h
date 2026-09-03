@@ -742,6 +742,10 @@ protected:
     // Enter после строки-шапки `|…|`: достроить разделитель и новый ряд,
     // раскрытое состояние таблицы (как у openTable). Зовёт breakBlock.
     bool startTableFromHeader(QTextCursor& at);
+    // Shift+Enter в РАСКРЫТОЙ таблице: пустой ряд с числом колонок шапки под
+    // рядом каретки (с шапки и разделителя — первым рядом тела), каретка в
+    // первой ячейке. Зовёт breakBlock; не таблица — false.
+    bool insertTableRow(QTextCursor& at);
     // Tab на выделении из нескольких блоков под списком: новый последний пункт.
     bool attachRunAsLastItem(QTextCursor& at);
 
