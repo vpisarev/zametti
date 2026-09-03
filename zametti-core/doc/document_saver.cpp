@@ -94,12 +94,113 @@ bool wordChar(QChar c) {
 //
 // Поэтому кусок раздаётся наружу до границ слова. Обрезать его внутрь было бы
 // хуже: выделив половину слова, человек остался бы вовсе без зачёркивания.
+// НАЧЕРТАНИЕ НА КОДЕ — ТОЛЬКО НА ВСЁМ КУСКЕ КОДА. Код в кавычках буквален, и
+// разметка не может открыться или закрыться внутри него: «`rise_di`» с
+// зачёркиванием на одной букве «i» писатель выводит без зачёркивания, а
+// чтение возвращает код без него — и круг расходился на этой букве (фаззер,
+// 04.09.2026, вики-вставка в заголовке). Начертание, которое лежит не на всём
+// куске кода, с него снимается; соседние одинаковые куски после этого
+// складываются в один — как их и прочтёт файл.
+Piece withStylesOnWholeCodeSpans(Piece block) {
+    if (block.raw || block.kind == Kind::Code) return block;
+    std::vector<Run>& runs = block.runs;
+    const uint8_t styles = InlineBold | InlineItalic | InlineStrike;
+    for (size_t i = 0; i < runs.size();) {
+        if (!runs[i].code()) {
+            ++i;
+            continue;
+        }
+        size_t j = i + 1;
+        while (j < runs.size() && runs[j].code() && runs[j].start == runs[j - 1].end) ++j;
+        uint8_t common = styles;
+        for (size_t k = i; k < j; ++k) common &= runs[k].flags;
+        for (size_t k = i; k < j; ++k)
+            runs[k].flags = uint8_t((runs[k].flags & ~styles) | common);
+        i = j;
+    }
+    std::vector<Run> merged;
+    merged.reserve(runs.size());
+    for (const Run& run : runs) {
+        if (!merged.empty() && merged.back().end == run.start &&
+            merged.back().flags == run.flags && merged.back().href == run.href &&
+            merged.back().title == run.title && !run.image())
+            merged.back().end = run.end;
+        else
+            merged.push_back(run);
+    }
+    runs = std::move(merged);
+    return block;
+}
+
+// КУСКИ — РАЗБИЕНИЕ, А НЕ НАБОР ОТРЕЗКОВ. Растяжение зачёркивания до границ
+// слова заезжает на соседние куски (ссылка, разрезанная зачёркиванием на
+// три куска, — один адрес), и куски начинают перекрываться; писатель по
+// перекрытым кускам выводит уже другую разметку («g~~lfw.or~~g» внутри
+// текста ссылки — тильды внутри слова, чтение их не берёт), проба разметки
+// не сходится, и абзац терял разметку целиком (фаззер, 04.09.2026).
+// Поэтому после растяжения куски пересобираются по знакам: у каждого знака —
+// объединение начертаний и адрес покрывающих его кусков, соседние одинаковые
+// знаки складываются в один кусок. Объекты (картинка, формула, комментарий)
+// остаются как есть: их содержимое — сам объект.
+Piece withRunsAsPartition(Piece block) {
+    const qsizetype size = block.text.size();
+    std::vector<Run> objects;
+    std::vector<uint8_t> flags(size_t(size), 0);
+    std::vector<int> owner(size_t(size), -1);   // кусок, давший адрес
+    const std::vector<Run>& runs = block.runs;
+    for (size_t i = 0; i < runs.size(); ++i) {
+        const Run& run = runs[i];
+        if (run.image() || run.math() || run.comment()) {
+            objects.push_back(run);
+            continue;
+        }
+        for (qsizetype k = qMax<qsizetype>(0, run.start); k < qMin(size, qsizetype(run.end)); ++k) {
+            flags[size_t(k)] |= run.flags;
+            if (!run.href.isEmpty() && owner[size_t(k)] < 0) owner[size_t(k)] = int(i);
+        }
+    }
+    std::vector<Run> out;
+    for (qsizetype k = 0; k < size;) {
+        if (flags[size_t(k)] == 0 && owner[size_t(k)] < 0) {
+            ++k;
+            continue;
+        }
+        qsizetype e = k + 1;
+        while (e < size && flags[size_t(e)] == flags[size_t(k)] && owner[size_t(e)] == owner[size_t(k)])
+            ++e;
+        Run run;
+        run.start = int32_t(k);
+        run.end = int32_t(e);
+        run.flags = flags[size_t(k)];
+        if (owner[size_t(k)] >= 0) {
+            run.href = runs[size_t(owner[size_t(k)])].href;
+            run.title = runs[size_t(owner[size_t(k)])].title;
+        }
+        out.push_back(run);
+        k = e;
+    }
+    for (const Run& object : objects) {
+        auto at = std::find_if(out.begin(), out.end(),
+                               [&object](const Run& r) { return r.start > object.start; });
+        out.insert(at, object);
+    }
+    block.runs = std::move(out);
+    return block;
+}
+
 Piece withStrikeOnWholeWords(Piece block) {
     if (block.raw || block.kind == Kind::Code) return block;
 
     const QString& text = block.text;
     const qsizetype size = text.size();
     std::vector<Run>& spans = block.runs;
+    // Знак, лежащий в коде в кавычках, границей слова не считается: код
+    // буквален, и зачёркивание в него не растягивается (см. выше).
+    std::vector<char> coded(size_t(size), 0);
+    for (const Run& span : spans)
+        if (span.code())
+            for (qsizetype k = qMax<qsizetype>(0, span.start); k < qMin<qsizetype>(size, span.end); ++k)
+                coded[size_t(k)] = 1;
     for (size_t i = 0; i < spans.size(); ++i) {
         Run& span = spans[i];
         if (!span.strike()) continue;
@@ -116,8 +217,9 @@ Piece withStrikeOnWholeWords(Piece block) {
 
         qsizetype from = qBound<qsizetype>(0, qsizetype(span.start), size);
         qsizetype to = qBound<qsizetype>(from, qsizetype(span.end), size);
-        while (!joinedLeft && from > 0 && wordChar(text.at(from - 1))) --from;
-        while (!joinedRight && to < size && wordChar(text.at(to))) ++to;
+        while (!joinedLeft && from > 0 && wordChar(text.at(from - 1)) && !coded[size_t(from - 1)])
+            --from;
+        while (!joinedRight && to < size && wordChar(text.at(to)) && !coded[size_t(to)]) ++to;
         span.start = int32_t(from);
         span.end = int32_t(to);
     }
@@ -297,17 +399,42 @@ bool sameRuns(const std::vector<Run>& x, const std::vector<Run>& y) {
 
 // Есть ли в whole каждый кусок из part — тот же в точности. Порядок не важен:
 // чтение вправе разложить те же признаки другими прогонами.
+// Есть ли в whole всё, что размечено в part: КАЖДЫЙ знак куска part покрыт
+// куском whole с теми же (или большими) начертаниями и тем же адресом. Куску
+// в куске быть можно: зачёркнутый адрес чтение возвращает зачёркнутой ССЫЛКОЙ
+// — те же знаки, начертаний больше, — и это обогащение, а не потеря. Пока
+// сверка требовала совпадения куска в кусок, такой абзац терял разметку
+// целиком: зачёркивание снималось, адрес шёл голым текстом, а на втором круге
+// становился ссылкой (фаззер, 04.09.2026). Объекты (картинка, формула,
+// комментарий) сверяются по-прежнему кусок в кусок: у них содержимое — сам
+// объект.
 bool runsContain(const std::vector<Run>& whole, const std::vector<Run>& part) {
     for (const Run& want : part) {
-        bool found = false;
-        for (const Run& have : whole) {
-            if (have.start == want.start && have.end == want.end && have.flags == want.flags &&
-                have.href == want.href && have.title == want.title) {
-                found = true;
-                break;
+        if (want.image() || want.math() || want.comment()) {
+            bool found = false;
+            for (const Run& have : whole) {
+                if (have.start == want.start && have.end == want.end &&
+                    have.flags == want.flags && have.href == want.href &&
+                    have.title == want.title) {
+                    found = true;
+                    break;
+                }
             }
+            if (!found) return false;
+            continue;
         }
-        if (!found) return false;
+        for (int32_t at = want.start; at < want.end; ++at) {
+            bool covered = false;
+            for (const Run& have : whole) {
+                if (have.start <= at && at < have.end && (have.flags & want.flags) == want.flags &&
+                    (want.href.isEmpty() || have.href == want.href) &&
+                    (want.title.isEmpty() || have.title == want.title)) {
+                    covered = true;
+                    break;
+                }
+            }
+            if (!covered) return false;
+        }
     }
     return true;
 }
@@ -627,6 +754,203 @@ Piece withRawNewline(Piece block) {
     return block;
 }
 
+// СУДЬЯ ДОСЛОВНОГО КУСКА ПРИ ЗАПИСИ. Дословный кусок — то, что чтение не
+// смогло выразить моделью (HTML в тексте, список в цитате, жёсткий перенос…),
+// и в файл он уходит байт в байт. Но правка внутри него — набор, удаление,
+// глагол поверх выделения — вправе снять причину дословности: «<i хвост» уже
+// не HTML, у списка задач пропала ссылка, посреди куска набрали «#» или «```».
+// Записанный как есть, такой кусок читается назад НЕ дословным куском, а
+// абзацем, пунктами, заголовком — и заметка получала аварийный файл вместо
+// записи (фаззер, 03.09.2026: пять случаев одного семейства).
+//
+// Поэтому перед записью кусок перечитывается: вернулся тем же дословным
+// куском — уходит как есть; распался — в файл идёт то, во что он распался, и
+// дальше по общей ступени приведения, как всякий блок.
+//
+// ПЕРЕЧИТЫВАЕТСЯ ГРУППА, А НЕ КУСОК: дословность бывает от соседа. Черта
+// внутри пункта («- пункт», пустая строка, «  ---») — два дословных куска, и
+// каждый сам по себе читается прекрасно (пункт; разделитель), а вместе — нет,
+// потому и дословны. Смежные дословные куски верхнего уровня (через пустые
+// строки) перечитываются вместе с этими пустыми строками, и распавшимися
+// считаются только когда группа целиком вернулась не тем же рядом кусков.
+// Кусок внутри пункта (level >= 0) судится сам, и его блоки остаются внутри
+// пункта: уровень пункта, а вложенный в него список — на уровень глубже.
+void appendJudged(std::vector<Piece>& out, std::vector<Piece>& group) {
+    if (group.empty()) return;
+    QString text;
+    for (const Piece& piece : group) text += piece.raw ? piece.text : QStringLiteral("\n");
+    std::vector<Piece> back;
+    NoteHeader ignored;
+    parsePieces(text, back, ignored);
+    bool same = back.size() == group.size();
+    for (size_t i = 0; same && i < back.size(); ++i) {
+        if (group[i].raw)
+            same = back[i].raw && back[i].text == group[i].text;
+        else
+            same = !back[i].raw && back[i].kind == Kind::VSpace;
+    }
+    if (same || back.empty()) {
+        for (Piece& piece : group) out.push_back(std::move(piece));
+    } else {
+        const int level = group.front().level;
+        for (Piece& piece : back) {
+            if (level >= 0 && piece.kind != Kind::VSpace)
+                piece.level = piece.level < 0 ? level : piece.level + level + 1;
+            out.push_back(std::move(piece));
+        }
+    }
+    group.clear();
+}
+
+void appendJudgedRaws(std::vector<Piece>& out, std::vector<Piece>& doc) {
+    std::vector<Piece> group;   // дословные куски верхнего уровня и пустые строки между ними
+    for (Piece& block : doc) {
+        const bool blank = !block.raw && block.kind == Kind::VSpace;
+        if (block.raw && block.level < 0) {
+            group.push_back(std::move(block));
+            continue;
+        }
+        if (blank && !group.empty()) {
+            group.push_back(std::move(block));
+            continue;
+        }
+        // Хвостовые пустые строки группы — не её: отдаём как есть.
+        while (!group.empty() && !group.back().raw) {
+            Piece tail = std::move(group.back());
+            group.pop_back();
+            appendJudged(out, group);
+            out.push_back(std::move(tail));
+        }
+        appendJudged(out, group);
+        if (block.raw) {
+            // Кусок внутри пункта судится сам.
+            std::vector<Piece> one;
+            one.push_back(std::move(block));
+            appendJudged(out, one);
+        } else {
+            out.push_back(std::move(block));
+        }
+    }
+    while (!group.empty() && !group.back().raw) {
+        Piece tail = std::move(group.back());
+        group.pop_back();
+        appendJudged(out, group);
+        out.push_back(std::move(tail));
+    }
+    appendJudged(out, group);
+}
+
+// Знак маркера списка в начале строки (после отступа): '-', '*', '+' у буллета,
+// '.' или ')' у номера; 0 — строка маркером не начинается. Отступ любой: с
+// NOINDENTEDCODEBLOCKS md4c узнаёт маркер на любой глубине.
+char16_t listMarkOfLine(QStringView line) {
+    qsizetype i = 0;
+    while (i < line.size() && (line.at(i) == u' ' || line.at(i) == u'\t')) ++i;
+    if (i >= line.size()) return 0;
+    const QChar c = line.at(i);
+    if (c == u'-' || c == u'*' || c == u'+')
+        return (i + 1 == line.size() || line.at(i + 1) == u' ' || line.at(i + 1) == u'\t')
+                   ? c.unicode()
+                   : 0;
+    qsizetype j = i;
+    while (j < line.size() && line.at(j) >= u'0' && line.at(j) <= u'9') ++j;
+    if (j == i || j - i > 9 || j >= line.size()) return 0;
+    const QChar d = line.at(j);
+    if (d != u'.' && d != u')') return 0;
+    return (j + 1 == line.size() || line.at(j + 1) == u' ' || line.at(j + 1) == u'\t')
+               ? d.unicode()
+               : 0;
+}
+
+// Каким списком дословный кусок НАЧИНАЕТСЯ и каким КОНЧАЕТСЯ — знаком маркера
+// (0 — не списком). Начало: первая непустая строка. Конец: список жив, пока
+// его не закрыла строка в нулевой колонке без маркера после пустой строки.
+struct RawListEdges {
+    char16_t leading = 0;
+    char16_t trailing = 0;
+};
+
+RawListEdges rawListEdges(const QString& text) {
+    RawListEdges edges;
+    bool first = true;
+    bool blankBefore = false;
+    for (qsizetype at = 0; at < text.size();) {
+        qsizetype end = text.indexOf(QLatin1Char('\n'), at);
+        if (end < 0) end = text.size();
+        const QStringView line = QStringView(text).mid(at, end - at);
+        at = end + 1;
+        const bool blank = line.trimmed().isEmpty();
+        if (blank) {
+            blankBefore = true;
+            continue;
+        }
+        const char16_t mark = listMarkOfLine(line);
+        if (first) {
+            edges.leading = mark;
+            first = false;
+        }
+        if (mark != 0) edges.trailing = mark;
+        else if (blankBefore && !line.at(0).isSpace()) edges.trailing = 0;
+        blankBefore = false;
+    }
+    return edges;
+}
+
+// РАЗВОД МАРКЕРОВ СО СМЕЖНЫМ ДОСЛОВНЫМ СПИСКОМ. Пункты заметки и дословный
+// кусок, который сам начинается или кончается списком того же рода, в файле
+// стоят рядом (пустая строка список не закрывает) — и чтение сливает их в один
+// список, который целиком уходит в дословное: пункты пропадают из модели
+// (фаззер, 03.09.2026: «TODO…», «Часы», «Покупки»). По CommonMark другой знак
+// буллета ('*' вместо '-') или номера (')' вместо '.') НАЧИНАЕТ НОВЫЙ СПИСОК —
+// это и есть граница, которую файл умеет выразить. Прогону пунктов верхнего
+// уровня, у которого сосед (через пустые строки) — дословный список того же
+// рода, здесь выбирается знак, отличный от знака соседа; читатель знак не
+// хранит, и следующая запись выберет его снова тем же правилом.
+void settleListMarks(std::vector<Piece>& blocks) {
+    const auto inRun = [](const Piece& p) {
+        return (!p.raw && p.kind == Kind::VSpace) || p.level >= 0;
+    };
+    const auto topRaw = [](const Piece& p) { return p.raw && p.level < 0; };
+    // Подсказка считается заново на каждой записи: что пришло с документом —
+    // прошлый выбор, а не смысл.
+    for (Piece& p : blocks) p.listMark = 0;
+    for (size_t i = 0; i < blocks.size();) {
+        if (blocks[i].raw || !isList(blocks[i].kind)) {
+            ++i;
+            continue;
+        }
+        size_t j = i;
+        while (j < blocks.size() && inRun(blocks[j])) ++j;
+        while (j > i && !blocks[j - 1].raw && blocks[j - 1].kind == Kind::VSpace) --j;
+        size_t before = i;
+        while (before > 0 && !blocks[before - 1].raw && blocks[before - 1].kind == Kind::VSpace)
+            --before;
+        size_t after = j;
+        while (after < blocks.size() && !blocks[after].raw && blocks[after].kind == Kind::VSpace)
+            ++after;
+        char16_t forbidden[2] = {0, 0};
+        if (before > 0 && topRaw(blocks[before - 1]))
+            forbidden[0] = rawListEdges(blocks[before - 1].text).trailing;
+        if (after < blocks.size() && topRaw(blocks[after]))
+            forbidden[1] = rawListEdges(blocks[after].text).leading;
+        if (forbidden[0] != 0 || forbidden[1] != 0) {
+            const auto banned = [&forbidden](char16_t mark) {
+                return mark == forbidden[0] || mark == forbidden[1];
+            };
+            char16_t bullet = u'-';
+            for (const char16_t candidate : {u'-', u'*', u'+'})
+                if (!banned(candidate)) { bullet = candidate; break; }
+            const char16_t delim = banned(u'.') ? u')' : u'.';
+            for (size_t k = i; k < j; ++k) {
+                Piece& p = blocks[k];
+                if (p.raw || !isList(p.kind) || p.level != 0) continue;
+                p.listMark = p.marker == Marker::Ordered ? delim : bullet;
+            }
+        }
+        i = j > i ? j : i + 1;
+    }
+}
+
 // Пустой вложенный пункт markdown не выражает вовсе. Одинокий "-" под текстом
 // родителя читается подчёркиванием заголовка, и весь список уезжает в дословный
 // кусок — ровно от этого сорвалось сохранение на живой заметке.
@@ -815,9 +1139,16 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched) {
     // через parsePieces, а тот кодирует отступы так же, — не приведи мы блок к
     // той же кодировке ДО пробы, тексты расходились бы на классе знака отступа
     // и разметка снималась бы на ровном месте.
+    // Дословные куски — сперва к судье (см. appendJudged): распавшийся кусок
+    // идёт дальше уже своими блоками, и ступень приведения видит их как все.
+    for (Piece& block : doc) block = withRawNewline(std::move(block));
+    std::vector<Piece> judged;
+    judged.reserve(doc.size());
+    appendJudgedRaws(judged, doc);
+
     std::vector<Piece> staged;
-    staged.reserve(doc.size());
-    for (Piece& block : doc) {
+    staged.reserve(judged.size());
+    for (Piece& block : judged) {
         // Пробельная пустая строка (каретка ещё не ушла с неё) — пустая:
         // markdown пробелы выбросил бы сам.
         if (!block.raw && block.kind == Kind::VSpace && block.text.trimmed().isEmpty() &&
@@ -830,11 +1161,12 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched) {
 
     std::vector<Piece> out;
     out.reserve(staged.size());
-    for (Piece& block : staged)
-        appendSplitOnBlankLines(
-            out, withMarkupThatSurvives(
-                     withStrikeOnWholeWords(withTrimmedSpans(withCodeSpansPerLine(std::move(block)))),
-                     enriched));
+    for (Piece& block : staged) {
+        Piece shaped = withFlankableEdges(withRunsAsPartition(withStrikeOnWholeWords(
+            withStylesOnWholeCodeSpans(withTrimmedSpans(withCodeSpansPerLine(std::move(block)))))));
+        compactRuns(shaped);
+        appendSplitOnBlankLines(out, withMarkupThatSurvives(std::move(shaped), enriched));
+    }
 
     // Пустые строки в начале документа файл выразить не может: пустая строка
     // там стоит между блоками, а до первого блока никакого стыка нет — разбор
@@ -918,7 +1250,9 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched) {
         spaced.push_back(std::move(block));
     }
 
-    return withoutEmptyNested(std::move(spaced));
+    std::vector<Piece> settled = withoutEmptyNested(std::move(spaced));
+    settleListMarks(settled);
+    return settled;
 }
 
 namespace {

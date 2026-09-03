@@ -74,6 +74,13 @@ struct Piece {
     QString info;                   // язык блока кода
     QString text;
     std::vector<Run> runs;
+    // ПОДСКАЗКА ПИСАТЕЛЮ, НЕ ЧАСТЬ IR: знак маркера, которым выводить пункт —
+    // буллет '-', '*' или '+', номер с '.' или ')'. 0 — канон ('-' и '.').
+    // Ставит documentForFile (settleListMarks): пункт рядом с ДОСЛОВНЫМ списком
+    // того же знака слился бы с ним при чтении, а другой знак по CommonMark
+    // начинает новый список. Читатель подсказку не порождает, сверка не
+    // смотрит: в файле она видна только как выбор знака.
+    char16_t listMark = 0;
 
     QStringView view(const Run& r) const {
         return QStringView(text).mid(r.start, r.end - r.start);
@@ -165,6 +172,12 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched = null
 // конца круга — parsePieces и documentForFile: только одинаковый выбор на
 // разборе и на записи делает IR устойчивым. Подробности — document_saver.cpp.
 void settleLeadingSpaces(std::vector<Piece>& blocks);
+
+// ФЛАНКИРОВАНИЕ КРАЁВ РАЗМЕТКИ — ступень приведения (зовёт documentForFile):
+// края курсива, жирного и зачёркивания поджимаются до мест, где ограничитель
+// открывает и закрывает кусок по правилам CommonMark. Определено в
+// markdown_writer.cpp — рядом с правилами фланкирования писателя.
+Piece withFlankableEdges(Piece block);
 
 // Строение блоков в JSON — односторонне, для золотых наборов и отладки. Та же
 // печать, что и у ZDocument::toJson: у дампа один вид, из скольких бы мест его

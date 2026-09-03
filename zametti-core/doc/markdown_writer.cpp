@@ -434,6 +434,157 @@ QLatin1String italicDelim(QStringView text, qsizetype begin, qsizetype end) {
     return (leftIntraword || rightIntraword) ? QLatin1String("*") : QLatin1String("_");
 }
 
+// ФЛАНКИРОВАНИЕ КРАЁВ РАЗМЕТКИ — ступень приведения к выразимому (зовёт
+// documentForFile). Ограничитель курсива, жирного и зачёркивания у CommonMark
+// открывает кусок только левофланговым, а закрывает — правофланговым: не у
+// пробела, а у знака препинания — лишь когда с другой стороны пробел или знак
+// препинания. Курсив, кончающийся «#» перед буквой («*\*#*а»), закрыть
+// нечем: звёздочка перед «а» не правофланговая, чтение спаривает её иначе, и
+// назад приходил курсив на всём заголовке (фаззер, 04.09.2026). Край
+// поджимается внутрь до места, где ограничитель встанет по правилам; кусок,
+// у которого такого места нет, теряет начертание — текст остаётся.
+//
+// ПО ОДНОМУ НАЧЕРТАНИЮ. Куски блока делят начертания: «жирный» и «жирный с
+// зачёркиванием» вплотную — один жирный кусок с зачёркиванием внутри, и на их
+// стыке ограничитель жирного не ставится вовсе, а ограничитель зачёркивания
+// стоит. Поэтому край проверяется для каждого начертания отдельно, и там, где
+// ограничителю места нет, кусок делится: уступленный краешек остаётся с
+// прочими начертаниями. Вложенность писателя — ~~ снаружи, ** внутри, курсив
+// глубже всех: сосед внешнего ограничителя изнутри — внутренний ограничитель,
+// то есть знак препинания; сосед снаружи — знак текста или ограничитель
+// смежного куска (тоже знак препинания).
+//
+// Смотрим на знаки ТЕКСТА: экран («\*») — та же пунктуация, что и знак под
+// ним, и класс соседа от записи не меняется.
+Piece flankableEdges(Piece block) {
+    if (block.raw || block.kind == Kind::Code) return block;
+    const QStringView text = block.text;
+    const qsizetype size = text.size();
+    const uint8_t styles = InlineBold | InlineItalic | InlineStrike;
+    // Литеральное (код, картинка, формула, комментарий) в правилах не
+    // участвует и смежности не даёт. ССЫЛКА — обычный текст с адресом:
+    // начертание через неё продолжается («~~a [b](c) d~~» — одно
+    // зачёркивание), поэтому в смежности она участвует, а края её самой не
+    // трогаются — их держат скобки ссылки.
+    const auto skip = [](const Run& run) {
+        return run.code() || run.image() || run.math() || run.comment();
+    };
+    // Класс знака текста: пробел (край блока и перенос строки — тоже пробел),
+    // знак препинания, иначе буква.
+    const auto isWs = [&](qsizetype i) {
+        return i < 0 || i >= size || isAsciiSpace(text.at(i)) || text.at(i) == QChar::Nbsp;
+    };
+    const auto isPu = [&](qsizetype i) { return i >= 0 && i < size && isAsciiPunct(text.at(i)); };
+    // Внутренний сосед ограничителя начертания bit у куска с начертаниями
+    // flags — вложенный ограничитель (пунктуация), если он есть.
+    const auto innerDelim = [&](uint8_t flags, uint8_t bit) {
+        if (bit == InlineStrike) return (flags & (InlineBold | InlineItalic)) != 0;
+        if (bit == InlineBold) return (flags & InlineItalic) != 0;
+        return false;
+    };
+    // Открывающий ограничитель ПЕРЕД знаком at: левофланговый.
+    const auto canOpen = [&](qsizetype at, bool innerPunct, bool outerDelim) {
+        const bool innerWs = !innerPunct && isWs(at);
+        const bool innerPu = innerPunct || isPu(at);
+        const bool outerWs = !outerDelim && isWs(at - 1);
+        const bool outerPu = outerDelim || isPu(at - 1);
+        return !innerWs && (!innerPu || outerWs || outerPu);
+    };
+    // Закрывающий ограничитель ПОСЛЕ знака at - 1: правофланговый.
+    const auto canClose = [&](qsizetype at, bool innerPunct, bool outerDelim) {
+        const bool innerWs = !innerPunct && isWs(at - 1);
+        const bool innerPu = innerPunct || isPu(at - 1);
+        const bool outerWs = !outerDelim && isWs(at);
+        const bool outerPu = outerDelim || isPu(at);
+        return !innerWs && (!innerPu || outerWs || outerPu);
+    };
+
+    for (const uint8_t bit : {uint8_t(InlineStrike), uint8_t(InlineBold), uint8_t(InlineItalic)}) {
+        std::vector<Run> out;
+        out.reserve(block.runs.size() + 4);
+        const std::vector<Run>& runs = block.runs;
+        for (size_t i = 0; i < runs.size(); ++i) {
+            Run run = runs[i];
+            if ((run.flags & bit) == 0 || skip(run) || !run.href.isEmpty() ||
+                run.end <= run.start) {
+                out.push_back(run);
+                continue;
+            }
+            const bool prevAdjacent = i > 0 && runs[i - 1].end == run.start && !skip(runs[i - 1]);
+            const bool nextAdjacent =
+                i + 1 < runs.size() && runs[i + 1].start == run.end && !skip(runs[i + 1]);
+            const bool prevShares = prevAdjacent && (runs[i - 1].flags & bit) != 0;
+            const bool nextShares = nextAdjacent && (runs[i + 1].flags & bit) != 0;
+            const bool innerPunct = innerDelim(run.flags, bit);
+            qsizetype from = qsizetype(run.start);
+            qsizetype to = qsizetype(run.end);
+            bool dropped = false;
+            if (!prevShares) {
+                // Снаружи от открывающего — ограничитель смежного куска, если у
+                // того есть начертания, которых нет у нас (он их закрывает).
+                const bool outerDelim =
+                    prevAdjacent && (runs[i - 1].flags & styles & ~run.flags) != 0;
+                qsizetype p = from;
+                while (p < to && !canOpen(p, innerPunct, p == from ? outerDelim : false)) {
+                    if (innerPunct) { p = to; break; }   // сдвиг соседа изнутри не меняет
+                    ++p;
+                }
+                if (p >= to) dropped = true;
+                else from = p;
+            }
+            if (!dropped && !nextShares) {
+                const bool outerDelim =
+                    nextAdjacent && (runs[i + 1].flags & styles & ~run.flags) != 0;
+                qsizetype q = to;
+                while (q > from && !canClose(q, innerPunct, q == to ? outerDelim : false)) {
+                    if (innerPunct) { q = from; break; }
+                    --q;
+                }
+                if (q <= from) dropped = true;
+                else to = q;
+            }
+            if (dropped) {
+                run.set(bit, false);
+                out.push_back(run);
+                continue;
+            }
+            // Уступленные краешки остаются с прочими начертаниями куска.
+            if (from > run.start) {
+                Run head = run;
+                head.end = int32_t(from);
+                head.set(bit, false);
+                out.push_back(head);
+            }
+            Run body = run;
+            body.start = int32_t(from);
+            body.end = int32_t(to);
+            out.push_back(body);
+            if (to < run.end) {
+                Run tail = run;
+                tail.start = int32_t(to);
+                tail.set(bit, false);
+                out.push_back(tail);
+            }
+        }
+        block.runs = std::move(out);
+    }
+    // Куски без начертания, ссылки и картинки читателю не нужны; соседние
+    // одинаковые складываются, как их и прочтёт файл.
+    std::vector<Run> merged;
+    merged.reserve(block.runs.size());
+    for (const Run& run : block.runs) {
+        if (run.flags == 0 && run.href.isEmpty() && run.title.isEmpty()) continue;
+        if (run.end <= run.start && !run.image()) continue;
+        if (!merged.empty() && merged.back().end == run.start && merged.back().flags == run.flags &&
+            merged.back().href == run.href && merged.back().title == run.title && !run.image())
+            merged.back().end = run.end;
+        else
+            merged.push_back(run);
+    }
+    block.runs = std::move(merged);
+    return block;
+}
+
 bool hrefNeedsBrackets(QStringView h) {
     for (const QChar c : h)
         if (isAsciiSpace(c) || c == u'(' || c == u')' || c == u'<' || c == u'>' ||
@@ -874,10 +1025,14 @@ void validate([[maybe_unused]] const Piece& b) {
 }
 
 QString markerFor(const Piece& b, int ordinal) {
+    // Знак маркера — канонический, если подсказки нет (Piece::listMark).
+    const QChar bullet = b.listMark == u'*' || b.listMark == u'+' ? QChar(b.listMark) : QChar(u'-');
+    const QChar delim = b.listMark == u')' ? QChar(u')') : QChar(u'.');
     switch (b.marker) {
-        case Marker::Bullet:  return QStringLiteral("- ");
-        case Marker::Task:    return b.checked ? QStringLiteral("- [x] ") : QStringLiteral("- [ ] ");
-        case Marker::Ordered: return QString::number(ordinal) + QLatin1String(". ");
+        case Marker::Bullet:  return QString(bullet) + QLatin1Char(' ');
+        case Marker::Task:
+            return QString(bullet) + (b.checked ? QLatin1String(" [x] ") : QLatin1String(" [ ] "));
+        case Marker::Ordered: return QString::number(ordinal) + delim + QLatin1Char(' ');
     }
     return {};
 }
@@ -942,7 +1097,17 @@ bool looksLikeLinkDefinition(QStringView raw) {
 QString normaliseSpaces(const QString& text) {
     QString out;
     out.reserve(text.size());
-    bool inCode = false;    // между заборами блока кода
+    // Между заборами блока кода: знак забора и его длина. ЗАБОРЫ — ПО
+    // COMMONMARK, а не «всякая строка из трёх кавычек»: закрывает только забор
+    // из ТОГО ЖЕ знака не короче открывающего и без хвоста на строке. Пока
+    // любая строка «```» или «~~~» переключала состояние, черта из тильд
+    // ВНУТРИ блока кода в кавычках «закрывала» его, следующий настоящий забор
+    // «открывал» снова — и до конца файла всё стояло вверх ногами: ведущие
+    // неразрывные абзацев считались кодом и становились обычными пробелами,
+    // абзац после списка въезжал в пункт (фаззер, 04.09.2026: «random
+    // numl-ficus notes»).
+    QChar fence;            // знак открытого забора, 0 — вне кода
+    qsizetype fenceLen = 0;
     const qsizetype n = text.size();
     // Начало содержимого строки: отступ, знаки цитаты, маркер пункта и решётки
     // заголовка — не в счёт. «Ведущий» неразрывный — это ведущий у СОДЕРЖИМОГО:
@@ -953,13 +1118,28 @@ QString normaliseSpaces(const QString& text) {
             qsizetype end = text.indexOf(u'\n', i);
             if (end < 0) end = n;
             const QStringView line = QStringView(text).mid(i, end - i);
-            // Забор блока кода: три знака и больше, с любым отступом перед
-            // ними. Внутри блока неразрывных не бывает вовсе.
             const qsizetype at = i + leadingWhitespace(line);
-            if (QStringView(text).mid(at, 3) == QLatin1String("```") ||
-                QStringView(text).mid(at, 3) == QLatin1String("~~~"))
-                inCode = !inCode;
-            content = inCode ? at : i + contentStartOf(line);
+            const QChar mark = at < end ? text.at(at) : QChar();
+            qsizetype run = 0;
+            if (mark == u'`' || mark == u'~')
+                while (at + run < end && text.at(at + run) == mark) ++run;
+            const bool inCode = !fence.isNull();
+            if (!inCode && run >= 3) {
+                // Открывающий забор из кавычек не терпит кавычки в языке.
+                const bool okInfo =
+                    mark == u'~' || QStringView(text).mid(at + run, end - at - run).indexOf(u'`') < 0;
+                if (okInfo) {
+                    fence = mark;
+                    fenceLen = run;
+                }
+            } else if (inCode && mark == fence && run >= fenceLen &&
+                       QStringView(text).mid(at + run, end - at - run).trimmed().isEmpty()) {
+                fence = QChar();
+                fenceLen = 0;
+            }
+            // Внутри блока кода неразрывных не бывает вовсе (и на самих
+            // заборах тоже).
+            content = (inCode || !fence.isNull()) ? at : i + contentStartOf(line);
         }
         const QChar c = text.at(i);
         if (c == u'\n') {
@@ -971,7 +1151,7 @@ QString normaliseSpaces(const QString& text) {
         if (c == QChar::Nbsp) {
             qsizetype run = 0;
             while (i + run < n && text.at(i + run) == QChar::Nbsp) ++run;
-            const bool keep = !inCode && i <= content;
+            const bool keep = fence.isNull() && i <= content;
             out += QString(run, keep ? QChar(QChar::Nbsp) : QChar(u' '));
             i += run;
             continue;
@@ -1586,6 +1766,7 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
                 const MarkerStyle style = markerOf(block);
                 piece.marker = style.marker;
                 piece.checked = style.checked;
+                piece.listMark = char16_t(format.intProperty(ListMarkProperty));
             }
             if (piece.kind == Kind::Code)
                 piece.info = format.stringProperty(InfoProperty);
@@ -1727,5 +1908,7 @@ std::vector<SourceLine> ZDocument::sourceLines() const {
     }
     return out;
 }
+
+Piece withFlankableEdges(Piece block) { return flankableEdges(std::move(block)); }
 
 }  // namespace zametti

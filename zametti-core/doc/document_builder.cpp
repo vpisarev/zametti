@@ -492,6 +492,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         if (list) {
             blockFmt.setProperty(MarkerProperty, static_cast<int>(b.marker));
             blockFmt.setProperty(CheckedProperty, b.checked);
+            if (b.listMark != 0) blockFmt.setProperty(ListMarkProperty, int(b.listMark));
         }
     }
     // Уровень — у всякого блока, стоящего внутри пункта, а не только у самого
