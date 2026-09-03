@@ -26,8 +26,8 @@ const Role kRoles[] = {
     {"selectionBackground", "#fae8a8", "selected text"},
     {"selectionForeground", "#453d1f", "text inside a selection; transparent = leave as is"},
     {"searchHighlight", "#e3dac1", "matches of the current search"},
-    {"accent", "#da9100", "caret, checked tasks"},
-    {"link", "#325cc0", "links, and a pressed toolbar toggle"},
+    {"accent", "#da9100", "caret, checked tasks, a pressed toolbar toggle"},
+    {"link", "#325cc0", "links"},
     {"mark", "#7c3aed", "a sort order set by the folder itself"},
     {"quote", "#5a626a", "quoted text"},
     {"divider", "#c8cdd2", "the thematic break '---'"},
@@ -261,7 +261,7 @@ void ZTheme::applyTo(ZSettings& settings) const {
     set([&](const QColor& c) { ui.setToolbarHoverBackground(c); }, colour("panelHover"));
     set([&](const QColor& c) { ui.setToolbarIconHoverColor(c); }, colour("panelIconHover"));
     set([&](const QColor& c) { ui.setToolbarIconDisabledColor(c); }, colour("panelIconOff"));
-    set([&](const QColor& c) { ui.setToolbarIconOnColor(c); }, colour("link"));
+    set([&](const QColor& c) { ui.setToolbarIconOnColor(c); }, colour("accent"));
     set([&](const QColor& c) { ui.setToolbarIconMarkColor(c); }, colour("mark"));
     set([&](const QColor& c) { ui.setNoteListSnippetColor(c); }, colour("caption"));
     set([&](const QColor& c) { ui.setNoteListDateColor(c); }, colour("listDate"));
