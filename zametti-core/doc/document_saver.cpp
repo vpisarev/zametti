@@ -709,9 +709,30 @@ Piece withNbspThatSurvives(Piece block) {
 // уже другое: `<адрес>` или `[текст](адрес)`. Файл менялся дважды на одной
 // правке, и в журнал ложился лишний слепок. Теперь первая запись сразу
 // окончательная.
+// Может ли md4c вообще увидеть в этом тексте разметку или автоссылку. Знаки,
+// с которых начинается всякий строчный элемент CommonMark и наших расширений:
+// начертания и код (* _ ~ `), ссылки и картинки ([ ] < > !), экранирование
+// (\), сущности (&), автоссылки без скобок (MD_FLAG_PERMISSIVEAUTOLINKS: адрес
+// со схемой «:», почта «@», «www.»). Нет ни одного — блок без разметки читается
+// назад собой, и пробовать нечего.
+bool mayCarryMarkup(const QString& text) {
+    static const QString marks = QStringLiteral("*_~`[]<>!\\&:@");
+    for (const QChar ch : text)
+        if (marks.contains(ch)) return true;
+    return text.contains(QStringLiteral("www."), Qt::CaseInsensitive);
+}
+
 Piece withMarkupThatSurvives(Piece block, bool* enriched) {
     if (block.raw) return block;
     if (block.runs.empty() && block.kind == Kind::Code) return block;
+    // БЛОК БЕЗ РАЗМЕТКИ И БЕЗ ЗНАКОВ, КОТОРЫЕ ЕЁ НАЧИНАЮТ, НЕ ПРОБУЕТСЯ. Проба
+    // — это документ-однодневка плюс md4c, около 10 мкс на блок, и она шла на
+    // КАЖДЫЙ абзац заметки: на 3800 блоков — 38 мс на каждую сериализацию, а
+    // сериализаций на одно переключение заметки две-три (замер: стенды switch
+    // и write-probe, 03.09.2026). Единственное, что проба может дать блоку без
+    // runs, — разметку от чтения (голый адрес → ссылка), а той неоткуда
+    // взяться без знаков ниже. Фильтр точный, не порог.
+    if (block.runs.empty() && !mayCarryMarkup(block.text)) return block;
 
     // Уровень вложенности сбрасываем: вопрос здесь только про разметку внутри
     // строки, а писатель в одиночном блоке ждёт, что уровень не прыгает через
@@ -1131,7 +1152,10 @@ void settleLeadingSpaces(std::vector<Piece>& blocks) {
     }
 }
 
-std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched) {
+std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched, bool* reshaped) {
+    // Снимок входа — только если ответ про него спрашивают (строки COW, копия
+    // дешёвая).
+    const std::vector<Piece> before = reshaped != nullptr ? doc : std::vector<Piece>{};
     // ДВЕ ФАЗЫ. Сначала каждому блоку — края, заголовок в одну строку и судьба
     // неразрывных; затем ПО ПОСЛЕДОВАТЕЛЬНОСТИ — кодировка ведущих отступов
     // (решение зависит от соседей: см. settleLeadingSpaces); и только потом —
@@ -1252,6 +1276,18 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched) {
 
     std::vector<Piece> settled = withoutEmptyNested(std::move(spaced));
     settleListMarks(settled);
+    if (reshaped != nullptr) {
+        bool same = before.size() == settled.size();
+        for (size_t i = 0; same && i < settled.size(); ++i) {
+            const Piece& a = before[i];
+            const Piece& b = settled[i];
+            same = a.raw == b.raw && a.kind == b.kind && a.level == b.level &&
+                   a.marker == b.marker && a.checked == b.checked &&
+                   a.headingLevel == b.headingLevel && a.info == b.info && a.text == b.text &&
+                   sameRuns(a.runs, b.runs);
+        }
+        *reshaped = !same;
+    }
     return settled;
 }
 
@@ -1262,9 +1298,9 @@ std::string_view asView(const QByteArray& bytes) {
 }
 
 QByteArray noteBytes(const QTextDocument& doc, const NoteHeader& meta, DocumentReaderFn reader,
-                     std::vector<Piece>* fileBlocks, bool* enriched) {
+                     std::vector<Piece>* fileBlocks, bool* enriched, bool* reshaped) {
     std::vector<Piece> forFile =
-        documentForFile(reader ? reader(doc) : piecesOfDocument(doc), enriched);
+        documentForFile(reader ? reader(doc) : piecesOfDocument(doc), enriched, reshaped);
     // ГРАНИЦА ФАЙЛА: текст переводится в байты один раз, здесь.
     const QByteArray text = writePieces(forFile, meta).toUtf8();
     if (fileBlocks != nullptr) *fileBlocks = std::move(forFile);
@@ -1378,8 +1414,8 @@ SaveOutcome ZDocument::saveTo(const QString& path, const QString& timestamp,
 }
 
 QByteArray ZDocument::fileBytes(const NoteHeader& envelope, std::vector<Piece>* fileBlocks,
-                               bool* enriched) const {
-    return noteBytes(d_->text, envelope, nullptr, fileBlocks, enriched);
+                               bool* enriched, bool* reshaped) const {
+    return noteBytes(d_->text, envelope, nullptr, fileBlocks, enriched, reshaped);
 }
 
 }  // namespace zametti
