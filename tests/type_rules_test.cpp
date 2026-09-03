@@ -519,6 +519,50 @@ void checkTableShiftEnter() {
     }
 }
 
+// --- (д) Shift+Enter не оставляет U+2028 там, где заметка отказала ----------
+//
+// Заголовок многострочным не бывает: Shift+Enter в нём режет блок (хвост —
+// абзац). Qt-шный InsertLineSeparator, в который нажатие проваливалось бы при
+// отказе заметки, вставлял бы разделитель БЕЗ пометки — и он уезжал в файл
+// собой (долг отчёта 04.09.2026). Разделителя в документе быть не должно ни
+// в одном блоке.
+bool anyLineSeparator(const zametti::NoteEditor& editor) {
+    for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
+        if (b.text().contains(QChar::LineSeparator) && zametti::kindOf(b) == zametti::Kind::Heading)
+            return true;
+    return false;
+}
+
+void checkHeadingShiftEnter() {
+    {
+        Rig rig("заголовок.md", QStringLiteral("# Заголовок\n\nтекст\n"), 0);
+        QTest::keyClick(&rig.editor, Qt::Key_Return, Qt::ShiftModifier);
+        QTest::qWait(20);
+        check(!anyLineSeparator(rig.editor) &&
+                  zametti::kindOf(rig.block(0)) == zametti::Kind::Heading &&
+                  rig.block(0).text() == QStringLiteral("Заголовок"),
+              "Shift+Enter в конце заголовка не оставил разделителя: " +
+                  rig.block(0).text().toStdString());
+    }
+    {
+        Rig rig("заголовок2.md", QStringLiteral("# Заголовок\n\nтекст\n"), 0);
+        QTextCursor cursor(rig.block(0));
+        cursor.setPosition(rig.block(0).position() + 4);
+        rig.editor.setTextCursor(cursor);
+        QTest::keyClick(&rig.editor, Qt::Key_Return, Qt::ShiftModifier);
+        QTest::qWait(20);
+        check(!anyLineSeparator(rig.editor) && rig.block(0).text() == QStringLiteral("Заго"),
+              "Shift+Enter в середине заголовка разрезал его: " + rig.block(0).text().toStdString());
+        QTest::keyClicks(&rig.editor, QStringLiteral("x"));
+        QTest::qWait(10);
+        rig.editor.save(false, true);
+        QTest::qWait(10);
+        const QString file = readFile(rig.path);
+        check(!file.contains(QChar::LineSeparator) && file.contains(QStringLiteral("# Заго\n")),
+              "в файле заголовок без разделителя: " + file.toStdString());
+    }
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -539,6 +583,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkDisplayDollar();
     checkTableEnter();
     checkTableShiftEnter();
+    checkHeadingShiftEnter();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::freshFailures();

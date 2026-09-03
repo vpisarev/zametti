@@ -162,6 +162,18 @@ bool savable(ZDocument& note, std::string& report) {
     }
 
     const std::string written(first.written.constData(), size_t(first.written.size()));
+    // ТРЕТЬЕ: служебных разделителей строк в файле не бывает (просьба
+    // владельца 04.09.2026). U+2028 — мягкий перенос ВНУТРИ документа; в файл
+    // он уходит переводом строки, а не собой.
+    {
+        const QString text = QString::fromUtf8(first.written);
+        if (text.contains(QChar::LineSeparator) || text.contains(QChar::ParagraphSeparator)) {
+            keepFailure(written);
+            report = "\n  в файле служебный разделитель строки (U+2028/U+2029):\n" + written;
+            report += "\n  живой документ:\n" + note.toJson();
+            return false;
+        }
+    }
     ZDocument reread = bodyOf(written);
     const SaveOutcome second = reread.saveTo(path, QStringLiteral("fuzz"));
     if (!second.rescuePath.isEmpty()) QFile::remove(second.rescuePath);

@@ -316,3 +316,63 @@ TEST(FileCanon, IndentedParagraphAfterListStaysOutside) {
     checkStable("2. a\n   b\n\n   (env0)\n   where\n\n   next\n",
                 "абзац с отступом после списка");
 }
+
+// --- СЛУЖЕБНЫЕ ЗНАКИ В ФАЙЛЕ НЕ ЖИВУТ (просьба владельца 04.09.2026) ---------
+//
+// Разделители строк юникода (U+2028, U+2029) в файле заметки — не содержимое,
+// а перевод строки: так их пишет Apple Notes, так же они получались у нас из
+// Qt-шного Shift+Enter мимо пометки. Файл с ними МИГРИРУЕТ при первом
+// сохранении (как U+00A0), вставка из буфера приводится той же дверью, а
+// непомеченный разделитель, всё же оказавшийся в документе, писатель отдаёт
+// переводом строки (в заголовке — пробелом: заголовок однострочен).
+
+namespace {
+
+bool hasLineSeparators(const QByteArray& bytes) {
+    const QString text = QString::fromUtf8(bytes);
+    return text.contains(QChar::LineSeparator) || text.contains(QChar::ParagraphSeparator);
+}
+
+}  // namespace
+
+TEST(FileCanon, LineSeparatorsInFileBecomeNewlines) {
+    ZDocument note = bodyOf("раз\xE2\x80\xA8два\n\nтри\xE2\x80\xA9четыре\n");
+    const QByteArray bytes = note.fileBytes(NoteHeader{});
+    EXPECT_FALSE(hasLineSeparators(bytes));
+    EXPECT_EQ("раз\nдва\n\nтри\nчетыре\n", bytes.toStdString());
+    checkStable(bytes.toStdString(), "перевод строки вместо разделителя");
+}
+
+TEST(FileCanon, PastedLineSeparatorsBecomeNewlines) {
+    // Разбором (обычная вставка) — в абзац.
+    ZDocument note = bodyOf("абзац\n");
+    QTextCursor at = note.caretAtBlock(0);
+    at.movePosition(QTextCursor::EndOfBlock);
+    ASSERT_TRUE(note.replaceRange(at, QStringLiteral("x\u2028y"), ZDocument::PasteMode::Markdown));
+    const QByteArray bytes = note.fileBytes(NoteHeader{});
+    EXPECT_FALSE(hasLineSeparators(bytes));
+    EXPECT_EQ("абзацx\ny\n", bytes.toStdString());
+
+    // Буквально — в блок кода: строки кода, а не знак внутри строки.
+    ZDocument code = bodyOf("```\ncode\n```\n");
+    QTextCursor in = code.caretAtBlock(0);
+    in.movePosition(QTextCursor::EndOfBlock);
+    ASSERT_TRUE(code.replaceRange(in, QStringLiteral("\u2028a\u2029b"),
+                                  ZDocument::PasteMode::Literal));
+    const QByteArray codeBytes = code.fileBytes(NoteHeader{});
+    EXPECT_FALSE(hasLineSeparators(codeBytes));
+    EXPECT_EQ("```\ncode\na\nb\n```\n", codeBytes.toStdString());
+}
+
+TEST(FileCanon, TypedLineSeparatorIsWrittenAsNewline) {
+    ZDocument note = bodyOf("абзац\n\n# Заголовок\n");
+    QTextCursor at = note.caretAtBlock(0);
+    at.movePosition(QTextCursor::EndOfBlock);
+    ASSERT_TRUE(note.insertText(at, QStringLiteral("\u2028хвост")));
+    QTextCursor head = note.caretAtBlock(2);
+    head.movePosition(QTextCursor::EndOfBlock);
+    ASSERT_TRUE(note.insertText(head, QStringLiteral("\u2028хвост")));
+    const QByteArray bytes = note.fileBytes(NoteHeader{});
+    EXPECT_FALSE(hasLineSeparators(bytes));
+    EXPECT_EQ("абзац\nхвост\n\n# Заголовок хвост\n", bytes.toStdString());
+}
