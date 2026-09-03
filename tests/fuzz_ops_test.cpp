@@ -170,6 +170,17 @@ bool savable(ZDocument& note, std::string& report) {
         report = "\n  файл не устоялся. записали:\n" + written;
         report += "\n  а перечитав и записав снова, получили:\n" +
                   std::string(second.written.constData(), size_t(second.written.size()));
+        // Блоки обоих кругов: без них по двум текстам не видно, где именно
+        // разошлись разметка или род блока.
+        std::vector<Piece> forFile;
+        note.fileBytes(NoteHeader{}, &forFile);
+        std::vector<Piece> again;
+        reread.fileBytes(NoteHeader{}, &again);
+        report += "\n  блоки первой записи:\n" + dumpOf(forFile);
+        report += "\n  блоки второй записи:\n" + dumpOf(again);
+        // И живой документ до приведения: расхождение может родиться и на
+        // ступени приведения, и в самом документе после операций.
+        report += "\n  живой документ:\n" + note.toJson();
         return false;
     }
     return true;

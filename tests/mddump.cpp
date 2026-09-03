@@ -5,6 +5,8 @@
 //   mddump [файл] --md      сериализованный markdown, ЖИВОЙ канон (writePieces)
 //   mddump [файл] --file    то, что ушло бы в файл: bodyOf(x).toMarkdown()
 //   mddump [файл] --check   дифф bodyOf(x).toMarkdown() с оригиналом
+//   mddump [файл] --doc     живой документ после сборки (ZDocument::toJson)
+//   mddump [файл] --canon   блоки после приведения к выразимому (documentForFile)
 //
 // РАЗНИЦА МЕЖДУ --md И --file И ЕСТЬ ПРЕДМЕТ ОТЛАДКИ: живой документ вправе
 // держать то, чего markdown не хранит, а файл — нет. `--check` спрашивает
@@ -67,6 +69,21 @@ int main(int argc, char** argv) {
     }
     if (mode == "--file") {
         std::fputs(bodyOf(src).toMarkdown().c_str(), stdout);
+        return 0;
+    }
+    // Ступень записи: блоки после приведения к выразимому (documentForFile) —
+    // то, что ушло бы в файл. Разбор (по умолчанию) и запись расходятся именно
+    // здесь, и смотреть надо обе стороны.
+    // Живой документ после сборки (ZDocument::toJson): между разбором и
+    // приведением стоит ещё сборка со своими инвариантами.
+    if (mode == "--doc") {
+        std::fputs(bodyOf(src).toJson().c_str(), stdout);
+        return 0;
+    }
+    if (mode == "--canon") {
+        std::vector<zametti::Piece> forFile;
+        bodyOf(src).fileBytes(zametti::NoteHeader{}, &forFile);
+        std::fputs(dumpOf(forFile).c_str(), stdout);
         return 0;
     }
     if (mode == "--check") {
