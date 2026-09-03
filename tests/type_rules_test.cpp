@@ -26,6 +26,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QStringList>
 #include <QTextFragment>
 
 #include <cstdio>
@@ -346,6 +347,178 @@ void checkTableEnter() {
     }
 }
 
+// --- (г) Shift+Enter в раскрытой таблице — новый ряд --------------------------
+//
+// Просьба владельца (04.09.2026): из ЛЮБОГО места ряда Shift+Enter вставляет
+// под ним пустой ряд с числом колонок шапки, каретка — в первой ячейке
+// («Shift+Enter == End + Shift+Enter»). С шапки и с разделителя ряд идёт после
+// разделителя (первым рядом тела). В конце последнего ряда — тоже ряд, а не
+// абзац под таблицей (тот — Esc и Ctrl+Enter на объекте).
+
+const char* kTableNote =
+    "выше\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nниже\n";
+
+QStringList linesOf(const QTextBlock& block) {
+    return block.text().split(QChar::LineSeparator);
+}
+
+// Раскрыть таблицу-объект в блоке 2 (Enter на объекте), каретка — в начало.
+bool openTableIn(Rig& rig) {
+    QTextCursor cursor(rig.block(2));
+    rig.editor.setTextCursor(cursor);
+    QTest::qWait(10);
+    QTest::keyClick(&rig.editor, Qt::Key_Return);
+    QTest::qWait(20);
+    return zametti::isRawBlock(rig.block(2)) && !zametti::isTableObjectBlock(rig.block(2)) &&
+           linesOf(rig.block(2)).size() == 4;
+}
+
+void caretAtLine(Rig& rig, int line, int column) {
+    const QTextBlock block = rig.block(2);
+    const QStringList lines = linesOf(block);
+    int offset = 0;
+    for (int i = 0; i < line && i < lines.size(); ++i) offset += int(lines.at(i).size()) + 1;
+    QTextCursor cursor(block);
+    cursor.setPosition(block.position() + offset + column);
+    rig.editor.setTextCursor(cursor);
+    QTest::qWait(10);
+}
+
+void checkTableShiftEnter() {
+    // Из середины ряда тела: ряд целиком остаётся, пустой ряд под ним, каретка
+    // в первой ячейке; набор ложится в неё; Esc сворачивает; файл получает ряд.
+    {
+        Rig rig("ряд.md", QString::fromUtf8(kTableNote));
+        check(openTableIn(rig), "таблица раскрыта четырьмя строками");
+        caretAtLine(rig, 2, 3);   // «| 1| 2 |» — каретка после «| 1»
+        QTest::keyClick(&rig.editor, Qt::Key_Return, Qt::ShiftModifier);
+        QTest::qWait(20);
+        const QStringList lines = linesOf(rig.block(2));
+        check(lines.size() == 5 && lines.at(2) == QStringLiteral("| 1 | 2 |") &&
+                  lines.at(3) == QStringLiteral("|  |  |") &&
+                  lines.at(4) == QStringLiteral("| 3 | 4 |"),
+              "пустой ряд встал под рядом каретки целиком: " +
+                  lines.join(QLatin1Char('/')).toStdString());
+        const QTextBlock block = rig.block(2);
+        const int rowStart = int(lines.at(0).size() + lines.at(1).size() + lines.at(2).size()) + 3;
+        check(rig.editor.textCursor().position() == block.position() + rowStart + 2,
+              "каретка — в первой ячейке нового ряда");
+        QTest::keyClicks(&rig.editor, QStringLiteral("x"));
+        QTest::qWait(10);
+        check(linesOf(rig.block(2)).value(3) == QStringLiteral("| x |  |"),
+              "набор лёг в первую ячейку: " + linesOf(rig.block(2)).value(3).toStdString());
+        QTest::keyClick(&rig.editor, Qt::Key_Escape);
+        QTest::qWait(20);
+        check(zametti::isTableObjectBlock(rig.block(2)), "Esc свернул таблицу объектом");
+        const zametti::Table table = zametti::parseTable(zametti::tableSourceOf(rig.block(2)));
+        check(table.valid && table.columns == 2 && table.bodyRows() == 3, "три ряда тела");
+        rig.editor.save(false, true);
+        QTest::qWait(10);
+        check(readFile(rig.path).contains(QStringLiteral("| 1 | 2 |\n| x |  |\n| 3 | 4 |")),
+              "ряд дошёл до файла: " + readFile(rig.path).toStdString());
+    }
+
+    // С шапки и с разделителя ряд идёт ПОСЛЕ разделителя.
+    for (int line = 0; line < 2; ++line) {
+        Rig rig(line == 0 ? "шапка.md" : "разделитель.md", QString::fromUtf8(kTableNote));
+        check(openTableIn(rig), "таблица раскрыта");
+        caretAtLine(rig, line, 2);
+        QTest::keyClick(&rig.editor, Qt::Key_Return, Qt::ShiftModifier);
+        QTest::qWait(20);
+        const QStringList lines = linesOf(rig.block(2));
+        check(lines.size() == 5 && lines.at(1) == QStringLiteral("|---|---|") &&
+                  lines.at(2) == QStringLiteral("|  |  |") &&
+                  lines.at(3) == QStringLiteral("| 1 | 2 |"),
+              std::string(line == 0 ? "с шапки" : "с разделителя") +
+                  " ряд встал первым рядом тела: " + lines.join(QLatin1Char('/')).toStdString());
+    }
+
+    // В конце последнего ряда — ряд, а не абзац под таблицей.
+    {
+        Rig rig("хвост.md", QString::fromUtf8(kTableNote));
+        check(openTableIn(rig), "таблица раскрыта");
+        caretAtLine(rig, 3, 9);   // конец «| 3 | 4 |»
+        check(rig.editor.textCursor().atBlockEnd(), "каретка в конце блока");
+        QTest::keyClick(&rig.editor, Qt::Key_Return, Qt::ShiftModifier);
+        QTest::qWait(20);
+        const QStringList lines = linesOf(rig.block(2));
+        check(lines.size() == 5 && lines.at(4) == QStringLiteral("|  |  |"),
+              "в конце последнего ряда — новый ряд: " + lines.join(QLatin1Char('/')).toStdString());
+        check(zametti::kindOf(rig.block(3)) == zametti::Kind::VSpace &&
+                  rig.block(4).text() == QStringLiteral("ниже"),
+              "абзаца под таблицей не завелось");
+    }
+
+    // Отмена: первый Ctrl+Z снимает сворачивание, сделанное сохранением, второй
+    // — сам ряд (тот же конвейер, что у формул и шапки).
+    {
+        Rig rig("отмена4.md", QString::fromUtf8(kTableNote));
+        check(openTableIn(rig), "таблица раскрыта");
+        caretAtLine(rig, 2, 3);
+        QTest::qWait(60);
+        QTest::keyClick(&rig.editor, Qt::Key_Return, Qt::ShiftModifier);
+        QTest::qWait(10);
+        QTest::keyClick(&rig.editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        QTest::keyClick(&rig.editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        const QString source = zametti::sourceTextOf(rig.block(2));
+        check(!source.contains(QStringLiteral("|  |  |")) && source.count(QLatin1Char('\n')) <= 4,
+              "Ctrl+Z убрал ряд: " + source.toStdString());
+    }
+
+    // Отказы. Блок кода: Shift+Enter в конце — по-прежнему абзац под блоком.
+    {
+        Rig rig("код.md", QStringLiteral("```\n| a | b |\n|---|---|\n```\n"));
+        rig.toBlockEnd(0);
+        QTest::keyClick(&rig.editor, Qt::Key_Return, Qt::ShiftModifier);
+        QTest::qWait(20);
+        check(zametti::kindOf(rig.block(0)) == zametti::Kind::Code &&
+                  linesOf(rig.block(0)).size() == 2,
+              "в коде ряд не вставляется: " + linesOf(rig.block(0)).join(QLatin1Char('/')).toStdString());
+        // Абзац под кодом — сразу или через пустую строку шва.
+        std::string kinds;
+        bool paragraphBelow = false;
+        for (int i = 1; i <= 2; ++i) {
+            const QTextBlock b = rig.block(i);
+            if (!b.isValid()) break;
+            kinds += std::to_string(int(zametti::kindOf(b))) + (zametti::isRawBlock(b) ? "r " : " ");
+            if (!zametti::isRawBlock(b) && zametti::kindOf(b) == zametti::Kind::Paragraph)
+                paragraphBelow = true;
+        }
+        check(paragraphBelow, "а Shift+Enter в конце кода дал абзац под ним: " + kinds);
+    }
+    // Дословный блок, который таблицей не читается: строка внутри блока, палок нет.
+    {
+        Rig rig("html.md", QStringLiteral("<div>\nтекст\n</div>\n"));
+        check(zametti::isRawBlock(rig.block(0)), "html — дословный блок");
+        caretAtLine(rig, 0, 0);
+        QTextCursor cursor(rig.block(0));
+        cursor.setPosition(rig.block(0).position() + 2);
+        rig.editor.setTextCursor(cursor);
+        QTest::keyClick(&rig.editor, Qt::Key_Return, Qt::ShiftModifier);
+        QTest::qWait(20);
+        check(!rig.block(0).text().contains(QLatin1Char('|')),
+              "не-таблица ряда не получает: " + rig.block(0).text().toStdString());
+    }
+    // Свёрнутая таблица-объект: Shift+Enter её не раскрывает и не меняет.
+    {
+        Rig rig("объект.md", QString::fromUtf8(kTableNote));
+        QTextCursor cursor(rig.block(2));
+        rig.editor.setTextCursor(cursor);
+        QTest::qWait(10);
+        QTest::keyClick(&rig.editor, Qt::Key_Return, Qt::ShiftModifier);
+        QTest::qWait(20);
+        bool same = false;
+        for (QTextBlock b = rig.editor.document()->begin(); b.isValid(); b = b.next())
+            if (zametti::isTableObjectBlock(b) &&
+                zametti::tableSourceOf(b).count(QLatin1Char('\n')) <= 4 &&
+                !zametti::tableSourceOf(b).contains(QStringLiteral("|  |  |")))
+                same = true;
+        check(same, "объект остался объектом с прежним исходником");
+    }
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -365,6 +538,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkInlineDollar();
     checkDisplayDollar();
     checkTableEnter();
+    checkTableShiftEnter();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::freshFailures();
