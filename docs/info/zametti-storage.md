@@ -602,7 +602,7 @@ touch: a mistake here means a damaged note.
 It opens in an ordinary view, as WYSIWYG or as source — with the body, the
 images and everything else. Two things differ: it cannot be edited until it is
 brought back, and the field is tinted with the same grey as history
-(`colors.historyBackground`). There is no caret in a view, and that is all a
+(theme role `diff.background`). There is no caret in a view, and that is all a
 person needs to be told — no banners and no warnings (owner's decision; the
 "About" window works the same way).
 

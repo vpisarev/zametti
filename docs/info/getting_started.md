@@ -97,9 +97,15 @@ The built-in theme is `light`. To tweak it, override the roles right in the conf
 "theme": {
     "extends": "light",
     "accent": "#cc8822",
-    "selectionBackground": "#fae8a8"
+    "selectionBackground": "#fae8a8",
+    "diff": { "background": "#f7f7f5", "added": "#3fa255" }
 }
 ```
+
+Roles that belong to one place are grouped: `diff` holds everything you only see in the
+history mode (the aged-paper page and the colors of added, removed and changed lines),
+`markdown` and `json` hold the two source highlightings. `accent` paints the caret, the
+checked tasks and a pressed toolbar toggle; `link` paints links only.
 
 To keep a whole look of your own, put it in `~/.config/zametti/themes/<name>.json` and
 point the config at it with `"extends": "<name>"`. A theme file may itself extend another

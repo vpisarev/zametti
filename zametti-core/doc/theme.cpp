@@ -35,7 +35,6 @@ const Role kRoles[] = {
     {"caption", "#777e86", "picture captions and note-list snippets"},
     {"codeBackground", "#0e000000", "behind code, in blocks and inline"},
     {"codeLang", "#7a8088", "language name on the code plate"},
-    {"historyBackground", "#f7f7f5", "page in the history mode: aged paper"},
 
     // --- панели ---
     {"sidebarBackground", "#fefefb", "tree and note list"},
@@ -51,11 +50,15 @@ const Role kRoles[] = {
     {"checkboxOff", "#acacac", "frame of an unchecked task"},
     {"checkboxTick", "#ffffff", "the tick itself"},
 
-    // --- разность ---
-    {"added", "#3fa255", "added lines"},
-    {"removed", "#c03939", "removed lines"},
-    {"changed", "#e0a850", "changed lines"},
     {"danger", "#c02828", "something went wrong: a suspect save, a broken pattern"},
+
+    // --- режим истории: разность версий ---
+    // Своя группа (решение владельца 04.09.2026): всё, что видно только в
+    // истории, лежит рядом — страница и три цвета строк.
+    {"diff.background", "#f7f7f5", "page in the history mode: aged paper"},
+    {"diff.added", "#3fa255", "added lines"},
+    {"diff.removed", "#c03939", "removed lines"},
+    {"diff.changed", "#e0a850", "changed lines"},
 
     // --- таблицы ---
     {"tableBorder", "#000000", "table rules"},
@@ -224,7 +227,7 @@ void ZTheme::applyTo(ZSettings& settings) const {
     ZSettings::Ui& ui = settings.ui();
 
     set([&](const QColor& c) { look.setPageBackground(c); }, colour("background"));
-    set([&](const QColor& c) { look.setHistoryBackground(c); }, colour("historyBackground"));
+    set([&](const QColor& c) { look.setHistoryBackground(c); }, colour("diff.background"));
     // Цвет текста: им красятся и документ, и списки — через палитру приложения
     // (applyPalette в app). До появления тем своего цвета текста у программы не
     // было вовсе: она стояла на системной палитре, и тёмную тему это делало
@@ -246,9 +249,9 @@ void ZTheme::applyTo(ZSettings& settings) const {
     set([&](const QColor& c) { look.setImageCaptionColor(c); }, colour("caption"));
     set([&](const QColor& c) { look.setCodeBackground(c); }, colour("codeBackground"));
     set([&](const QColor& c) { look.setCodeLangColor(c); }, colour("codeLang"));
-    set([&](const QColor& c) { look.setDiffAdded(c); }, colour("added"));
-    set([&](const QColor& c) { look.setDiffRemoved(c); }, colour("removed"));
-    set([&](const QColor& c) { look.setDiffChanged(c); }, colour("changed"));
+    set([&](const QColor& c) { look.setDiffAdded(c); }, colour("diff.added"));
+    set([&](const QColor& c) { look.setDiffRemoved(c); }, colour("diff.removed"));
+    set([&](const QColor& c) { look.setDiffChanged(c); }, colour("diff.changed"));
 
     set([&](const QColor& c) { ui.setSidebarBackground(c); }, colour("sidebarBackground"));
     set([&](const QColor& c) { ui.setSidebarFolderColor(c); }, colour("foreground"));
