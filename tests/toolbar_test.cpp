@@ -288,18 +288,24 @@ void checkSortButtons(Toolbar& bar) {
     const zametti::SortOrder created{zametti::SortKey::Created, false};
 
     bar.showSort(created, false);
-    const int commonBlue = countColour(Toolbar::Button::SortByCreated, a.toolbarIconOnColor());
+    const int commonAccent = countColour(Toolbar::Button::SortByCreated, a.toolbarIconOnColor());
     const int commonPurple = countColour(Toolbar::Button::SortByCreated, a.toolbarIconMarkColor());
     bar.showSort(created, true);
-    const int markBlue = countColour(Toolbar::Button::SortByCreated, a.toolbarIconOnColor());
+    const int markAccent = countColour(Toolbar::Button::SortByCreated, a.toolbarIconOnColor());
     const int markPurple = countColour(Toolbar::Button::SortByCreated, a.toolbarIconMarkColor());
 
     ZT_TRUE("общий порядок нарисован цветом переключателя (" +
-                std::to_string(commonBlue) + " точек)",
-            commonBlue > 20 && commonPurple == 0);
+                std::to_string(commonAccent) + " точек)",
+            commonAccent > 20 && commonPurple == 0);
+    // Цвет нажатого переключателя — АКЦЕНТ темы, тот же, что у каретки (решение
+    // владельца 04.09.2026: прежде был синий цвет ссылок). Связь стережётся здесь:
+    // разойдутся умолчания — разойдётся и тема.
+    ZT_TRUE("нажатый переключатель — цветом акцента (каретки), а не ссылки",
+            a.toolbarIconOnColor() == zametti::settings().style().caretColor() &&
+                a.toolbarIconOnColor() != zametti::settings().style().linkColor());
     ZT_TRUE("порядок по метке нарисован цветом метки (" + std::to_string(markPurple) +
                 " точек)",
-            markPurple > 20 && markBlue == 0);
+            markPurple > 20 && markAccent == 0);
     QToolButton* button = bar.buttonFor(Toolbar::Button::SortByCreated);
     ZT_TRUE("и тултип говорит, что порядок задан меткой",
             button != nullptr &&
