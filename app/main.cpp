@@ -569,18 +569,9 @@ int main(int argc, char** argv) {
     if (storeRoot.isEmpty() && !session.storeRoot().isEmpty() &&
         zametti::NoteTreeModel::isStoreRoot(session.storeRoot()))
         storeRoot = session.storeRoot();
-    // Хранилище из конфига (store.root) — путь ОТНОСИТЕЛЬНО домашнего каталога.
-    // Третьим номером: явный ключ важнее, прошлый сеанс важнее записанного раз
-    // и навсегда. Раньше эту ветку держал NoteTreeModel::rootFor, ушедший
-    // вместе с режимом одной заметки, — а сам ключ конфига остался нужным:
-    // им хранилище задаётся насовсем, без --root при каждом запуске.
-    if (storeRoot.isEmpty()) {
-        const QString configured = zametti::settings().store().notesRoot();
-        if (!configured.isEmpty()) {
-            const QString fromHome = QDir::home().filePath(configured);
-            if (QFileInfo(fromHome).isDir()) storeRoot = fromHome;
-        }
-    }
+    // Третьего источника нет: ключ store.root из конфига снят (решение
+    // владельца 04.09.2026) — хранилище прошлого сеанса помнит state.json, а
+    // список хранилищ устройства ведёт менеджер хранилищ.
     // ХРАНИЛИЩА МОЖЕТ И НЕ БЫТЬ — окно поднимется пустым, и в нём горит одна
     // кнопка: «открыть или завести хранилище». Так выглядит первый запуск, и
     // это внятнее, чем подсказка в терминале, которого человек не видел.

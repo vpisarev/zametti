@@ -72,7 +72,7 @@ There are several types of user settings, stored in different places:
   - `fonts` — the note font, the monospace font, the shell font, heading steps and the size of formulas. `appSize` is the one number that drives the whole shell: the tree, the note list, the status bar, the dialogs, and even the size of the toolbar icons are derived from it;
   - `layout` — column width, line height, spacing between blocks, list and quote indents;
   - `editor`, `shortcuts` — autosave, tab width, the external editor, and the key for every command;
-  - `images`, `store`, `sync`, `pdf`, `logs` — the rest, each in its own place.
+  - `images`, `sync`, `pdf`, `logs` — the rest, each in its own place. There is no `store` section: which store to open is remembered in `state.json` (and chosen in the store manager), and the store's name is the title of its root note.
 
   What is *not* there is deliberate: optical constants of the renderer (how a bullet sits on the baseline, the corner radius of a code plate) live in the code, and the colors live in the theme.
 - `~/.config/zametti/state.json` - this is the inter-session state that you normally want to preserve:

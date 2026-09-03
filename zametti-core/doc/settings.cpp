@@ -277,13 +277,10 @@ const std::vector<Key>& keys() {
                    "how much the full-screen viewer may enlarge a small picture", imageViewer(),
                    maxZoomPercent, MaxZoomPercent),
 
-        // --- ХРАНИЛИЩЕ ------------------------------------------------------
-        ZM_KEY_STR("store", "root", "store to open when none is given; relative to $HOME",
-                   store(), notesRoot, NotesRoot),
-        ZM_KEY_STR("store", "title", "label of the root row; empty means 'All notes'", store(),
-                   storeTitle, StoreTitle),
-        ZM_KEY_BOOL("store", "watchFolder", "re-read the store when files change behind our back",
-                    store(), watchStore, WatchStore),
+        // СЕКЦИИ «store» В КОНФИГЕ НЕТ (решение владельца 04.09.2026): корень
+        // берётся из --root и state.json, имя хранилища — из его корневой
+        // заметки, а сторож каталога (Store::watchStore) — внутренний
+        // переключатель. Старые ключи store.* конфиг называет неизвестными.
 
         // --- ОБЛАКО ---------------------------------------------------------
         ZM_KEY_BOOL("sync", "onStart", "pull other devices' edits when starting", sync(), onStart,
