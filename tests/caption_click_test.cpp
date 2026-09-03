@@ -17,6 +17,7 @@
 #include <QImage>
 #include <QScrollBar>
 #include <QTemporaryDir>
+#include <QSignalSpy>
 #include <QTest>
 #include <QTextBlock>
 
@@ -39,6 +40,12 @@ public:
     QRectF photoRect(const QTextBlock& block) { return imageRectInViewport(block); }
     void clickAt(const QPointF& at) {
         QTest::mouseClick(viewport(), Qt::LeftButton, Qt::NoModifier, at.toPoint());
+        QTest::qWait(20);
+    }
+    // Настоящий двойной щелчок: нажатие, отпускание, двойной, отпускание —
+    // ровно то, что приходит от мыши, включая первый одиночный.
+    void dblClickAt(const QPointF& at) {
+        QTest::mouseDClick(viewport(), Qt::LeftButton, Qt::NoModifier, at.toPoint());
         QTest::qWait(20);
     }
 };
@@ -153,4 +160,39 @@ TEST(CaptionClick, All) {
     const QTextBlock after = editor.document()->findBlockByNumber(number);
     ZT_EQ("подпись в заметке новая", std::string("Балкон, вечер"),
           s(zametti::blockImageRef(after).shownCaption()));
+
+    // 5. ДВОЙНОЙ ЩЕЛЧОК (решение владельца, 05.09.2026): просмотр чаще правки
+    // подписи, и потому по СНИМКУ двойной щелчок просит полноэкранный
+    // просмотр (сигнал окну — просмотрщик редактору не принадлежит), а по
+    // ПОДПИСИ по-прежнему правит подпись: куда попали, различается и здесь.
+    QSignalSpy shots(&editor, &zametti::NoteEditor::fullscreenShotRequested);
+    const QRectF photoNow = editor.photoRect(after);
+    const QRectF captionNow = editor.captionRect(after);
+    ZT_TRUE("снимок на месте", !photoNow.isEmpty());
+    editor.dblClickAt(photoNow.center());
+    ZT_EQ("двойной щелчок по снимку просит просмотр", std::string("1"),
+          std::to_string(shots.count()));
+    ZT_TRUE("и поля подписи не открыл", editor.imageCaptionEditor() == nullptr);
+    ZT_EQ("каретка встала на снимок", std::to_string(number),
+          std::to_string(editor.textCursor().blockNumber()));
+
+    editor.dblClickAt(captionNow.center());
+    zametti::CaptionEditor* again = editor.imageCaptionEditor();
+    ZT_TRUE("двойной щелчок по подписи открыл поле", again != nullptr);
+    ZT_EQ("а просмотра не просил", std::string("1"), std::to_string(shots.count()));
+    if (again != nullptr) {
+        ZT_EQ("в поле — нынешняя подпись", std::string("Балкон, вечер"), s(again->text()));
+        QTest::keyClick(again, Qt::Key_Escape);
+        QTest::qWait(20);
+        ZT_TRUE("Esc закрыл поле", editor.imageCaptionEditor() == nullptr);
+    }
+
+    // 6. ТОЛЬКО ЧТЕНИЕ (документация, архив): править нечего, а смотреть
+    // можно — двойной щелчок по снимку просит просмотр и здесь.
+    editor.setReadOnly(true);
+    editor.dblClickAt(photoNow.center());
+    ZT_EQ("в read-only двойной щелчок по снимку тоже просит просмотр", std::string("2"),
+          std::to_string(shots.count()));
+    ZT_TRUE("поля подписи в read-only нет", editor.imageCaptionEditor() == nullptr);
+    editor.setReadOnly(false);
 }
