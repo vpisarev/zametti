@@ -1288,6 +1288,14 @@ void NoteView::setDocument(QTextDocument* doc) {
     }
     const qint64 t2 = probe.nsecsElapsed() / 1000;
     QTextBrowser::setDocument(doc);
+    // ШТАТНАЯ КАРЕТКА ГАСИТСЯ ЗАНОВО. Ширину курсора Qt держит не у вида, а
+    // СВОЙСТВОМ ВЁРСТКИ ДОКУМЕНТА (documentLayout()->property("cursorWidth")):
+    // с новым документом приходит новая вёрстка со своей единицей, и ноль из
+    // конструктора не переживает первой же смены заметки (замерено:
+    // cursorWidth() после openFile — 1). Колонка repaintOverNativeCaret это
+    // прятала, но чужая черта рисовалась каждый кадр — инверсией, со
+    // сглаживанием по дробному x.
+    setCursorWidth(0);
     const qint64 t3 = probe.nsecsElapsed() / 1000;
     attachObjectHandlers(doc);
     if (qEnvironmentVariableIsSet("ZAMETTI_TRACE_OPEN"))
