@@ -30,6 +30,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,11 @@ namespace {
 QString g_dir;
 
 std::string n(int v) { return std::to_string(v); }
+std::string num(qreal v) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.1f", double(v));
+    return buf;
+}
 
 const char* kNote = R"(# Таблицы
 
@@ -420,6 +426,44 @@ void checkSwitchAndReturn() {
                 qAbs(back[i].top() - fresh[i].top()) < 1.5 && qAbs(back[i].height() - fresh[i].height()) < 1.5);
 }
 
+// --- масштаб вида: таблица растёт вместе с текстом ------------------------------
+
+// Владелец увидел живьём: Ctrl+= увеличивал текст, а сетка таблицы стояла в
+// базовом кегле. Полоса объекта после applyZoom(2) обязана быть вдвое выше и
+// (у маленькой таблицы, которой хватает места) вдвое шире; возврат к 1 —
+// возвращает ту же геометрию, что и при свежем открытии.
+void checkZoom() {
+    Editor editor;
+    editor.openText(QStringLiteral("зум"), kNote, 1000, 700);
+    const QVector<int> tables = tableBlocks(editor);
+    ZT_TRUE("три таблицы", tables.size() == 3);
+    if (tables.size() < 3) return;
+    const QRectF fresh = editor.tableRect(tables.first());
+
+    editor.applyZoom(2.0);
+    QTest::qWait(30);
+    (void)editor.document()->documentLayout()->documentSize();
+    const QRectF big = editor.tableRect(tables.first());
+    const qreal h = fresh.height() > 0 ? big.height() / fresh.height() : 0;
+    const qreal w = fresh.width() > 0 ? big.width() / fresh.width() : 0;
+    ZT_TRUE("при зуме 2 таблица вдвое выше: " + num(h), h > 1.8 && h < 2.2);
+    ZT_TRUE("и вдвое шире: " + num(w), w > 1.8 && w < 2.2);
+    // Полоса объекта в вёрстке — той же высоты, что сетка плюс воздух: следующий
+    // блок стоит НИЖЕ сетки, а не наезжает на неё.
+    const QTextBlock after = editor.document()->findBlockByNumber(tables.first() + 1);
+    const QRectF afterRect = editor.document()->documentLayout()->blockBoundingRect(after);
+    ZT_TRUE("блок за таблицей стоит ниже её сетки: " + num(afterRect.top()) + " против " +
+                num(big.bottom()),
+            afterRect.top() >= big.bottom() - 0.5);
+
+    editor.applyZoom(1.0);
+    QTest::qWait(30);
+    (void)editor.document()->documentLayout()->documentSize();
+    const QRectF back = editor.tableRect(tables.first());
+    ZT_TRUE("возврат к масштабу 1 — та же геометрия, что при открытии",
+            qAbs(back.width() - fresh.width()) < 1.5 && qAbs(back.height() - fresh.height()) < 1.5);
+}
+
 // --- живые заметки владельца: файл не меняется, вторая таблица правится ---------
 
 void checkFilesUntouched(const QStringList& sources) {
@@ -562,6 +606,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkMouse();
     checkEditProtocol();
     checkSwitchAndReturn();
+    checkZoom();
     checkTableOnForeignBackground();
 
     QStringList sources;

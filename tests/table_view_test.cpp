@@ -80,6 +80,44 @@ void checkWidths() {
             out.at(0, 1)->rect.left() >= out.at(0, 0)->rect.right() - 0.5);
 }
 
+// МАСШТАБ ВИДА (Ctrl+= / Ctrl+-) — ЧАСТЬ РАСКЛАДКИ. Владелец увидел живьём:
+// текст заметки рос, а таблицы стояли в базовом кегле — space.zoom служил лишь
+// ключом кэша, шрифт ячеек мерился при масштабе 1. Раскладка при zoom 2 обязана
+// быть вдвое крупнее раскладки при zoom 1 — по ширине колонок и по высоте
+// рядов; усадка в тесном месте считается ОТ масштаба, а не от единицы.
+void checkZoom() {
+    const zametti::Table table = parse(kSmall);
+    const zametti::TableLayout one = zametti::layoutTable(table, roomFor(2000, 2000));
+    zametti::TableSpace twice = roomFor(2000, 2000);
+    twice.zoom = 2.0;
+    const zametti::TableLayout two = zametti::layoutTable(table, twice);
+
+    ZT_TRUE("масштаб раскладки — масштаб вида: " + num(two.scale), qFuzzyCompare(two.scale, 2.0));
+    ZT_TRUE("в просторном месте переноса нет и при зуме", !two.wrapped);
+    for (int i = 0; i < one.columns && i < two.columns; ++i) {
+        const qreal ratio = one.columnWidth.at(i) > 0 ? two.columnWidth.at(i) / one.columnWidth.at(i) : 0;
+        ZT_TRUE("колонка " + n(i) + " вдвое шире при зуме 2: " + num(ratio),
+                ratio > 1.8 && ratio < 2.2);
+    }
+    for (int r = 0; r < one.rows && r < two.rows; ++r) {
+        const qreal ratio = one.rowHeight.at(r) > 0 ? two.rowHeight.at(r) / one.rowHeight.at(r) : 0;
+        ZT_TRUE("ряд " + n(r) + " вдвое выше при зуме 2: " + num(ratio),
+                ratio > 1.8 && ratio < 2.2);
+    }
+
+    // Тесное место: при зуме 1 таблица помещается с запасом в полтора раза,
+    // при зуме 2 — нет. Усадка обязана идти от масштаба 2 вниз, а не от единицы:
+    // итог крупнее базового кегля и всё же вписан в место.
+    const qreal room = one.width * 1.5;
+    zametti::TableSpace tight = roomFor(room, room);
+    tight.zoom = 2.0;
+    const zametti::TableLayout squeezed = zametti::layoutTable(table, tight);
+    ZT_TRUE("в тесном месте усадка идёт от зума, итог крупнее единицы: " + num(squeezed.scale),
+            squeezed.scale > 1.0 && squeezed.scale <= 2.0);
+    ZT_TRUE("и таблица вписана в место: " + num(squeezed.width) + " в " + num(room),
+            squeezed.width <= room + 0.5);
+}
+
 // Инвариант D: что попало в разметку, то и было в разборе.
 void checkContentKept() {
     const zametti::Table table = parse(kSmall);
@@ -288,6 +326,7 @@ static int ztRunSuite(int argc, char** argv) {
         if (std::string(argv[i]) == "--bench") wantBench = true;
 
     checkWidths();
+    checkZoom();
     checkContentKept();
     checkFitting();
     checkLongCellWraps();
