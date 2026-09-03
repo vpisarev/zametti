@@ -208,8 +208,10 @@ public:
     // enriched — «разметка обогатилась»: чтение даёт на том же тексте больше,
     // чем держит документ (голый адрес станет ссылкой), и приведение это
     // приняло. Спрашивает редактор, чтобы догнать документ после записи.
+    // reshaped — приведение к файлу что-то изменило: документ и файл не равны
+    // (см. documentForFile).
     QByteArray fileBytes(const NoteHeader& envelope, std::vector<Piece>* fileBlocks = nullptr,
-                         bool* enriched = nullptr) const;
+                         bool* enriched = nullptr, bool* reshaped = nullptr) const;
 
 
     // --- о чём заметка ----------------------------------------------------

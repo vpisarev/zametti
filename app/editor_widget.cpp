@@ -20,6 +20,7 @@
 #include "times.h"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QFileDialog>
 #include <QImageReader>
 #include <QFileInfo>
@@ -475,6 +476,11 @@ void NoteEditor::installNote(std::shared_ptr<ZNote> note) {
     current_ = CurrentNoteState{};
     setDocument(note_->doc().getDocument());
     connectDocument();
+    // Только что подставленный документ равен тому, из чего собран (файлу или
+    // кэшу, в котором лежит только записанное); что дальше — скажет
+    // contentsChanged. Стоит ДО restoreScale и applyContentWidth: те меняют
+    // облик, не содержимое, и идут под LayoutChange.
+    contentTouched_ = false;
     retireNote(std::move(previousNote));
     restoreScale();   // документ подменён — масштаб приехал не с ним
     applyContentWidth();
@@ -595,7 +601,12 @@ void NoteEditor::stashCurrentNote() {
     // файл: именно приведение и срезает хвост, и со сверкой через него
     // отпечатки сходились бы всегда. Нам нужен другой вопрос — «этот документ
     // и есть файл?», а не «запишется ли он в тот же файл».
-    if (hashOf(writePieces(piecesOf(*document()), note_->header()).toUtf8()) != note_->digest()) return;
+    // Нетронутый с открытия документ и есть файл (он из него собран, или
+    // приехал из кэша, куда попадает только записанное) — сериализовать его
+    // ради этого вопроса незачем.
+    if (contentTouched_ &&
+        hashOf(writePieces(piecesOf(*document()), note_->header()).toUtf8()) != note_->digest())
+        return;
 
     const qint64 bytes = estimateDocumentBytes(*document());
     const qint64 budget = qint64(qMax(1, settings().cache().documentCacheSizeMb())) * 1024 * 1024;
@@ -723,6 +734,34 @@ void NoteEditor::activateNote(bool takeFocus) {
 }
 
 bool NoteEditor::openFile(const QString& path, bool takeFocus) {
+    // Разрез по фазам — см. OpenTrace. Фаза меряется от прошлой отметки.
+    QElapsedTimer clock;
+    clock.start();
+    qint64 mark = 0;
+    const auto phase = [&](qint64& into) {
+        const qint64 now = clock.nsecsElapsed() / 1000;
+        into = now - mark;
+        mark = now;
+    };
+    OpenTrace trace;
+    const auto finish = [&](bool ok) {
+        trace.total = clock.nsecsElapsed() / 1000;
+        openTrace_ = trace;
+        if (qEnvironmentVariableIsSet("ZAMETTI_TRACE_OPEN"))
+            std::fprintf(stderr,
+                         "open %s: save %lld, stash %lld, read %lld, canon %lld, journal %lld, "
+                         "load %lld, install %lld, land %lld, activate %lld, total %lld us%s%s\n",
+                         QFileInfo(path).fileName().toUtf8().constData(), (long long)trace.save,
+                         (long long)trace.stash, (long long)trace.read, (long long)trace.canon,
+                         (long long)trace.journal, (long long)trace.load, (long long)trace.install,
+                         (long long)trace.land, (long long)trace.activate, (long long)trace.total,
+                         trace.fromCache ? " (cache)" : "",
+                         trace.saveOutcome == 3   ? " WROTE"
+                         : trace.saveOutcome == 2 ? " (unchanged)"
+                         : trace.saveOutcome == 4 ? " SAVE FAILED"
+                                                  : "");
+        return ok;
+    };
     // Каретку прежней заметки в виду больше не держим: заметка сменяется, и
     // всё, что дальше делается с документом — сборка, подмена, перекладка
     // полей, — не должно на каждое изменение высоты гонять каретку в вид.
@@ -736,12 +775,16 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // работа человека уедет вместе с заметкой. Сигнал именно «сейчас сменится»,
     // а не «сменилась»: после подмены накладывать уже некуда.
     if (path != note_->path()) emit fileAboutToChange(path);
+    lastSaveOutcome_ = 0;
     save(true, true);   // уходим из заметки: пробуем записать, не спрашивая признак
+    trace.saveOutcome = lastSaveOutcome_;
+    trace.wrote = lastSaveOutcome_ == 3;
+    phase(trace.save);
 
     std::string text;
     if (!ZStorage::readFileBytes(path, text)) {
         std::fprintf(stderr, "unreadable: %s\n", path.toUtf8().constData());
-        return false;
+        return finish(false);
     }
 
     // Место каретки запоминается в stashCurrentNote — единственной точке, где
@@ -751,8 +794,10 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
 
     // Уходя из заметки, откладываем её целиком — если есть что откладывать.
     if (note_->path() != path) stashCurrentNote();
+    phase(trace.stash);
 
     Digest digest = hashOf(text);
+    phase(trace.read);
     // Хранилище наше, и держать в нём сор незачем: лишние пробелы в конце строк
     // и недостающий перевод строки в конце файла причёсываются прямо на диске,
     // не трогая ни одного значения в шапке. Заметку всего лишь открыли —
@@ -764,6 +809,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // «причёсывать нечего» незачем. На «Карамазовых» это 50–100 мс на каждый
     // возврат к заметке (замер zametti-bench big).
     if (!cachedNoteMatches(path, digest)) ZNote::canonicaliseFile(path, text, digest);
+    phase(trace.canon);
     adoptNoteAt(path);   // одна функция на оба пути показа: см. NoteView
     current_.lastComplaint.clear();
     current_.externalPending = false;
@@ -790,15 +836,19 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
         const QDateTime when = QFileInfo(path).lastModified();
         noteJournal->ensureBaseline(fileBytes, when.isValid() ? when.toMSecsSinceEpoch() : 0);
     }
+    phase(trace.journal);
 
     // Отложенная заметка: файл не разбираем и документ не собираем вовсе —
     // история, каретка и прокрутка возвращаются такими, какими были (и журнал
     // с уже разжатым хвостом — тоже её).
     if (restoreCachedNote(path, digest)) {
+        trace.fromCache = true;
+        phase(trace.install);
         watchFile();
         activateNote(takeFocus);
+        phase(trace.activate);
         emit fileChanged(note_->path());
-        return true;
+        return finish(true);
     }
 
     // СВЕЖАЯ ЗАМЕТКА: новый объект с копией файла в памяти (с ней сравнивается
@@ -810,8 +860,10 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // Байты → шапка + тело разбирает и собирает сама заметка; документ ещё не
     // показан, и вёрстки при сборке нет вовсе (её включает getDocument).
     fresh->load(text);
+    phase(trace.load);
     fresh->rememberCaret(ZApp::instance().state().caretOf(fresh->id()));
     installNote(std::move(fresh));
+    phase(trace.install);
     watchFile();
     // Масштаб и ширину колонки свежему документу уже вернул installNote — здесь
     // только каретка и якорь. Каждый лишний пересчёт вида на документе с
@@ -819,15 +871,17 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // Статистику считает activateNote — одним местом на оба пути открытия,
     // поэтому здесь сборка её не считает.
     landAfterBuild(note_->caret().cursor, {}, /*statsDone=*/true);
+    phase(trace.land);
     // Каретка, выделение, показ места и фокус — общей дорогой с отложенной
     // заметкой: два пути открытия, одно правило.
     activateNote(takeFocus);
+    phase(trace.activate);
     emit fileChanged(note_->path());
     // Архивная заметка БОЛЬШЕ НЕ УВОДИТ В РЕЖИМ ИСТОРИИ. Прежде уводила по
     // необходимости: в файле у неё лежал стаб, а тело — в журнале. Теперь тело
     // в файле, и она открывается обычным видом — только для чтения и на сером
     // (applyNoteMode). Кнопка истории у неё работает как у всякой другой.
-    return true;
+    return finish(true);
 }
 
 void NoteEditor::watchFile() {
@@ -2938,6 +2992,8 @@ void NoteEditor::refreshStats(const NoteStats& stats) {
 }
 
 void NoteEditor::onContentsChanged() {
+    // Правка — любая, кроме смены облика: и набор, и отмена, и формат.
+    if (!changingLayout()) contentTouched_ = true;
     // СТАТИСТИКА ДОКУМЕНТА — ДО ВСЯКИХ РАННИХ ВЫХОДОВ (решение владельца). Это
     // единственное
     // место, куда приходит ЛЮБАЯ правка документа: и набор, и отмена с
@@ -3079,6 +3135,18 @@ zametti::ZJournal::Rules NoteEditor::historyRules() {
 void NoteEditor::save(bool interactive, bool force) {
     if (!note_->hasPath()) return;
     if (!force && !document()->isModified()) return;
+    // НЕТРОНУТАЯ ЗАМЕТКА НЕ СЕРИАЛИЗУЕТСЯ. force просит «попробуй записать, не
+    // спрашивая признак modified» (его гасят и не-правки); но если с открытия
+    // или прошлой записи документ не менялся вовсе, пробовать нечего: байты
+    // на диске — те, из которых он собран. Это же закрывает дверь машины
+    // хаоса: файл не в каноне, чтение-запись которого не сходится, прежде
+    // переписывался на КАЖДОМ уходе с заметки (штамп, слепок в журнал, всплытие
+    // в списке) без единой правки человека. Лечится такой файл теперь только
+    // вместе с правкой.
+    if (!contentTouched_ && !document()->isModified()) {
+        lastSaveOutcome_ = 5;
+        return;
+    }
     // РАСКРЫТАЯ ТАБЛИЦА ПОД КАРЕТКОЙ. Промежуточные состояния правки законно не
     // таблицы (Enter завёл строку, набирается ряд), а файл обязан быть
     // согласован сам с собой — самопроверка круга иначе отвергнет запись,
@@ -3114,10 +3182,16 @@ void NoteEditor::save(bool interactive, bool force) {
     // ссылкой). Тогда файл богаче документа, и документ надо догнать, иначе
     // адрес станет ссылкой только при следующем открытии заметки.
     bool enriched = false;
-    QByteArray candidate = note_->fileBytes(&fileIr, &enriched);
+    // reshaped — документ ушёл в файл не собой (хвост пустых строк, снятая
+    // разметка…): тогда он файлу НЕ равен, и признак «трогали» остаётся
+    // поднятым — сверка кэша и следующий уход его увидят, как и прежде.
+    bool reshaped = false;
+    QByteArray candidate = note_->fileBytes(&fileIr, &enriched, &reshaped);
     if (!note_->lastSaved().isEmpty() && NoteHeader::sameFileApartFromStamps(candidate, note_->lastSaved())) {
         note_->setHeader(metaBefore);
         document()->setModified(false);
+        contentTouched_ = reshaped;   // равен файлу — до следующей правки
+        lastSaveOutcome_ = 1;
         return;
     }
 
@@ -3162,15 +3236,19 @@ void NoteEditor::save(bool interactive, bool force) {
         // Пересобираем байты только если что-то и правда переехало: лишняя
         // сериализация большой заметки — это миллисекунды на каждое
         // автосохранение.
-        if (moved) candidate = note_->fileBytes(&fileIr, &enriched);
+        if (moved) candidate = note_->fileBytes(&fileIr, &enriched, &reshaped);
     }
 
     // Отпечаток того, что в файле, мы знаем — значит «не изменилось ли»
     // решается без чтения файла.
     const SaveOutcome outcome =
         note_->save(note_->path(), rescueTimestamp(), note_->digest(), &fileIr, &candidate);
+    lastSaveOutcome_ = outcome.result == SaveResult::Written     ? 3
+                       : outcome.result == SaveResult::Unchanged ? 2
+                                                                 : 4;
     if (outcome.result == SaveResult::Written || outcome.result == SaveResult::Unchanged) {
         document()->setModified(false);
+        contentTouched_ = reshaped;
         current_.lastComplaint.clear();
         // Что теперь в файле, известно из самой записи: отпечаток посчитан по
         // тому буферу, который туда и ушёл. Раньше файл ради этого читался
