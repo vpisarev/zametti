@@ -270,6 +270,46 @@ void checkSpaceAtEndOfFormulaSourceLine() {
     checkEqual(expected, textAfter, "в исходнике формулы пробел и буква встали в конец строки");
 }
 
+// HOME/END — НАЧАЛО И КОНЕЦ СТРОКИ, а не документа (решение владельца,
+// 03.09.2026; на маке умолчание Qt прыгало по документу, и владелец просил
+// следить, чтобы это снова не сломалось). Абзац из двух строк через мягкий
+// перенос: End с первой строки — в её конец, не в конец заметки; Home со
+// второй — в её начало; Shift+End выделяет до конца строки.
+void checkHomeEndMoveWithinLine() {
+    const QString path = writeNote("home-end.md",
+                                   QStringLiteral("первая строка\nвторая строка\n\nхвост\n"));
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(30);
+    const QTextBlock first = editor.document()->firstBlock();
+    const int sep = int(first.text().indexOf(QChar::LineSeparator));
+    check(sep > 0, "две строки абзаца через мягкий перенос");
+    if (sep <= 0) return;
+    QTextCursor caret(editor.document());
+    caret.setPosition(first.position() + 3);
+    editor.setTextCursor(caret);
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_End);
+    QTest::qWait(10);
+    checkEqual(QString::number(first.position() + sep), QString::number(editor.textCursor().position()),
+               "End — конец первой строки, а не заметки");
+    caret.setPosition(first.position() + sep + 4);
+    editor.setTextCursor(caret);
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_Home);
+    QTest::qWait(10);
+    checkEqual(QString::number(first.position() + sep + 1),
+               QString::number(editor.textCursor().position()),
+               "Home — начало второй строки, а не заметки");
+    QTest::keyClick(&editor, Qt::Key_End, Qt::ShiftModifier);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("вторая строка"), editor.textCursor().selectedText(),
+               "Shift+End выделяет до конца строки");
+}
+
 // Слова и строки: когда они верны, когда честно неизвестны и когда снова верны.
 //
 // Проверяется именно ПОВЕДЕНИЕ, а не арифметика (её проверяет text_stats_test):
@@ -3201,6 +3241,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkSeparatorGeometry();
     checkSpaceAtEndOfInnerLine();
     checkSpaceAtEndOfFormulaSourceLine();
+    checkHomeEndMoveWithinLine();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::freshFailures();
