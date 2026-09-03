@@ -145,6 +145,18 @@ Put the needed info/programs onto the mac:
 - [ ] fresh versions of opencv
 ```
 
+Whitespace in the body is ordinary: indentation and column alignment are
+written as plain spaces and read back as they were typed (since 2026-09-03;
+earlier versions kept them as U+00A0). The program never writes a no-break
+space except where CommonMark would otherwise eat the spaces: the first line of
+a list item, a paragraph indented right after a list, a heading, and an empty
+line inside a quote. Any U+00A0 found in a file is turned into a plain space
+when the note is opened or imported. Trailing spaces are dropped. Next to a
+verbatim list (one the program keeps byte for byte, e.g. because it holds
+HTML), the program may write its own list items with another marker character
+(`*` instead of `-`, `1)` instead of `1.`) so that the two lists do not merge
+when read back.
+
 The header is an **ordinary HTML comment**, so any markdown viewer will
 simply not show it. The first line of the comment is the word `zametti`, then
 lines of the form `key: value`.
