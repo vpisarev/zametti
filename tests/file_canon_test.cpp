@@ -379,3 +379,50 @@ TEST(FileCanon, TypedLineSeparatorIsWrittenAsNewline) {
     EXPECT_FALSE(hasLineSeparators(bytes));
     EXPECT_EQ("абзац\nхвост\n\n# Заголовок хвост\n", bytes.toStdString());
 }
+
+// ПУСТОЙ ПУНКТ — ОДНО ПОНЯТИЕ НА ВСЕХ (фаззер, случай 4, 03.09.2026). Задача
+// без текста «- [ ]» для md4c НЕ пуста: содержимое — сам чекбокс, и абзац с
+// отступом через пустую строку после неё читается ВНУТРИ пункта (замерено на
+// md4c). Проход отцепления считал её пустой и выносил абзац наружу (уровень
+// −1), а файл читался с абзацем внутри — и не устаивался.
+TEST(FileCanon, IndentedParagraphAfterEmptyTaskStaysInside) {
+    std::vector<Piece> forFile;
+    const std::string src = "- [ ]\n\n    ~~ки~~\n";
+    const QByteArray bytes = bodyOf(src).fileBytes(NoteHeader{}, &forFile);
+    ASSERT_EQ(3u, forFile.size()) << bytes.toStdString();
+    EXPECT_EQ(0, forFile.back().level) << bytes.toStdString();
+    checkStable(src, "абзац с отступом после пустой задачи");
+}
+
+// ТИЛЬДЫ — ПО ПРАВИЛУ md4c, А НЕ ПО ФЛАНКИРОВАНИЮ ЭМФАЗЫ (фаззер, случай 1;
+// класс 1 из known_bugs 31.08). md4c спаривает одиночные тильды через пробелы
+// и переносы строк: «a ~ b ~ c» читается зачёркиванием « b », «~\n~» —
+// зачёркиванием перевода строки. Писатель считал такую тильду не открывающей
+// (эмфаза требует не-пробела рядом) и не экранировал.
+TEST(FileCanon, LoneTildesThatPairAreEscaped) {
+    // Из живого документа: абзац с таким ТЕКСТОМ (без разметки) обязан уйти в
+    // файл так, чтобы прочитаться тем же абзацем.
+    for (const char* text : {"~\n~", "a ~ b ~ c", "[продал]~\n~\n~"}) {
+        Piece p;
+        p.kind = Kind::Paragraph;
+        p.text = QString::fromUtf8(text);
+        std::vector<Piece> forFile = documentForFile({p});
+        const QString bytes = writePieces(forFile);
+        std::vector<Piece> back;
+        NoteHeader header;
+        parsePieces(bytes, back, header);
+        EXPECT_EQ(dumpPieces(forFile), dumpPieces(back)) << bytes.toStdString();
+    }
+    checkStable("~\n~\n", "две тильды на своих строках");
+    checkStable("a ~ b ~ c\n", "одиночные тильды через пробелы");
+}
+
+// И ЧИТАТЕЛЬ: спан из одних пробелов и переносов — не разметка, а буквы.
+// Иначе withTrimmedSpans снимал бы пустое зачёркивание, а тильды из файла
+// пропадали при следующей записи.
+TEST(FileCanon, WhitespaceOnlySpanKeepsItsTildes) {
+    const std::string src = "x\n~\n~\ny\n";
+    const QByteArray bytes = bodyOf(src).fileBytes(NoteHeader{});
+    EXPECT_NE(std::string::npos, bytes.toStdString().find("~")) << bytes.toStdString();
+    checkStable(src, "тильды на своих строках между абзацами");
+}
