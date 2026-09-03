@@ -1414,8 +1414,8 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     QString message;
     if (!rescuePath.isEmpty())
         message = QStringLiteral("self-check failed: what parses back differs from the "
-                                 "document. Note written, buffer copy is in ") +
-                  rescuePath;
+                                 "document (%1). Note written, buffer copy is in %2")
+                      .arg(skeletonDifference(ir, reread), rescuePath);
     const bool differs = !sameContent(reread, ir);
     return {SaveResult::Written, message, rescuePath, std::move(reread), differs, digest, text};
 }
@@ -1431,6 +1431,34 @@ SaveOutcome ZDocument::saveTo(const QString& path, const QString& timestamp,
                               const QByteArray* prebuiltText) {
     return saveDocument(d_->text, path, timestamp, std::move(reader), meta, known,
                         prebuiltBlocks, prebuiltText);
+}
+
+QString skeletonDifference(const std::vector<Piece>& x, const std::vector<Piece>& y) {
+    if (x.size() != y.size())
+        return QStringLiteral("blocks: %1 vs %2").arg(x.size()).arg(y.size());
+    for (size_t i = 0; i < x.size(); ++i) {
+        const Piece& a = x[i];
+        const Piece& b = y[i];
+        const QString at = QStringLiteral("block %1: ").arg(i);
+        if (a.raw != b.raw) return at + QStringLiteral("raw %1 vs %2").arg(a.raw).arg(b.raw);
+        if (a.text != b.text) {
+            qsizetype k = 0;
+            while (k < a.text.size() && k < b.text.size() && a.text.at(k) == b.text.at(k)) ++k;
+            return at + QStringLiteral("text differs at %1: U+%2 vs U+%3")
+                            .arg(k)
+                            .arg(k < a.text.size() ? a.text.at(k).unicode() : 0, 4, 16, QLatin1Char('0'))
+                            .arg(k < b.text.size() ? b.text.at(k).unicode() : 0, 4, 16, QLatin1Char('0'));
+        }
+        if (a.raw) continue;
+        if (a.kind != b.kind) return at + QStringLiteral("kind %1 vs %2").arg(int(a.kind)).arg(int(b.kind));
+        if (a.level != b.level) return at + QStringLiteral("level %1 vs %2").arg(a.level).arg(b.level);
+        if (a.marker != b.marker) return at + QStringLiteral("marker %1 vs %2").arg(int(a.marker)).arg(int(b.marker));
+        if (a.checked != b.checked) return at + QStringLiteral("checked %1 vs %2").arg(a.checked).arg(b.checked);
+        if (a.headingLevel != b.headingLevel)
+            return at + QStringLiteral("heading %1 vs %2").arg(a.headingLevel).arg(b.headingLevel);
+        if (a.info != b.info) return at + QStringLiteral("info [%1] vs [%2]").arg(a.info, b.info);
+    }
+    return {};
 }
 
 NoteEssence essenceOf(std::string_view fileBytes) {

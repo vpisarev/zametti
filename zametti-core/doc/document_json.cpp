@@ -49,7 +49,24 @@ const char* markerName(Marker m) {
 
 void appendJsonString(std::string& out, std::string_view s) {
     out.push_back('"');
-    for (unsigned char c : s) {
+    // НЕВИДИМЫЕ ЗНАКИ — ВИДИМЫМИ. Дамп читают глазами, и два дампа, разные
+    // одним неразрывным пробелом или U+2028, выглядели одинаково — фаззер
+    // показывал «расхождение», которого не видно (случай 3, 03.09.2026).
+    // U+00A0, U+200B, U+2028, U+2029, U+FEFF — как \uXXXX; прочий UTF-8 как есть.
+    for (size_t i = 0; i < s.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        const auto invisible = [&](const char* seq, size_t n, unsigned code) {
+            if (s.size() - i < n || s.compare(i, n, seq) != 0) return false;
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "\\u%04x", code);
+            out += buf;
+            i += n - 1;
+            return true;
+        };
+        if (invisible("\xC2\xA0", 2, 0x00A0) || invisible("\xE2\x80\x8B", 3, 0x200B) ||
+            invisible("\xE2\x80\xA8", 3, 0x2028) || invisible("\xE2\x80\xA9", 3, 0x2029) ||
+            invisible("\xEF\xBB\xBF", 3, 0xFEFF))
+            continue;
         switch (c) {
             case '"':  out += "\\\""; break;
             case '\\': out += "\\\\"; break;

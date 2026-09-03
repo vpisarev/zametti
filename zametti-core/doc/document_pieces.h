@@ -187,6 +187,11 @@ struct NoteEssence {
     }
 };
 NoteEssence essenceOf(std::string_view fileBytes);
+
+// Чем разошлись два строения (то, что сверяет sameSkeleton): номер блока и
+// поле. Пусто — не разошлись. Для отчёта самопроверки записи: дампы блоков
+// показывают не все поля, и расхождение бывало невидимым (фаззер, случай 3).
+QString skeletonDifference(const std::vector<Piece>& x, const std::vector<Piece>& y);
 // Та же заметка? Сперва дёшево — байты (без штампов), потом по сути.
 bool sameNoteEssence(const QByteArray& a, const QByteArray& b);
 
