@@ -93,6 +93,7 @@ add_executable(zametti-tests
     zstorage_test.cpp
     table_view_test.cpp
     save_test.cpp
+    file_canon_test.cpp
     text_stats_test.cpp
     spaces_test.cpp
     export_test.cpp
