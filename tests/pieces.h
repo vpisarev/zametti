@@ -17,6 +17,7 @@
 #pragma once
 
 #include "document.h"
+#include "serializer.h"
 #include "znote.h"
 #include "document_pieces.h"
 
@@ -37,6 +38,17 @@ inline std::vector<zametti::Piece> pieces(std::string_view markdown) {
     std::vector<zametti::Piece> out;
     zametti::NoteHeader header;
     zametti::parsePieces(textOf(markdown), out, header);
+    return out;
+}
+
+// ТОЙ ЖЕ ДВЕРЬЮ, ЧТО ФАЙЛ: normaliseSpaces (неразрывные пробелы, разделители
+// строк юникода) и разбор. Наборам, которые говорят о ЧТЕНИИ ФАЙЛА, а не о
+// голом разборе: сырой U+2028 в тексте файла — перевод строки (канон
+// 04.09.2026), и IR «из разбора» получается только через эту дверь.
+inline std::vector<zametti::Piece> piecesOfFile(std::string_view markdown) {
+    std::vector<zametti::Piece> out;
+    zametti::NoteHeader header;
+    zametti::parsePieces(zametti::normaliseSpaces(textOf(markdown)), out, header);
     return out;
 }
 

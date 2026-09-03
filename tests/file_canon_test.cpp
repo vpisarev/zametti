@@ -240,7 +240,10 @@ TEST(FileCanon, EmphasisEdgesAreFlankable) {
     Piece heading;
     heading.kind = Kind::Heading;
     heading.headingLevel = 2;
-    heading.text = QStringLiteral("* #а`");
+    // Случай фаззера был с U+2028 между звёздочкой и решёткой; с канона
+    // 04.09.2026 разделитель в заголовке — пробел, суть случая (края курсива)
+    // от этого не меняется.
+    heading.text = QStringLiteral("* #а`");
     zametti::Run first;
     first.start = 0;
     first.end = 3;

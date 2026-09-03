@@ -41,9 +41,11 @@ fs::path g_saveDir;   // куда складывать падающие вход
 void checkInvariants(const std::string& what, const std::string& src) {
     ++g_total;
     int before = zt::g_failures;
-    std::vector<Piece> d1 = pieces(src);
+    // Читаем той же дверью, что файл (normaliseSpaces + разбор): устойчивость
+    // спрашивается у того IR, который получает программа, а не у голого разбора.
+    std::vector<Piece> d1 = piecesOfFile(src);
     std::string once = markdownOf(d1);
-    std::vector<Piece> d2 = pieces(once);
+    std::vector<Piece> d2 = piecesOfFile(once);
     std::string twice = markdownOf(d2);
 
     ZT_EQ("устойчивость IR: " + what, dumpOf(d1), dumpOf(d2));

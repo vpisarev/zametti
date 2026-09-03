@@ -45,7 +45,9 @@ std::vector<std::filesystem::path> markdownFiles(const std::filesystem::path& ro
 // Один прогон: markdown → IR → документ → IR. Сравниваются два IR, исходный
 // текст в проверке не участвует.
 bool roundtrip(const std::string& source, const std::string& label) {
-    const std::vector<zametti::Piece> ir = pieces(source);
+    // Через дверь файла: сырые U+2028/U+2029 файла — переводы строки (канон
+    // 04.09.2026), IR с ними «из разбора» больше не бывает.
+    const std::vector<zametti::Piece> ir = piecesOfFile(source);
 
     QTextDocument doc;
     zametti::buildDocument(ir, doc);
@@ -97,8 +99,9 @@ const char* const kCases[] = {
     "\n\n",
 
     // Знаки, на которых Qt рвёт блок в insertText. В заметках из Apple Notes
-    // U+2028 и U+2029 встречаются россыпью, и путать их с мягким переносом
-    // нельзя: чужой U+2028 обязан вернуться собой.
+    // U+2028 и U+2029 встречаются россыпью; с 04.09.2026 (решение владельца)
+    // в файле они — переводы строки и читаются мягким переносом, а '\r'
+    // по-прежнему возвращается собой (пометка BreakCarriageReturn).
     "строка\u2028вторая строка\n",
     "строка\u2029вторая строка\n",
     "строка\rвторая строка\n",
