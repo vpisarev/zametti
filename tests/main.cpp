@@ -12,6 +12,7 @@
 
 #include "test_util.h"
 
+#include "font_dpi.h"
 #include "heif_handler.h"
 #include "settings.h"
 
@@ -57,6 +58,13 @@ int main(int argc, char** argv) {
     // (settings.h), и он одинаков на всех системах.
     static QTemporaryDir configHome;
     qputenv(zametti::kConfigDirVar, configHome.path().toLocal8Bit());
+
+    // DPI ШРИФТОВ — ТОЙ ЖЕ ДВЕРЬЮ, ЧТО У ПРОГРАММЫ. Политику округления
+    // масштаба Qt читает при создании приложения, поэтому набор FontDpi
+    // запускает этот же бинарник дочерним процессом с переменной — и здесь,
+    // до QApplication, зовёт ровно ту функцию, что зовёт main.cpp на маке.
+    if (const int fontDpi = qEnvironmentVariableIntValue("ZAMETTI_TEST_FONT_DPI"); fontDpi > 0)
+        zametti::prepareFontDpi(fontDpi);
 
     // QApplication, а не QGuiApplication и не QCoreApplication: он и тот, и
     // другой сразу. Наборов, которым нужны виджеты, больше половины, а платить

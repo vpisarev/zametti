@@ -175,6 +175,7 @@ add_executable(zametti-tests
     live_title_test.cpp
     caret_scale_test.cpp
     caret_paint_test.cpp
+    font_dpi_test.cpp
     zoom_test.cpp
     scroll_test.cpp
 )
