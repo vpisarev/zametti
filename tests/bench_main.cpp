@@ -22,6 +22,7 @@
 //   zametti-bench open          открытие заметки
 //   zametti-bench switch        переключение заметок в настоящем хранилище, по фазам
 //   zametti-bench write-probe   цена одной пробы разметки: шрифт, документ, md4c
+//   zametti-bench setdoc-probe  что стоит QTextEdit::setDocument на свёрстанном документе
 //   zametti-bench zoom          ВОРОТА к ZDocument: что делает Ctrl+= с документом
 //   zametti-bench md-spaces     обычные ведущие пробелы против md4c (NOINDENTEDCODEBLOCKS)
 //   zametti-bench ui-metrics    из чего выводить размер иконки и строки
@@ -57,6 +58,7 @@ int ztPasteBench(int argc, char** argv);
 int ztBigBench(int argc, char** argv);
 int ztSwitchBench(int argc, char** argv);
 int ztWriteProbe(int argc, char** argv);
+int ztSetDocProbe(int argc, char** argv);
 int ztInlineFormulaProbe(int argc, char** argv);
 int ztSourceBench(int argc, char** argv);
 int ztArgon2Probe(int argc, char** argv);
@@ -91,6 +93,7 @@ const Bench kBenches[] = {
     {"big", ztBigBench},
     {"switch", ztSwitchBench},
     {"write-probe", ztWriteProbe},
+    {"setdoc-probe", ztSetDocProbe},
     {"inline", ztInlineFormulaProbe},
     {"argon2", ztArgon2Probe},
     {"keyring", ztKeyringProbe},

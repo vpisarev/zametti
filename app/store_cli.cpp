@@ -81,6 +81,7 @@ int StoreCli::usage() const {
                  "  zametti store verify --root <dir>\n"
                  "  zametti store thin --root <dir> [--dry-run]\n"
                  "  zametti store history compress <id | path to .md> [--root <dir>]\n"
+                 "  zametti store history compress --all --root <dir>\n"
                  "  zametti store history audit --root <dir>\n"
                  "  zametti store recompress --root <dir> --id <id|all>\n"
                  "  zametti store resurrect --root <dir> --id <id>\n"
@@ -174,6 +175,7 @@ bool StoreCli::parse() {
         else if (a == QStringLiteral("--max-size")) maxSize_ = next();
         else if (a == QStringLiteral("--quality")) quality_ = next();
         else if (a == QStringLiteral("--dry-run")) dryRun_ = true;
+        else if (a == QStringLiteral("--all")) all_ = true;
         else if (a == QStringLiteral("--restore")) restore_ = true;
         else if (a == QStringLiteral("--url")) url_ = next();
         else if (a == QStringLiteral("--user")) user_ = next();
@@ -847,8 +849,50 @@ int StoreCli::cmdHistoryAudit() {
     return 0;
 }
 
+// ЧИСТКА ВСЕХ ЖУРНАЛОВ ХРАНИЛИЩА нынешним правилом отбора (после того как
+// «та же заметка» стала считаться по сути — 03.09.2026). Пересборка, а не
+// гашение: погашенное не получает адресов и в облако не уезжает, так что для
+// журналов, уже побывавших в облаке, это годится только когда историю всё
+// равно решили не беречь (решение владельца о своём хранилище). Печатает, на
+// сколько записей и байт усохло.
+int StoreCli::cmdHistoryCompressAll() {
+    if (root_.isEmpty()) return usage();
+    ZStorage storage(root_);
+    if (!takeLock(storage)) return 1;
+    const QDir history(QDir(root_).filePath(QStringLiteral("history")));
+    qint64 journals = 0, recordsBefore = 0, recordsAfter = 0, bytesBefore = 0, bytesAfter = 0;
+    qint64 duplicates = 0, merged = 0, rewritten = 0;
+    for (const QString& name : history.entryList({QStringLiteral("*.zm")}, QDir::Files, QDir::Name)) {
+        const QString id = name.left(name.size() - 3);
+        const qint64 before = QFileInfo(storage.journalPath(id)).size();
+        ZStorage::CompressReport report;
+        QString error;
+        if (!storage.compressJournal(id, {}, true, &report, &error)) {
+            std::fprintf(stderr, "%s: %s\n", name.toUtf8().constData(), error.toUtf8().constData());
+            continue;
+        }
+        ++journals;
+        recordsBefore += report.recordsBefore;
+        recordsAfter += report.recordsAfter;
+        duplicates += report.duplicates;
+        merged += report.merged;
+        if (report.rewritten) ++rewritten;
+        bytesBefore += before;
+        bytesAfter += QFileInfo(storage.journalPath(id)).size();
+        if (report.recordsBefore != report.recordsAfter)
+            std::printf("  %s  %d -> %d records  %s\n", id.toUtf8().constData(), report.recordsBefore,
+                        report.recordsAfter, storage.titleOf(id).toUtf8().constData());
+    }
+    std::printf("journals %lld, rewritten %lld\n", (long long)journals, (long long)rewritten);
+    std::printf("records %lld -> %lld (duplicates %lld, merged %lld)\n", (long long)recordsBefore,
+                (long long)recordsAfter, (long long)duplicates, (long long)merged);
+    std::printf("bytes %.2f MB -> %.2f MB\n", double(bytesBefore) / 1048576.0, double(bytesAfter) / 1048576.0);
+    return 0;
+}
+
 int StoreCli::cmdHistory() {
     if (positional_ == QStringLiteral("audit")) return cmdHistoryAudit();
+    if (positional_ == QStringLiteral("compress") && all_) return cmdHistoryCompressAll();
     if (positional_ != QStringLiteral("compress") || positional2_.isEmpty()) return usage();
     // Цель — id или путь к файлу заметки; разбирает хранилище (ZStorage::locate).
     const ZStorage::Target target = ZStorage::locate(positional2_, root_);

@@ -61,6 +61,7 @@ protected:
     int cmdThin();
     int cmdHistory();
     int cmdHistoryAudit();
+    int cmdHistoryCompressAll();
     int cmdRecompress();
     int cmdVerify();
 
@@ -84,6 +85,7 @@ protected:
     bool allowMassDelete_ = false;
     bool keepAll_ = false;
     bool dryRun_ = false;
+    bool all_ = false;
     bool restore_ = false;
 };
 

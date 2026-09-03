@@ -1274,7 +1274,10 @@ void NoteView::setDocument(QTextDocument* doc) {
     // ленивая, докладывает кусками), и часть формул так и оставалась в нулевых
     // полосах — вёрстка ложилась на текст под ними. Регистрируем у вёрстки
     // раньше, чем она впервые спросит.
+    QElapsedTimer probe;
+    probe.start();
     attachObjectHandlers(doc);
+    const qint64 t1 = probe.nsecsElapsed() / 1000;
     // УСЛОВИЯ ВЁРСТКИ ФОРМУЛ — ТОЖЕ ДО ПОДМЕНЫ: первый проход вёрстки идёт ещё
     // внутри setDocument, и без цвета с плотностью кэш не отдал бы ни одной
     // вёрстки — строчные формулы легли бы рамками до первой сверки.
@@ -1283,8 +1286,14 @@ void NoteView::setDocument(QTextDocument* doc) {
             cache->syncConditions(QFontInfo(doc->defaultFont()).pixelSize(),
                                   palette().color(QPalette::Text), devicePixelRatioF());
     }
+    const qint64 t2 = probe.nsecsElapsed() / 1000;
     QTextBrowser::setDocument(doc);
+    const qint64 t3 = probe.nsecsElapsed() / 1000;
     attachObjectHandlers(doc);
+    if (qEnvironmentVariableIsSet("ZAMETTI_TRACE_OPEN"))
+        std::fprintf(stderr, "  setDocument: handlers %lld, formulas %lld, Qt %lld, handlers2 %lld us\n",
+                     (long long)t1, (long long)(t2 - t1), (long long)(t3 - t2),
+                     (long long)(probe.nsecsElapsed() / 1000 - t3));
 }
 
 void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {

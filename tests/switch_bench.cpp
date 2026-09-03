@@ -49,12 +49,15 @@ qint64 frameAfterOpen(zametti::NoteEditor& editor) {
 }
 
 void printRow(const char* label, const Row& r, const zametti::NoteEditor::OpenTrace& t, qint64 frame) {
-    std::printf("%-5s %-15s %8lld | %7lld %7lld %6lld %7lld %7lld %7lld %7lld %6lld %7lld | %7lld %7lld %s\n",
+    std::printf("%-5s %-15s %8lld | %7lld %7lld %6lld %7lld %7lld %7lld %7lld %6lld %7lld | %7lld %7lld %s\n"
+                "      подфазы: setDoc %lld, connect %lld, scale %lld, width %lld, caret %lld | stats %lld, reveal %lld\n",
                 label, r.id.toUtf8().constData(), (long long)r.bytes, (long long)t.save,
                 (long long)t.stash, (long long)t.read, (long long)t.canon, (long long)t.journal,
                 (long long)t.load, (long long)t.install, (long long)t.land, (long long)t.activate,
                 (long long)t.total, (long long)frame,
-                t.saveOutcome == 3 ? "WROTE" : t.saveOutcome == 2 ? "unchanged" : t.saveOutcome == 4 ? "FAILED" : "");
+                t.saveOutcome == 3 ? "WROTE" : t.saveOutcome == 2 ? "unchanged" : t.saveOutcome == 4 ? "FAILED" : "",
+                (long long)t.setDoc, (long long)t.connect, (long long)t.scale, (long long)t.width, (long long)t.caret,
+                (long long)t.stats, (long long)t.reveal);
 }
 
 }  // namespace

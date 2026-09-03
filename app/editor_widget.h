@@ -122,6 +122,15 @@ public:
         qint64 land = 0;       // landAfterBuild
         qint64 activate = 0;   // activateNote: статистика, каретка, показ
         qint64 total = 0;
+        // Подфазы installNote и activateNote — где именно уходит время у
+        // заметки, которая в кэше уже готова целиком.
+        qint64 setDoc = 0;     // QTextEdit::setDocument
+        qint64 connect = 0;    // connectDocument + retireNote
+        qint64 scale = 0;      // restoreScale
+        qint64 width = 0;      // applyContentWidth (+ syncImageSpace)
+        qint64 caret = 0;      // каретка и прокрутка после подмены
+        qint64 stats = 0;      // documentStats в activateNote
+        qint64 reveal = 0;     // каретка, revealInGolden, фокус
         bool fromCache = false;
         // Чем кончилось save(force) уходящей заметки: 0 — нечего (нет пути),
         // 1 — байты те же, что в файле (не считая штампов), сериализация была,
@@ -688,6 +697,7 @@ private:
     // вне хранилища, и журналу взяться неоткуда.
     std::shared_ptr<ZStorage> storage_;
     OpenTrace openTrace_;
+    OpenTrace subTrace_;   // подфазы, которые пишут installNote и activateNote
     int lastSaveOutcome_ = 0;   // см. OpenTrace::saveOutcome; ставит save()
     // ДОКУМЕНТ ТРОГАЛИ с открытия или прошлой записи. Поднимает всякий
     // contentsChanged, кроме смены облика (LayoutChange); гасят подмена

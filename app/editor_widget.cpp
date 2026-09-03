@@ -474,7 +474,16 @@ void NoteEditor::installNote(std::shared_ptr<ZNote> note) {
     // поле было делом времени: признак «мы в режиме истории» однажды пережил
     // переход к другой заметке, и редактор показывал слепок ПРЕЖНЕЙ.
     current_ = CurrentNoteState{};
+    QElapsedTimer clock;
+    clock.start();
+    qint64 mark = 0;
+    const auto phase = [&](qint64& into) {
+        const qint64 now = clock.nsecsElapsed() / 1000;
+        into = now - mark;
+        mark = now;
+    };
     setDocument(note_->doc().getDocument());
+    phase(subTrace_.setDoc);
     connectDocument();
     // Только что подставленный документ равен тому, из чего собран (файлу или
     // кэшу, в котором лежит только записанное); что дальше — скажет
@@ -482,8 +491,11 @@ void NoteEditor::installNote(std::shared_ptr<ZNote> note) {
     // облик, не содержимое, и идут под LayoutChange.
     contentTouched_ = false;
     retireNote(std::move(previousNote));
+    phase(subTrace_.connect);
     restoreScale();   // документ подменён — масштаб приехал не с ним
+    phase(subTrace_.scale);
     applyContentWidth();
+    phase(subTrace_.width);
 
     // Каретка и ВЫДЕЛЕНИЕ: сперва свободный конец, потом каретка с
     // удержанием — так восстанавливается и то, и другое разом. Без выделения
@@ -496,6 +508,7 @@ void NoteEditor::installNote(std::shared_ptr<ZNote> note) {
     setTextCursor(place);
     verticalScrollBar()->setValue(spot.scroll);
     document()->setModified(note_->wasModified());
+    phase(subTrace_.caret);
     // Курсоры, державшиеся за прежний документ, теперь ни на что не указывают.
     current_.lastLine = QTextCursor();
     current_.dirty = QTextCursor();
@@ -698,7 +711,14 @@ void NoteEditor::activateNote(bool takeFocus) {
     // пути). Обход стоит 3.2 мс на заметке в 239 КБ и приходится на смену
     // заметки — не на нажатие клавиши.
     //
-    refreshStats(documentStats(*document()));
+    QElapsedTimer clock;
+    clock.start();
+    // Счёт ЕСТЬ и не протух (кэш идёт мимо правок, а всякий contentsChanged
+    // его гасит) — обход не нужен, полосе достаточно сигнала: на «Карамазовых»
+    // это 12 мс на каждый возврат к заметке (стенд switch, 03.09.2026).
+    if (note_->statsCounted()) emit statsChanged();
+    else refreshStats(documentStats(*document()));
+    subTrace_.stats = clock.nsecsElapsed() / 1000;
 
     // Каретка и выделение — из объекта заметки, где бы он ни взялся: приехал
     // из кэша или собран только что. Оба пути сходятся здесь, поэтому забыть
@@ -731,6 +751,7 @@ void NoteEditor::activateNote(bool takeFocus) {
     // строки человек видел открытую заметку без каретки: место восстановлено,
     // а печатать некуда — пока не ткнёшь в текст мышью.
     if (takeFocus) setFocus(Qt::OtherFocusReason);
+    subTrace_.reveal = clock.nsecsElapsed() / 1000 - subTrace_.stats;
 }
 
 bool NoteEditor::openFile(const QString& path, bool takeFocus) {
@@ -744,8 +765,16 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
         mark = now;
     };
     OpenTrace trace;
+    subTrace_ = OpenTrace{};
     const auto finish = [&](bool ok) {
         trace.total = clock.nsecsElapsed() / 1000;
+        trace.setDoc = subTrace_.setDoc;
+        trace.connect = subTrace_.connect;
+        trace.scale = subTrace_.scale;
+        trace.width = subTrace_.width;
+        trace.caret = subTrace_.caret;
+        trace.stats = subTrace_.stats;
+        trace.reveal = subTrace_.reveal;
         openTrace_ = trace;
         if (qEnvironmentVariableIsSet("ZAMETTI_TRACE_OPEN"))
             std::fprintf(stderr,

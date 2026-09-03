@@ -231,6 +231,7 @@ add_executable(zametti-bench
     big_bench.cpp
     switch_bench.cpp
     write_probe.cpp
+    setdoc_probe.cpp
     source_bench.cpp
     inline_formula_probe.cpp
     argon2_probe.cpp
