@@ -1118,6 +1118,11 @@ void appendSplitOnBlankLines(std::vector<Piece>& out, Piece block) {
 void settleLeadingSpaces(std::vector<Piece>& blocks) {
     const auto isLead = [](QChar c) { return c == QLatin1Char(' ') || c == kNbsp; };
     bool afterList = false;
+    // ПУНКТ БЕЗ ТЕКСТА («- [ ]», «-»): читатель выводит колонку содержимого
+    // пункта из строки его первого текста, а здесь её нет — и отступ автора у
+    // абзаца внутри такого пункта чтение вернуть не умеет (keepDecorativeIndent
+    // отступает). Значит держится неразрывными (фаззер, случай 4).
+    bool itemTextless = false;
     for (Piece& block : blocks) {
         if (block.kind == Kind::VSpace) continue;   // пустая строка список не закрывает
         if (block.raw || block.kind == Kind::Code || block.kind == Kind::Math ||
@@ -1127,6 +1132,9 @@ void settleLeadingSpaces(std::vector<Piece>& blocks) {
             afterList = block.level >= 0;
             continue;
         }
+        if (isList(block.kind)) itemTextless = block.text.trimmed().isEmpty();
+        const bool insideTextlessItem =
+            !isList(block.kind) && block.level >= 0 && itemTextless;
         QString& text = block.text;
         const qsizetype size = text.size();
         qsizetype line = 0;
@@ -1150,7 +1158,8 @@ void settleLeadingSpaces(std::vector<Piece>& blocks) {
                 // неразрывными, как в старом каноне.
                 const bool plainable = block.kind == Kind::Paragraph ||
                                        block.kind == Kind::Quote || isList(block.kind);
-                const QChar want = markerLine || wouldContinueList || !plainable
+                const QChar want = markerLine || wouldContinueList || !plainable ||
+                                           insideTextlessItem
                                        ? kNbsp
                                        : QChar(QLatin1Char(' '));
                 for (qsizetype k = line; k < lead; ++k) text[k] = want;
