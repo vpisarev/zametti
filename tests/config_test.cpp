@@ -177,12 +177,16 @@ void checkLoadUnderstandsComments() {
 
     // Опечатка названа поимённо, а верный ключ рядом — нет. Здесь же ловится
     // и целая секция, которой у программы нет.
+    // Секция store снята из конфига (решение владельца 04.09.2026): старый
+    // store.root в конфиге называется вслух, а не читается по старой памяти.
     const QJsonObject probe =
         QJsonDocument::fromJson("{\"editor\": {\"tabWidth\": 2, \"tabWdth\": 3},"
-                                " \"colours\": {\"caret\": \"#fff\"}}").object();
+                                " \"colours\": {\"caret\": \"#fff\"},"
+                                " \"store\": {\"root\": \"notes\"}}").object();
     const QStringList unknown = zametti::unknownConfigKeys(probe);
-    ZT_EQ("опечатка и чужая секция названы, верный ключ — нет",
-          std::string("colours, editor.tabWdth"), s(unknown.join(QStringLiteral(", "))));
+    ZT_EQ("опечатка, чужая секция и снятая секция store названы, верный ключ — нет",
+          std::string("colours, editor.tabWdth, store"),
+          s(unknown.join(QStringLiteral(", "))));
 }
 
 // Раздел таблиц: умолчания ровно те, о которых договорились с владельцем, и
