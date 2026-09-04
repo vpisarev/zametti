@@ -23,6 +23,7 @@
 #include "history_panel.h"
 #include "history_view.h"
 #include "journal.h"
+#include "key_binding.h"
 #include "settings.h"
 
 #include "test_util.h"
@@ -394,17 +395,24 @@ void checkKeysAreWired() {
     // F4 — из конфига, поэтому нажимаем не «F4», а то, что там записано. И с
     // фокусом У СОСЕДА: владелец — «встаёшь на слепок в списке справа — F4 не
     // работает».
-    const QKeySequence next(settings().editor().diffNextKey());
-    ZT_TRUE("сочетание для ходьбы по изменениям задано", next.count() > 0);
-    QTextCursor top(rig.text().document());
-    top.setPosition(0);
-    rig.text().setTextCursor(top);
-    rig.neighbour->setFocus();
-    ZT_TRUE("фокус у соседа", rig.window.focusWidget() == rig.neighbour);
-    QTest::keyClick(&rig.window, Qt::Key(next[0].key()), next[0].keyboardModifiers());
-    const int at = rig.text().textCursor().blockNumber();
-    ZT_TRUE("шаг по изменениям сработал клавишей и без фокуса в тексте",
-            rig.tl()->markOfBlock(at) != diff::Mark::Same);
+    // Ключ — СПИСОК через точку с запятой (F4 и Ctrl+] — на маке F4 без fn не
+    // нажать), и работать обязано КАЖДОЕ сочетание из него, а не первое.
+    const QList<QKeySequence> nexts = keySequencesOf(settings().editor().diffNextKey());
+    ZT_TRUE("сочетаний для ходьбы по изменениям не меньше двух: " + num(nexts.size()),
+            nexts.size() >= 2);
+    for (const QKeySequence& next : nexts) {
+        ZT_TRUE("сочетание разобрано: " + next.toString().toStdString(), next.count() > 0);
+        QTextCursor top(rig.text().document());
+        top.setPosition(0);
+        rig.text().setTextCursor(top);
+        rig.neighbour->setFocus();
+        ZT_TRUE("фокус у соседа", rig.window.focusWidget() == rig.neighbour);
+        QTest::keyClick(&rig.window, Qt::Key(next[0].key()), next[0].keyboardModifiers());
+        const int at = rig.text().textCursor().blockNumber();
+        ZT_TRUE(next.toString().toStdString() +
+                    ": шаг по изменениям сработал клавишей и без фокуса в тексте",
+                rig.tl()->markOfBlock(at) != diff::Mark::Same);
+    }
 
     // Ctrl+Z / Ctrl+Shift+Z в тексте разности — шаги по слепкам; Esc — выход.
     rig.text().setFocus();
