@@ -53,8 +53,10 @@ QString aboutMarkdown() {
     // приходят, — узнать версию и условия; второе — приложить сводку сборки к
     // письму об ошибке. Поэтому и то и другое здесь, и копируется как есть.
     QString out;
+    // Версия — из build_facts.h (её объявляет CMake), а не литералом здесь.
+    out += QStringLiteral("# Zametti ") + QString::fromLatin1(kVersion);
     out += QStringLiteral(
-R"__about__(# Zametti 0.9.0
+R"__about__(
 
 Copyright © 2026 Vadim Pisarevsky.
 Vibe-coded with a help from Claude Code.

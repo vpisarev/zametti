@@ -38,6 +38,7 @@
 #include "settings.h"
 #include "sort_order.h"
 #include "about_window.h"
+#include "build_facts.h"
 #include "export_note.h"
 #include "export_pdf.h"
 #include "status_bar.h"
@@ -216,6 +217,7 @@ void printHelp() {
         "  --config-dir dir  keep config.json and state.json there, not in the\n"
         "                    usual place; the directory is created if missing\n"
         "  --help, -h        this help\n"
+        "  --version         print the version and exit\n"
         "\n"
         "Store from the command line:\n"
         "  zametti store <command> ...\n"
@@ -333,6 +335,7 @@ int main(int argc, char** argv) {
     // Имя приложения задаём до разбора ключей: от него зависят пути к конфигу и
     // состоянию, а их печатает --help, не создавая ни окна, ни QApplication.
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
+    QCoreApplication::setApplicationVersion(QString::fromLatin1(zametti::kVersion));
 
     QStringList args = commandLineArgs(argc, argv);
 
@@ -424,6 +427,10 @@ int main(int argc, char** argv) {
         const QString& arg = args.at(i);
         if (arg == QLatin1String("--help") || arg == QLatin1String("-h")) {
             printHelp();
+            return 0;
+        }
+        if (arg == QLatin1String("--version")) {
+            std::printf("zametti %s\n", zametti::kVersion);
             return 0;
         }
         if (arg == QLatin1String("--check")) check = true;

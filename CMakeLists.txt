@@ -4,7 +4,11 @@
 # голое `VERSION 4.0` потребовало бы четвёртую от всех, а в Ubuntu 24.04 LTS до
 # сих пор 3.28.
 cmake_minimum_required(VERSION 3.20...4.0)
-project(zametti LANGUAGES C CXX)
+# ВЕРСИЯ ОБЪЯВЛЯЕТСЯ ЗДЕСЬ И ТОЛЬКО ЗДЕСЬ (канон владельца, 04.09.2026).
+# Отсюда она расходится сама: в build_facts.h (окно «О программе», --version),
+# в Info.plist мака и ресурс версии Windows (configure_file), а скриптам
+# упаковки — файлом generated/version.txt. Второго числа версии в проекте нет.
+project(zametti VERSION 0.9.0 LANGUAGES C CXX)
 
 # Чужие деревья объявляют свои минимумы сами (в libtiff это 3.9), и CMake 4
 # ворчит на каждое. Наша сборка от этого не зависит, а вывод настройки тонет:
@@ -418,6 +422,7 @@ function(zametti_summary)
     message(NOTICE "")
     message(NOTICE "# Zametti configuration")
     message(NOTICE "")
+    zametti_row("version:  " "`${PROJECT_VERSION}`")
     zametti_row("platform: " "`${platform}`")
     zametti_row("config:    " "`${config}`")
     zametti_row("compiler:" "`${compiler}`")
@@ -484,3 +489,16 @@ endif()
 string(TIMESTAMP ZAMETTI_FACT_CONFIGURED "%Y-%m-%d %H:%M")
 configure_file(${CMAKE_SOURCE_DIR}/app/build_facts.h.in
                ${CMAKE_BINARY_DIR}/generated/build_facts.h @ONLY)
+
+# Версия — скриптам упаковки (им cmake-переменные недоступны) и в Info.plist
+# мака. Пол системы в plist — тот, с которым настроена сборка; без него (dev-
+# сборка) — пол переносимой (packaging/mac/zenv.sh, ZMACOS_MIN).
+file(WRITE ${CMAKE_BINARY_DIR}/generated/version.txt "${PROJECT_VERSION}\n")
+if(APPLE)
+    set(ZAMETTI_MACOS_MIN "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    if(NOT ZAMETTI_MACOS_MIN)
+        set(ZAMETTI_MACOS_MIN "13.0")
+    endif()
+    configure_file(${CMAKE_SOURCE_DIR}/packaging/mac/Info.plist.in
+                   ${CMAKE_BINARY_DIR}/generated/Info.plist @ONLY)
+endif()

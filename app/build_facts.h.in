@@ -14,6 +14,10 @@
 
 namespace zametti {
 
+// ВЕРСИЯ ПРОГРАММЫ — из project(... VERSION) корневого CMakeLists.txt, и
+// только оттуда: окно «О программе», --version и заголовки берут её здесь.
+constexpr const char* kVersion = "@PROJECT_VERSION@";
+
 struct BuildFact {
     const char* name;
     const char* value;
