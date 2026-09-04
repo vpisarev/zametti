@@ -58,14 +58,18 @@ Result compare(const QStringList& base, const QStringList& shown) {
             row.textAfter = added[i].textAfter;
             result.rows.append(row);
             ++result.changed;
+            ++result.added;
+            ++result.removed;
         }
         for (int i = pairs; i < removed.size(); ++i) {
             result.rows.append(removed[i]);
             ++result.changed;
+            ++result.removed;
         }
         for (int i = pairs; i < added.size(); ++i) {
             result.rows.append(added[i]);
             ++result.changed;
+            ++result.added;
         }
         removed.clear();
         added.clear();

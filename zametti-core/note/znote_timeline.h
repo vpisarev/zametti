@@ -95,6 +95,9 @@ public:
     // Сравнение база → слепок: зелёное — есть в слепке и нет в базе.
     const diff::Result& result();
     int changedLines();
+    // По сторонам, для баннера «+m/−n» (см. diff::Result::added/removed).
+    int addedLines();
+    int removedLines();
     // Документ разности — ZDocument; для той же пары отдаётся тот же документ.
     ZDocument& document();
     // Соответствие блок документа ↔ строка сравнения. У изменённой строки два

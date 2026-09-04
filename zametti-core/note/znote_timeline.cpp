@@ -133,6 +133,8 @@ void ZNoteTimeline::resetSlots() {
 const diff::Result& ZNoteTimeline::result() { return slot().result; }
 
 int ZNoteTimeline::changedLines() { return slot().result.changed; }
+int ZNoteTimeline::addedLines() { return slot().result.added; }
+int ZNoteTimeline::removedLines() { return slot().result.removed; }
 
 ZDocument& ZNoteTimeline::document() {
     Slot& s = slot();
