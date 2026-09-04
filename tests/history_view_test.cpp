@@ -202,6 +202,16 @@ void checkBasics() {
         for (QLabel* label : rig.view->findChildren<QLabel*>())
             if (label->toolTip().startsWith(QStringLiteral("Date: "))) dated = true;
         ZT_TRUE("строка слепка начинается с «Date: »", dated);
+        // Месяц — тремя буквами, и в строке, и в списке (одна функция на обоих).
+        // Время второй записи фикстуры (makeNoteWithHistory): ноябрь 2023 в
+        // любом часовом поясе.
+        const QString moment = historyMoment(1'700'000'060'000LL);
+        ZT_TRUE("месяц коротко: " + moment.toStdString(),
+                moment.contains(QStringLiteral("Nov")) && !moment.contains(QStringLiteral("November")));
+        bool listed = false;
+        for (int row = 0; row < rig.list->findChild<QListWidget*>()->count(); ++row)
+            if (rig.list->findChild<QListWidget*>()->item(row)->text().startsWith(moment)) listed = true;
+        ZT_TRUE("и в списке записей та же строка", listed);
     }
 
     // УБРАННЫЕ СТРОКИ ВИДНЫ СВОИМ ТЕКСТОМ. «Второй абзац.» исчез — он в
