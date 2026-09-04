@@ -205,13 +205,24 @@ void HistoryBanner::setSnapshot(qint64 time, ZJournal::Kind kind, int added, int
     if (added < 0 || removed < 0) {
         counts_->clear();
     } else {
+        // Тот же вид, что у строк на поле: цвет разности С ПРОЗРАЧНОСТЬЮ
+        // diffTint поверх фона (сырой diff.added — густо-зелёный, а строки
+        // залиты бледным). Rich text прозрачность не берёт — смешиваем с фоном
+        // баннера сами.
         const ZDocStyle& look = settings().style();
+        const QColor ground = palette().color(QPalette::Window);
+        const auto tinted = [&](QColor colour) {
+            const qreal a = qBound(0, look.diffTint(), 255) / 255.0;
+            return QColor(int(ground.red() * (1 - a) + colour.red() * a),
+                          int(ground.green() * (1 - a) + colour.green() * a),
+                          int(ground.blue() * (1 - a) + colour.blue() * a));
+        };
         counts_->setText(QStringLiteral("<span style=\"background-color:%1\">&nbsp;+%2&nbsp;</span>"
                                         "/"
                                         "<span style=\"background-color:%3\">&nbsp;−%4&nbsp;</span>")
-                             .arg(look.diffAdded().name())
+                             .arg(tinted(look.diffAdded()).name())
                              .arg(added)
-                             .arg(look.diffRemoved().name())
+                             .arg(tinted(look.diffRemoved()).name())
                              .arg(removed));
     }
     syncDots();
