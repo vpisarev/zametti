@@ -90,7 +90,11 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 # ОБЯЗАТЕЛЬНЫ, а не желательны: libstdc++ у gcc-15 требует GLIBCXX_3.4.32,
 # которого нет даже в той Ubuntu 20.04, откуда снят sysroot. Без этих ключей
 # собранное не запускается на целевой системе — замерено.
-set(CMAKE_EXE_LINKER_FLAGS_INIT "-static-libstdc++ -static-libgcc")
+# -s — стрип символов при компоновке (решение владельца, 04.09.2026):
+# переносимый бинарь — для пользователей, а не для отладчика, и таблица
+# символов статической сборки с Qt внутри весит мегабайты. Только у
+# исполняемых файлов: разделяемых у переносимой сборки нет.
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-static-libstdc++ -static-libgcc -s")
 set(CMAKE_SHARED_LINKER_FLAGS_INIT "-static-libstdc++ -static-libgcc")
 set(CMAKE_MODULE_LINKER_FLAGS_INIT "-static-libstdc++ -static-libgcc")
 

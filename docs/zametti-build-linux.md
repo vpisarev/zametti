@@ -38,6 +38,11 @@ cmake -S . -B build-portable -DCMAKE_BUILD_TYPE=Release \
 cmake --build build-portable -j8
 ```
 
+Символы стрипуются при компоновке (`-s` в toolchain, решение владельца
+04.09.2026): бинарь для пользователей, а не для отладчика; замер «до/после»
+на линуксе за владельцем (мак-ломоть терял ~7 МБ из 35, см.
+`docs/zametti-build-macos.md`, «Находки»).
+
 Ни `source`, ни переменных окружения: toolchain сам знает, где sysroot и
 собранные зависимости (`~/work/zsys` и `~/work/zdeps`), и запоминает это в кэше
 сборки — `make` зовёт cmake заново на всякой правке `CMakeLists.txt`, и
