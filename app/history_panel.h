@@ -35,6 +35,23 @@ QString historyStamp(qint64 msSinceEpoch);
 // Короткое имя вида записи для таймлайна.
 QString historyKindName(ZJournal::Kind kind);
 
+// Надпись, которая ужимается многоточием, НЕ РАСТЯГИВАЯСЬ: размер просит по
+// полному тексту, минимум — почти ноль, а режет при рисовании. Обычный QLabel
+// с подставленным обрезанным текстом просил бы размер по обрезку и назад уже не
+// вырастал бы; QLabel с растяжкой отодвигал бы соседей к правому краю (снимок
+// набора: «·» и счёт стояли у кнопок, а не у даты — владелец просил плотно).
+class ElidingLabel : public QLabel {
+    Q_OBJECT
+
+public:
+    explicit ElidingLabel(QWidget* parent = nullptr);
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+};
+
 class HistoryBanner : public QWidget {
     Q_OBJECT
 
@@ -70,19 +87,18 @@ signals:
     // предыдущей записью.
     void baseChanged(bool fresh);
 
-protected:
-    // Надпись ужимается первой (в узком окне место — кнопкам), но не режется,
-    // а укорачивается многоточием.
-    void resizeEvent(QResizeEvent* event) override;
-    // Сменился шрифт (оболочка получила свой кегль, Ctrl+Alt+±) — надпись
-    // режется заново: многоточие считалось метриками прежнего шрифта.
-    void changeEvent(QEvent* event) override;
-
 private:
-    QLabel* text_;
-    QLabel* counts_;   // «+m/−n»
+    // Строка слепка ужимается первой (в узком окне место — кнопкам), но не
+    // режется, а укорачивается многоточием — сама, при рисовании.
+    ElidingLabel* text_;
+    // «Date: … · +m/−n · —/3» — секции через «·», как в полосе сведений
+    // (просьба владельца). Точки — своими надписями, чтобы гаснуть вместе с
+    // пустой секцией справа от них.
+    QLabel* countsDot_;
+    QLabel* counts_;   // «+m/−n»: +m на фоне diff.added, −n — diff.removed
+    QLabel* hunksDot_;
     QLabel* hunks_;
-    QString fullText_;
+    void syncDots();
     void showText(const QString& text);
     // Пара залипающих кнопок: база сравнения. Пара, а не один переключатель с
     // меняющейся надписью, — просьба владельца: у одной кнопки не видно

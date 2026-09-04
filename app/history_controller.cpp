@@ -2,6 +2,7 @@
 
 #include "settings.h"
 
+#include <QMessageBox>
 #include <QShortcut>
 
 #include <cstdio>
@@ -18,7 +19,7 @@ HistoryController::HistoryController(NoteEditor& editor, HistoryView& view, QObj
     connect(&editor_, &NoteEditor::fileChanged, this, [this] { leave(); });
 
     connect(&view_, &HistoryView::leaveRequested, this, &HistoryController::leave);
-    connect(&view_, &HistoryView::restoreRequested, this, [this] { restore(); });
+    connect(&view_, &HistoryView::restoreRequested, this, [this] { askAndRestore(); });
     connect(&view_, &HistoryView::baseChanged, this, &HistoryController::setBaseFresh);
     connect(&view_, &HistoryView::stepBackRequested, this, [this] { stepBack(); });
     connect(&view_, &HistoryView::stepForwardRequested, this, [this] { stepForward(); });
@@ -108,6 +109,31 @@ void HistoryController::setBaseFresh(bool fresh) {
     if (timeline_->base() == base) return;
     timeline_->setBase(base);
     view_.refresh();
+}
+
+void HistoryController::askAndRestore() {
+    if (!active()) return;
+    // ВОПРОС ПЕРЕД ВОССТАНОВЛЕНИЕМ — второе из двух исключений из правила «без
+    // диалогов подтверждения», названное владельцем (04.09.2026; первое —
+    // «удалить насовсем» из архива). Восстановление кладёт слепок поверх живой
+    // заметки, и хотя оно отменяется (это новая запись журнала), кнопка стоит
+    // рядом с «To current version» и нажимается по ошибке.
+    //
+    // Без вложенного цикла событий (open, а не exec): так же спрашивает окно
+    // про внешнюю правку (main.cpp); статический question() крутит свой цикл,
+    // и набор под offscreen на нём вис.
+    const QString when = historyMoment(timeline_->snapshotTime());
+    auto* ask = new QMessageBox(view_.window());
+    ask->setAttribute(Qt::WA_DeleteOnClose);
+    ask->setWindowTitle(QStringLiteral("zametti"));
+    ask->setIcon(QMessageBox::Question);
+    ask->setText(QStringLiteral("Revert note to the snapshot from %1?").arg(when));
+    ask->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+    ask->setDefaultButton(QMessageBox::No);
+    connect(ask, &QMessageBox::finished, this, [this, ask](int) {
+        if (ask->clickedButton() == ask->button(QMessageBox::Yes)) restore();
+    });
+    ask->open();
 }
 
 qint64 HistoryController::restore(bool* alreadyCurrent) {

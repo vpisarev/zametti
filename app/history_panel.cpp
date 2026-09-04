@@ -10,7 +10,7 @@
 #include <QButtonGroup>
 #include <QSignalBlocker>
 #include <QScrollBar>
-#include <QResizeEvent>
+#include <QPainter>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -57,6 +57,31 @@ QString historyKindName(ZJournal::Kind kind) {
     return {};
 }
 
+ElidingLabel::ElidingLabel(QWidget* parent) : QLabel(parent) {
+    // Просит столько, сколько нужно тексту, но отдаёт место первой: политика
+    // Preferred, а минимум — через minimumSizeHint ниже.
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+}
+
+QSize ElidingLabel::sizeHint() const {
+    const QFontMetrics metrics(font());
+    return QSize(metrics.horizontalAdvance(text()) + 2, metrics.height());
+}
+
+QSize ElidingLabel::minimumSizeHint() const {
+    const QFontMetrics metrics(font());
+    return QSize(metrics.horizontalAdvance(QStringLiteral("…")), metrics.height());
+}
+
+void ElidingLabel::paintEvent(QPaintEvent* event) {
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.setFont(font());
+    painter.setPen(palette().color(QPalette::WindowText));
+    const QString shown = fontMetrics().elidedText(text(), Qt::ElideRight, width());
+    painter.drawText(rect(), int(alignment()) | Qt::TextSingleLine, shown);
+}
+
 HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
     const ZDocStyle& look = settings().style();
     // Баннер тонируется тем же цветом, что и поле в режиме истории: он не
@@ -70,23 +95,26 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
     tint.setColor(QPalette::Window, look.historyBackground().darker(104));
     setPalette(tint);
 
-    text_ = new QLabel(this);
+    text_ = new ElidingLabel(this);
+    text_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     // Сколько строк добавлено и убрано — «+m/−n» СРАЗУ ЗА строкой слепка, своей
     // надписью: хвостом первой оно резалось многоточием первым (снимок
     // владельца, 04.09.2026: «Snapshot from today, 11:58…» и ни одного числа).
+    // +m на фоне diff.added, −n — diff.removed: те же цвета, что у строк на
+    // поле, и числа читаются без легенды (просьба владельца).
     counts_ = new QLabel(this);
+    counts_->setTextFormat(Qt::RichText);
     counts_->setToolTip(QStringLiteral("Lines added / removed against the base"));
-    // Счёт отличий — у ПРАВОГО края строки слепка: слева «Snapshot …», справа
+    // Счёт отличий — у ПРАВОГО края строки слепка: слева «Date …», справа
     // «3/12». Своей надписью, а не хвостом первой: та ужимается многоточием в
     // узком окне, и счёт исчезал бы первым — а он короткий и нужен всегда.
     hunks_ = new QLabel(this);
     hunks_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     hunks_->setToolTip(QStringLiteral("Difference under the caret / how many there are"));
-    // Надпись не диктует ширину баннера: в узком окне она ужимается первой,
-    // иначе минимальная ширина баннера (и всего вида истории) отбирала бы
-    // место у списка записей справа.
-    text_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-
+    countsDot_ = new QLabel(QStringLiteral("·"), this);
+    hunksDot_ = new QLabel(QStringLiteral("·"), this);
+    countsDot_->setAlignment(Qt::AlignCenter);
+    hunksDot_->setAlignment(Qt::AlignCenter);
     // ПАРАМИ ЗАЛИПАЮЩИХ КНОПОК, а не одним переключателем с меняющейся
     // надписью (просьба владельца): у одной кнопки второго состояния не видно
     // вовсе, и надпись читается наоборот через раз — то как «показано сейчас»,
@@ -121,17 +149,27 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
 
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(10, 5, 10, 5);
-    layout->setSpacing(8);
-    layout->addWidget(text_, 1);
+    // Секции строки стоят плотно, через «·» (просьба владельца: лишние
+    // пробелы перед счётом отнимали место у даты); воздух — только между
+    // строкой и кнопками, ниже.
+    layout->setSpacing(6);
+    layout->addWidget(text_);
+    layout->addWidget(countsDot_);
     layout->addWidget(counts_);
+    layout->addWidget(hunksDot_);
     layout->addWidget(hunks_);
-    // Счёт отличий — не подпись к кнопкам, и воздух между ними это говорит.
-    layout->addSpacing(12);
+    // Свободное место — МЕЖДУ строкой и кнопками, а не внутри строки: секции
+    // стоят плотно у даты, а в узком окне первой ужимается дата (её надпись
+    // просит место по полному тексту, но отдаёт до многоточия).
+    layout->addStretch(1);
+    layout->addSpacing(8);
     layout->addWidget(fromPrevious_);
     layout->addWidget(fromFresh_);
     layout->addSpacing(8);
     layout->addWidget(leave_);
     layout->addWidget(restore_);
+
+    syncDots();
 
     connect(leave_, &QPushButton::clicked, this, &HistoryBanner::leaveRequested);
     connect(restore_, &QPushButton::clicked, this, &HistoryBanner::restoreRequested);
@@ -148,45 +186,53 @@ void HistoryBanner::setBaseIsFresh(bool fresh) {
 }
 
 void HistoryBanner::showText(const QString& text) {
-    fullText_ = text;
-    const int room = qMax(0, text_->width() - 4);
-    text_->setText(room > 0 ? text_->fontMetrics().elidedText(text, Qt::ElideRight, room) : text);
+    // Полный текст — в подсказке: обрезанный конец читается там.
+    text_->setText(text);
     text_->setToolTip(text);
-}
-
-void HistoryBanner::resizeEvent(QResizeEvent* event) {
-    QWidget::resizeEvent(event);
-    if (!fullText_.isEmpty()) showText(fullText_);
-}
-
-void HistoryBanner::changeEvent(QEvent* event) {
-    QWidget::changeEvent(event);
-    if (event->type() == QEvent::FontChange && !fullText_.isEmpty()) showText(fullText_);
 }
 
 void HistoryBanner::setSnapshot(qint64 time, ZJournal::Kind kind, int added, int removed) {
     restore_->setStyleSheet(restoreStyle_);
     // Строка отвечает на ОДИН вопрос: какая версия сейчас перед глазами
-    // (просьба владельца; всё, что было после тире, убрано).
-    QString what = QStringLiteral("Snapshot from %1").arg(historyMoment(time));
+    // (просьба владельца; всё, что было после тире, убрано). «Date:», а не
+    // «Snapshot from»: короче, и дата не режется первой в узком окне.
+    QString what = QStringLiteral("Date: %1").arg(historyMoment(time));
     if (kind != ZJournal::Kind::Save)
         what += QStringLiteral(" (%1)").arg(historyKindName(kind));
     showText(what);
-    // Сколько разница весит — видно до прокрутки: «+m/−n», как в git.
-    if (added < 0 || removed < 0)
+    // Сколько разница весит — видно до прокрутки: «+m/−n», как в git; числа на
+    // фоне своих цветов разности.
+    if (added < 0 || removed < 0) {
         counts_->clear();
-    else
-        counts_->setText(QStringLiteral("+%1/−%2").arg(added).arg(removed));
+    } else {
+        const ZDocStyle& look = settings().style();
+        counts_->setText(QStringLiteral("<span style=\"background-color:%1\">&nbsp;+%2&nbsp;</span>"
+                                        "/"
+                                        "<span style=\"background-color:%3\">&nbsp;−%4&nbsp;</span>")
+                             .arg(look.diffAdded().name())
+                             .arg(added)
+                             .arg(look.diffRemoved().name())
+                             .arg(removed));
+    }
+    syncDots();
 }
 
 void HistoryBanner::setHunk(int index, int total) {
     if (total <= 0) {
         hunks_->clear();
-        return;
+    } else {
+        // «—/12», пока ни на одном: ноль читался бы как «нулевое отличие».
+        hunks_->setText(index > 0 ? QStringLiteral("%1/%2").arg(index).arg(total)
+                                  : QStringLiteral("—/%1").arg(total));
     }
-    // «—/12», пока ни на одном: ноль читался бы как «нулевое отличие».
-    hunks_->setText(index > 0 ? QStringLiteral("%1/%2").arg(index).arg(total)
-                              : QStringLiteral("—/%1").arg(total));
+    syncDots();
+}
+
+void HistoryBanner::syncDots() {
+    // Точка стоит перед секцией и гаснет вместе с ней: «Date: … · +1/−5 · —/3»,
+    // а без отличий — просто «Date: …».
+    countsDot_->setVisible(!counts_->text().isEmpty());
+    hunksDot_->setVisible(!hunks_->text().isEmpty());
 }
 
 void HistoryBanner::flashRestore() {
