@@ -171,11 +171,26 @@ void checkBasics() {
             const int plusAt = int(html.indexOf(plus));
             const int minusAt = int(html.indexOf(minus));
             ZT_TRUE("+m раньше −n", plusAt >= 0 && minusAt > plusAt);
-            ZT_TRUE("+m на фоне diff.added",
-                    html.left(plusAt).contains(settings().style().diffAdded().name()));
-            ZT_TRUE("−n на фоне diff.removed",
-                    html.mid(plusAt, minusAt - plusAt)
-                        .contains(settings().style().diffRemoved().name()));
+            // Фон — цвет разности, РАЗБАВЛЕННЫЙ как у строк на поле (diffTint
+            // поверх фона), а не сырой: сырой diff.added густо-зелёный, и
+            // владелец увидел его на снимке. Достаём цвет из background-color
+            // перед числом и сверяем: того же оттенка, но светлее сырого.
+            const auto groundOf = [&](const QString& piece) {
+                const int at = int(piece.lastIndexOf(QStringLiteral("background-color:")));
+                return at < 0 ? QColor() : QColor(piece.mid(at + 17, 7));
+            };
+            const QColor plusGround = groundOf(html.left(plusAt));
+            const QColor minusGround = groundOf(html.mid(plusAt, minusAt - plusAt));
+            const QColor added = settings().style().diffAdded();
+            const QColor removed = settings().style().diffRemoved();
+            ZT_TRUE("+m на фоне: зелень разбавлена, а не сырая",
+                    plusGround.isValid() && plusGround != added &&
+                        plusGround.lightness() > added.lightness() &&
+                        plusGround.green() >= plusGround.red());
+            ZT_TRUE("−n на фоне: краснота разбавлена, а не сырая",
+                    minusGround.isValid() && minusGround != removed &&
+                        minusGround.lightness() > removed.lightness() &&
+                        minusGround.red() >= minusGround.green());
         }
         // Секции через «·», как в полосе сведений: точка перед счётом видна.
         int dots = 0;
