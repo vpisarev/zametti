@@ -18,6 +18,8 @@
 #include <QToolButton>
 #include <QWidget>
 
+class QKeyEvent;
+
 namespace zametti {
 
 class FindBar : public QWidget {
@@ -75,12 +77,23 @@ signals:
     void replaceOne();
     void replaceAll();
     void closed();
+    // ОТМЕНА И ПОВТОР ИЗ ПОЛЕЙ ПАНЕЛИ — ТЕКСТУ, А НЕ ПОЛЮ (решение владельца,
+    // 05.09.2026). Заменил, не понравилось, Ctrl+Z — и откатывалась буква в поле
+    // запроса, потому что QLineEdit объявляет Ctrl+Z своим. Своя отмена полю не
+    // нужна: набирают в нём два слова. Панель отдаёт нажатие окну, окно шлёт
+    // его искомому — как если бы нажали в самом тексте (в заметке — отмена
+    // правки, в исходнике — своя, в слепке истории — шаг по слепкам); фокус
+    // остаётся в поле, и следующая замена нажимается сразу.
+    void textKeyPressed(QKeyEvent* event);
 
 protected:
     // Enter — следующее, Shift+Enter — предыдущее, Esc — закрыть. Через
     // keyPressEvent, а не через ярлыки окна: пока панель открыта, эти клавиши
     // принадлежат ей.
     void keyPressEvent(QKeyEvent* event) override;
+    // Ctrl+Z / Ctrl+Y в полях: до keyPressEvent панели они не доходят — QLineEdit
+    // принимает их сам, — поэтому перехват стоит фильтром на самих полях.
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void showHistory();

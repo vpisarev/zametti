@@ -60,6 +60,9 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     replaceLabel_ = new QLabel(QStringLiteral("with"), this);
     replace_ = new QLineEdit(this);
     replace_->setPlaceholderText(QStringLiteral("Replace with"));
+    // Отмена и повтор из обоих полей — тексту (см. сигнал textKeyPressed).
+    find_->installEventFilter(this);
+    replace_->installEventFilter(this);
     replaceButton_ = new QToolButton(this);
     replaceButton_->setText(QStringLiteral("Replace"));
     replaceAllButton_ = new QToolButton(this);
@@ -266,6 +269,17 @@ void FindBar::showHistory() {
     const QSize size = menu.sizeHint();
     const QPoint at = historyButton_->mapToGlobal(QPoint(0, 0));
     menu.exec(QPoint(at.x(), at.y() - size.height()));
+}
+
+bool FindBar::eventFilter(QObject* watched, QEvent* event) {
+    if ((watched == find_ || watched == replace_) && event->type() == QEvent::KeyPress) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (key->matches(QKeySequence::Undo) || key->matches(QKeySequence::Redo)) {
+            emit textKeyPressed(key);
+            return true;   // полю нажатие не достаётся: своей отмены у него нет
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void FindBar::keyPressEvent(QKeyEvent* event) {

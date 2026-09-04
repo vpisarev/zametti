@@ -2413,6 +2413,15 @@ int main(int argc, char** argv) {
     QObject::connect(&findBar, &zametti::FindBar::findNext, &window, [&] { stepSearch(1); });
     QObject::connect(&findBar, &zametti::FindBar::findPrevious, &window,
                      [&] { stepSearch(-1); });
+    // ОТМЕНА И ПОВТОР ИЗ ПОЛЕЙ ПАНЕЛИ — ИСКОМОМУ: то же нажатие, что в самом
+    // тексте. Заменил, не понравилось, Ctrl+Z — откатывается замена, а не буква
+    // в поле запроса (решение владельца). Шлём событие, а не зовём «отмену»:
+    // что значит Ctrl+Z, каждая страница решает сама (заметка отменяет правку,
+    // исходник — свою, слепок истории шагает по слепкам).
+    QObject::connect(&findBar, &zametti::FindBar::textKeyPressed, &window,
+                     [&](QKeyEvent* event) {
+                         QApplication::sendEvent(&searchTarget().searchWidget(), event);
+                     });
 
     // ЗАМЕНА — ТОЖЕ У ИСКОМОГО. В режиме исходника это обычная правка текста:
     // она ложится в СВОЙ буфер отмены режима, а в заметку попадёт одним куском
