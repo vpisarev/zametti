@@ -861,11 +861,11 @@ void checkRestoreAsks() {
         ZT_TRUE(what + ": есть «да» и «нет»", yesButton != nullptr && noButton != nullptr);
         if (yesButton == nullptr || noButton == nullptr) return;
         ZT_TRUE(what + ": по умолчанию — «нет»", box->defaultButton() == noButton);
-        // ОБЛИК ОДНОЙ ДВЕРИ (ZApp::messageBox): рисует Qt, без значка, шрифт
-        // оболочки — так же выглядит и «Delete permanently?».
+        // ОБЛИК ОДНОЙ ДВЕРИ (ZApp::messageBox): рисует Qt, значок вопроса Qt
+        // (не системы), шрифт оболочки — так же выглядит и «Delete permanently?».
         ZT_TRUE(what + ": окно рисует Qt, не система",
                 box->testOption(QMessageBox::Option::DontUseNativeDialog));
-        ZT_TRUE(what + ": без значка", box->icon() == QMessageBox::NoIcon);
+        ZT_TRUE(what + ": со знаком вопроса", box->icon() == QMessageBox::Question);
         ZT_EQ(what + ": шрифт оболочки", ZApp::instance().uiStyle().appFont().family().toStdString(),
               box->font().family().toStdString());
         (answer == QMessageBox::Yes ? yesButton : noButton)->click();
