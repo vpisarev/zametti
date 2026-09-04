@@ -710,9 +710,11 @@ struct ZSettings {
         ZM_SETTING(int, tabWidth, TabWidth, 4, 1, 16)
 
         // Ходьба по изменённым местам в режиме истории. Отдельными ключами и в
-        // своём разделе конфига (`shortcuts`), потому что тут им придётся
-        // разойтись по системам: на маке F4 занята системой, и владелец выберет
-        // свой аккорд правкой конфига, а не правкой кода.
+        // своём разделе конфига (`shortcuts`). Список через точку с запятой,
+        // как у fullscreenKey: на маке F4 занята системой (без fn не нажать),
+        // и рядом стоит Ctrl+] / Ctrl+[ — на маке это Cmd+] / Cmd+[, свободные
+        // и парные, «следующий/предыдущий» как в Xcode и Sublime (выбор
+        // владельца, 04.09.2026). На каждой системе сработает своё.
         //
         // F3 у поиска не отбираем: искать в слепке — своя задача, и делить одну
         // клавишу на две ходьбы означало бы, что человек не знает, куда прыгнет.
@@ -720,8 +722,9 @@ struct ZSettings {
         // конфиг не вынесены нарочно: Tab в режиме истории занять больше нечем
         // (править нельзя), а Alt — не сочетание, а удержание модификатора, и
         // «настроить» его строкой QKeySequence не выйдет.
-        ZM_SETTING_PLAIN(QString, diffNextKey, DiffNextKey, QStringLiteral("F4"))
-        ZM_SETTING_PLAIN(QString, diffPreviousKey, DiffPreviousKey, QStringLiteral("Shift+F4"))
+        ZM_SETTING_PLAIN(QString, diffNextKey, DiffNextKey, QStringLiteral("F4; Ctrl+]"))
+        ZM_SETTING_PLAIN(QString, diffPreviousKey, DiffPreviousKey,
+                         QStringLiteral("Shift+F4; Ctrl+["))
 
         // Автозамены по сочетанию: знаки, которых нет на клавиатуре. Пара —
         // сочетание и то, что вставить; вставка идёт обычным набором, то есть

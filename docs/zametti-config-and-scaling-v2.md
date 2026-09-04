@@ -140,8 +140,8 @@ image-selection corner geometry
 
         "markdownMode": "",
 
-        "diffNext": "F4",
-        "diffPrevious": "Shift+F4",
+        "diffNext": "F4; Ctrl+]",
+        "diffPrevious": "Shift+F4; Ctrl+[",
 
         "jsonComment": "Ctrl+/"
     },
@@ -719,8 +719,8 @@ statsDelayMs
 
     "markdownMode": "",
 
-    "diffNext": "F4",
-    "diffPrevious": "Shift+F4",
+    "diffNext": "F4; Ctrl+]",
+    "diffPrevious": "Shift+F4; Ctrl+[",
 
     "jsonComment": "Ctrl+/"
 }

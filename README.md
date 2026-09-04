@@ -128,7 +128,7 @@ Here is the list of keyboard shortcuts that are supported (mac users: read `Cmd+
 | Ctrl+H | replace one text with another in the current note |
 | Ctrl+Shift+F | start search over all notes |
 | F3/Ctrl+G | find next |
-| F4 | find the next difference in the history diff view |
+| F4/Ctrl+] | find the next difference in the history diff view (Shift+F4/Ctrl+[ — the previous one) |
 | F5/Ctrl+R | re-read the storage directory and update the note, optionally run cloud sync |
 | Ctrl+A | select all |
 | Ctrl+C | copy |
