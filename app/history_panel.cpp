@@ -33,9 +33,12 @@ QString historyMoment(qint64 msSinceEpoch) {
     if (when.date() == today)
         return QStringLiteral("today, %1").arg(locale.toString(when.time(),
                                                                 QStringLiteral("HH:mm")));
+    // Месяц — тремя буквами (просьба владельца, 04.09.2026): дата стоит и в
+    // строке над разностью, и в каждой строке списка записей, и полное
+    // «September» съедало место у того и другого.
     if (when.date().year() == today.year())
-        return locale.toString(when, QStringLiteral("d MMMM, HH:mm"));
-    return locale.toString(when, QStringLiteral("d MMMM yyyy, HH:mm"));
+        return locale.toString(when, QStringLiteral("d MMM, HH:mm"));
+    return locale.toString(when, QStringLiteral("d MMM yyyy, HH:mm"));
 }
 
 QString historyStamp(qint64 msSinceEpoch) {
