@@ -43,6 +43,7 @@
 #include <QScrollBar>
 #include <QTemporaryDir>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QTest>
 
@@ -153,17 +154,39 @@ void checkBasics() {
           rig.editor->document()->toPlainText().toStdString());
     ZT_TRUE("редактор не переводился в «только чтение»", !rig.editor->isReadOnly());
     // «+m/−n» В БАННЕРЕ — своей надписью, числа те же, что у сравнения. Хвостом
-    // строки слепка счёт резался многоточием первым (снимок владельца).
+    // строки слепка счёт резался многоточием первым (снимок владельца). +m на
+    // фоне diff.added, −n — diff.removed (просьба владельца): надпись — rich
+    // text, проверяем и числа, и цвета.
     {
-        const QString want = QStringLiteral("+%1/−%2")
-                                 .arg(rig.tl()->addedLines())
-                                 .arg(rig.tl()->removedLines());
-        ZT_TRUE("есть и добавленные, и убранные: " + want.toStdString(),
+        const QString plus = QStringLiteral("+%1").arg(rig.tl()->addedLines());
+        const QString minus = QStringLiteral("−%1").arg(rig.tl()->removedLines());
+        ZT_TRUE("есть и добавленные, и убранные: " + (plus + minus).toStdString(),
                 rig.tl()->addedLines() > 0 && rig.tl()->removedLines() > 0);
-        bool shown = false;
+        QLabel* counts = nullptr;
         for (QLabel* label : rig.view->findChildren<QLabel*>())
-            if (label->text() == want) shown = true;
-        ZT_TRUE("баннер показывает " + want.toStdString(), shown);
+            if (label->text().contains(plus) && label->text().contains(minus)) counts = label;
+        ZT_TRUE("баннер показывает " + (plus + "/" + minus).toStdString(), counts != nullptr);
+        if (counts != nullptr) {
+            const QString html = counts->text();
+            const int plusAt = int(html.indexOf(plus));
+            const int minusAt = int(html.indexOf(minus));
+            ZT_TRUE("+m раньше −n", plusAt >= 0 && minusAt > plusAt);
+            ZT_TRUE("+m на фоне diff.added",
+                    html.left(plusAt).contains(settings().style().diffAdded().name()));
+            ZT_TRUE("−n на фоне diff.removed",
+                    html.mid(plusAt, minusAt - plusAt)
+                        .contains(settings().style().diffRemoved().name()));
+        }
+        // Секции через «·», как в полосе сведений: точка перед счётом видна.
+        int dots = 0;
+        for (QLabel* label : rig.view->findChildren<QLabel*>())
+            if (label->text() == QStringLiteral("·") && label->isVisibleTo(rig.view)) ++dots;
+        ZT_EQ("две точки-разделителя: перед «+m/−n» и перед счётом кусков", num(2), num(dots));
+        // Строка даты — «Date: …», а не «Snapshot from …» (просьба владельца).
+        bool dated = false;
+        for (QLabel* label : rig.view->findChildren<QLabel*>())
+            if (label->toolTip().startsWith(QStringLiteral("Date: "))) dated = true;
+        ZT_TRUE("строка слепка начинается с «Date: »", dated);
     }
 
     // УБРАННЫЕ СТРОКИ ВИДНЫ СВОИМ ТЕКСТОМ. «Второй абзац.» исчез — он в
@@ -748,7 +771,7 @@ void checkShellFont() {
     // многоточием от прежних метрик: полный текст хранится в подсказке.
     QLabel* snapshot = nullptr;
     for (QLabel* label : rig.view->findChildren<QLabel*>())
-        if (label->toolTip().startsWith(QStringLiteral("Snapshot from"))) snapshot = label;
+        if (label->toolTip().startsWith(QStringLiteral("Date:"))) snapshot = label;
     ZT_TRUE("надпись слепка найдена", snapshot != nullptr);
     if (snapshot != nullptr)
         ZT_TRUE("и её шрифт — оболочки",
@@ -768,6 +791,49 @@ void checkShellFont() {
         ZT_TRUE("и кегль тот же", std::fabs(button->font().pointSizeF() - 17.5) < 0.01);
     }
     rig.controller.leave();
+}
+
+// ВОПРОС ПЕРЕД ВОССТАНОВЛЕНИЕМ — второе исключение владельца из правила «без
+// диалогов»: кнопка «Restore this one» сперва спрашивает «Revert note to the
+// snapshot from …?». «Нет» — заметка не тронута и режим идёт; «Да» — слепок
+// восстановлен, режим закрыт. Диалог модальный, отвечаем по таймеру.
+void checkRestoreAsks() {
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01aaaaaaaaaa02"), note("# Вопрос\n\nстарое\n", "a"),
+        note("# Вопрос\n\nновое\n", "b"));
+    Rig rig;
+    ZT_TRUE("вошли", rig.open(path, 0));   // показан старый слепок
+    rig.show();
+    const QString liveBefore = rig.editor->document()->toPlainText();
+
+    // Вопрос немодальный (open, не exec): после щелчка по кнопке он ждёт
+    // ответа в общем цикле событий, и ответить ему можно его же кнопкой.
+    const auto answerWith = [&](QMessageBox::StandardButton answer, const std::string& what) {
+        for (QPushButton* button : rig.view->findChildren<QPushButton*>())
+            if (button->text() == QStringLiteral("Restore this one")) button->click();
+        QTest::qWait(30);
+        QMessageBox* box = nullptr;
+        for (QMessageBox* candidate : rig.window.findChildren<QMessageBox*>())
+            if (candidate->isVisible()) box = candidate;
+        ZT_TRUE(what + ": вопрос был задан", box != nullptr);
+        if (box == nullptr) return;
+        const QString asked = box->text();
+        ZT_TRUE(what + ": вопрос называет дату слепка — " + asked.toStdString(),
+                asked.startsWith(QStringLiteral("Revert note to the snapshot from ")) &&
+                    asked.endsWith(QLatin1Char('?')));
+        ZT_TRUE(what + ": по умолчанию — «No»", box->defaultButton() == box->button(QMessageBox::No));
+        box->button(answer)->click();
+        QTest::qWait(30);
+    };
+    answerWith(QMessageBox::No, "отказ");
+    ZT_TRUE("после отказа режим идёт", rig.controller.active());
+    ZT_EQ("и заметка не тронута", liveBefore.toStdString(),
+          rig.editor->document()->toPlainText().toStdString());
+
+    answerWith(QMessageBox::Yes, "согласие");
+    ZT_TRUE("после согласия режим закрыт", !rig.controller.active());
+    ZT_TRUE("и слепок восстановлен",
+            rig.editor->document()->toPlainText().contains(QStringLiteral("старое")));
 }
 
 void checkCorpus() {
@@ -954,6 +1020,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkCopyIsRawText();
     checkOpenLeaves();
     checkShellFont();
+    checkRestoreAsks();
     checkCorpus();
     writeShots(zt::TestData::outDir(QStringLiteral("history-view")));
 
