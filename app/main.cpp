@@ -695,7 +695,7 @@ int main(int argc, char** argv) {
 
         // Режим истории: вид истории (баннер над разностью и списком записей)
         // НА МЕСТЕ редактора; вне режима его нет вовсе — тем режим и громкий.
-        historyView.list().setFont(zapp.uiStyle().appFont());
+        historyView.setShellFont(zapp.uiStyle().appFont());
         textStack.addWidget(&editor);
         textStack.addWidget(&archiveView);
         textStack.addWidget(&docView);
@@ -738,7 +738,7 @@ int main(int argc, char** argv) {
         QApplication::setFont(font);
         panels.setSidebarFont(font);
         resultsView.setFont(font);
-        historyView.list().setFont(font);
+        historyView.setShellFont(font);
 
         zametti::applyPalette(editor);
         archiveView.refreshAppearance();

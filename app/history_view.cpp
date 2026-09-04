@@ -424,11 +424,20 @@ void HistoryView::refresh() {
     syncBanner();
 }
 
+void HistoryView::setShellFont(const QFont& font) {
+    // setFont на контейнер, а не на каждого ребёнка: Qt разносит шрифт по
+    // детям сам (и по тем, что появятся позже), а явный шрифт виджета
+    // перекрывает классовый шрифт платформы у кнопок.
+    banner_->setFont(font);
+    list_->setFont(font);
+}
+
 void HistoryView::syncBanner() {
     const std::shared_ptr<ZNoteTimeline> tl = text_->timeline();
     if (tl == nullptr || !tl->isOpen()) return;
     banner_->setBaseIsFresh(tl->baseIsFresh());
-    banner_->setSnapshot(tl->snapshotTime(), tl->snapshotKind(), tl->changedLines());
+    banner_->setSnapshot(tl->snapshotTime(), tl->snapshotKind(), tl->addedLines(),
+                         tl->removedLines());
     // Надпись про отличия ставится ПОСЛЕ строки слепка: setSnapshot её не
     // трогает, но порядок держим таким же, как у остального производного
     // состояния — сперва что показано, потом где мы в нём.

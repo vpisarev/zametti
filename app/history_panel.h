@@ -41,9 +41,9 @@ class HistoryBanner : public QWidget {
 public:
     explicit HistoryBanner(QWidget* parent = nullptr);
 
-    // Что показано: время слепка, его вид и сколько строк тронуто против базы
-    // (changed < 0 — не писать).
-    void setSnapshot(qint64 time, ZJournal::Kind kind, int changed = -1);
+    // Что показано: время слепка, его вид и сколько строк добавлено/убрано
+    // против базы — «+m/−n» своей надписью (added < 0 — не писать).
+    void setSnapshot(qint64 time, ZJournal::Kind kind, int added = -1, int removed = -1);
 
     // ГДЕ МЫ СРЕДИ ОТЛИЧИЙ: «3/12» у правого края той же строки, где стоит
     // «Snapshot …» (просьба владельца). F4 ходит по отличиям, и без счёта не
@@ -74,9 +74,13 @@ protected:
     // Надпись ужимается первой (в узком окне место — кнопкам), но не режется,
     // а укорачивается многоточием.
     void resizeEvent(QResizeEvent* event) override;
+    // Сменился шрифт (оболочка получила свой кегль, Ctrl+Alt+±) — надпись
+    // режется заново: многоточие считалось метриками прежнего шрифта.
+    void changeEvent(QEvent* event) override;
 
 private:
     QLabel* text_;
+    QLabel* counts_;   // «+m/−n»
     QLabel* hunks_;
     QString fullText_;
     void showText(const QString& text);

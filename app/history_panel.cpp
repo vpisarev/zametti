@@ -60,11 +60,22 @@ QString historyKindName(ZJournal::Kind kind) {
 HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
     const ZDocStyle& look = settings().style();
     // Баннер тонируется тем же цветом, что и поле в режиме истории: он не
-    // сообщение поверх текста, а край того же прошлого.
-    setStyleSheet(QStringLiteral("QWidget { background: %1; }")
-                      .arg(look.historyBackground().darker(104).name()));
+    // сообщение поверх текста, а край того же прошлого. ПАЛИТРОЙ, А НЕ
+    // STYLESHEET (как тулбар и полоса сведений): у виджета со stylesheet Qt
+    // отключает наследование шрифта детьми, и шрифт оболочки, поставленный
+    // баннеру, до надписей и кнопок не доходил — на маке они оставались на
+    // системном шрифте (снимок владельца, 04.09.2026; набор HistoryView).
+    setAutoFillBackground(true);
+    QPalette tint = palette();
+    tint.setColor(QPalette::Window, look.historyBackground().darker(104));
+    setPalette(tint);
 
     text_ = new QLabel(this);
+    // Сколько строк добавлено и убрано — «+m/−n» СРАЗУ ЗА строкой слепка, своей
+    // надписью: хвостом первой оно резалось многоточием первым (снимок
+    // владельца, 04.09.2026: «Snapshot from today, 11:58…» и ни одного числа).
+    counts_ = new QLabel(this);
+    counts_->setToolTip(QStringLiteral("Lines added / removed against the base"));
     // Счёт отличий — у ПРАВОГО края строки слепка: слева «Snapshot …», справа
     // «3/12». Своей надписью, а не хвостом первой: та ужимается многоточием в
     // узком окне, и счёт исчезал бы первым — а он короткий и нужен всегда.
@@ -112,6 +123,7 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
     layout->setContentsMargins(10, 5, 10, 5);
     layout->setSpacing(8);
     layout->addWidget(text_, 1);
+    layout->addWidget(counts_);
     layout->addWidget(hunks_);
     // Счёт отличий — не подпись к кнопкам, и воздух между ними это говорит.
     layout->addSpacing(12);
@@ -147,16 +159,24 @@ void HistoryBanner::resizeEvent(QResizeEvent* event) {
     if (!fullText_.isEmpty()) showText(fullText_);
 }
 
-void HistoryBanner::setSnapshot(qint64 time, ZJournal::Kind kind, int changed) {
+void HistoryBanner::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::FontChange && !fullText_.isEmpty()) showText(fullText_);
+}
+
+void HistoryBanner::setSnapshot(qint64 time, ZJournal::Kind kind, int added, int removed) {
     restore_->setStyleSheet(restoreStyle_);
     // Строка отвечает на ОДИН вопрос: какая версия сейчас перед глазами
-    // (просьба владельца; всё, что было после тире, убрано). Счёт тронутых
-    // строк — тихой добавкой: сколько разница весит, видно до прокрутки.
+    // (просьба владельца; всё, что было после тире, убрано).
     QString what = QStringLiteral("Snapshot from %1").arg(historyMoment(time));
     if (kind != ZJournal::Kind::Save)
         what += QStringLiteral(" (%1)").arg(historyKindName(kind));
-    if (changed >= 0) what += QStringLiteral("  ·  ±%1").arg(changed);
     showText(what);
+    // Сколько разница весит — видно до прокрутки: «+m/−n», как в git.
+    if (added < 0 || removed < 0)
+        counts_->clear();
+    else
+        counts_->setText(QStringLiteral("+%1/−%2").arg(added).arg(removed));
 }
 
 void HistoryBanner::setHunk(int index, int total) {
