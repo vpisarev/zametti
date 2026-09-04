@@ -61,8 +61,9 @@ public:
     // (для подписи); 0 — не вышло; alreadyCurrent — слепок и есть нынешняя
     // версия (режим всё равно закрывается).
     qint64 restore(bool* alreadyCurrent = nullptr);
-    // То же по нажатию «Restore this one»: сперва вопрос «Revert note to the
-    // snapshot from …?» (исключение владельца из правила «без диалогов»),
+    // То же по нажатию «Restore this one»: сперва вопрос «Put the snapshot
+    // from … on top of the undo stack?» (исключение владельца из правила «без
+    // диалогов»),
     // по «Yes» — restore(). Вопрос немодальный: ответ приходит сигналом.
     void askAndRestore();
     // Поиск по истории ЭТОЙ заметки: сперва ленивая чистка журнала, потом

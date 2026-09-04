@@ -127,7 +127,10 @@ void HistoryController::askAndRestore() {
     ask->setAttribute(Qt::WA_DeleteOnClose);
     ask->setWindowTitle(QStringLiteral("zametti"));
     ask->setIcon(QMessageBox::Question);
-    ask->setText(QStringLiteral("Revert note to the snapshot from %1?").arg(when));
+    // Слова — про то, что происходит на самом деле: слепок ложится НОВОЙ
+    // записью поверх, а не откатывает историю; отменить его можно Ctrl+Z
+    // (формулировка владельца, 04.09.2026).
+    ask->setText(QStringLiteral("Put the snapshot from %1 on top of the undo stack?").arg(when));
     ask->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
     ask->setDefaultButton(QMessageBox::No);
     connect(ask, &QMessageBox::finished, this, [this, ask](int) {

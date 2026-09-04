@@ -173,7 +173,9 @@ build-portable/app/zametti`, `strip` до/после.
 «Snapshot from», `+m` на фоне `diff.added`, `−n` на фоне `diff.removed`,
 секции через «·» как в полосе сведений, без лишних пробелов; и второе
 исключение из правила «без диалогов» — вопрос перед «Restore this one»:
-«Revert note to the snapshot from <дата>?» (правило в CLAUDE.md обновлено).
+«Put the snapshot from <дата> on top of the undo stack?» — формулировка
+владельца, точная: слепок ложится новой записью и отменяется Ctrl+Z (правило
+в CLAUDE.md обновлено).
 
 Сделано: `HistoryBanner` — «Date: … · +m/−n · —/k»; `+m`/`−n` — rich text на
 фонах цветов разности; точки — своими надписями и гаснут вместе с пустой
