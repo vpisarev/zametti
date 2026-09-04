@@ -205,6 +205,12 @@ void checkWindow() {
         // всякая правка заглавной буквы красит окно справки в красный.
         check(text.contains(QStringLiteral("zametti"), Qt::CaseInsensitive),
               "имя программы названо");
+        // Версия — та, что объявил CMake (build_facts.h), а не литерал в окне:
+        // второго числа версии в проекте нет (канон владельца, 04.09.2026).
+        check(text.contains(QString::fromLatin1(zametti::kVersion)),
+              std::string("версия из CMake названа: ") + zametti::kVersion);
+        check(std::string(zametti::kVersion).find('.') != std::string::npos,
+              "и это число с точкой, а не пустой шаблон");
         // Обе половины первой вкладки на месте: чьё это и из чего собрано.
         check(text.contains(QStringLiteral("Copyright")), "copyright на первой вкладке");
         check(text.contains(QStringLiteral("GPL-3.0")), "лицензия названа");
