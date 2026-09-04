@@ -25,6 +25,7 @@
 #include "journal.h"
 #include "key_binding.h"
 #include "settings.h"
+#include "zapp.h"
 
 #include "test_util.h"
 #include "testdata.h"
@@ -848,8 +849,26 @@ void checkRestoreAsks() {
                 asked.startsWith(QStringLiteral("Put the snapshot from ")) &&
                     asked.contains(QStringLiteral(" on top of the undo stack")) &&
                     asked.endsWith(QLatin1Char('?')));
-        ZT_TRUE(what + ": по умолчанию — «No»", box->defaultButton() == box->button(QMessageBox::No));
-        box->button(answer)->click();
+        // Кнопки — свои (YesRole / NoRole), не стандартные: ищем по роли.
+        QPushButton* yesButton = nullptr;
+        QPushButton* noButton = nullptr;
+        for (QAbstractButton* candidate : box->buttons()) {
+            if (box->buttonRole(candidate) == QMessageBox::YesRole)
+                yesButton = qobject_cast<QPushButton*>(candidate);
+            if (box->buttonRole(candidate) == QMessageBox::NoRole)
+                noButton = qobject_cast<QPushButton*>(candidate);
+        }
+        ZT_TRUE(what + ": есть «да» и «нет»", yesButton != nullptr && noButton != nullptr);
+        if (yesButton == nullptr || noButton == nullptr) return;
+        ZT_TRUE(what + ": по умолчанию — «нет»", box->defaultButton() == noButton);
+        // ОБЛИК ОДНОЙ ДВЕРИ (ZApp::messageBox): рисует Qt, без значка, шрифт
+        // оболочки — так же выглядит и «Delete permanently?».
+        ZT_TRUE(what + ": окно рисует Qt, не система",
+                box->testOption(QMessageBox::Option::DontUseNativeDialog));
+        ZT_TRUE(what + ": без значка", box->icon() == QMessageBox::NoIcon);
+        ZT_EQ(what + ": шрифт оболочки", ZApp::instance().uiStyle().appFont().family().toStdString(),
+              box->font().family().toStdString());
+        (answer == QMessageBox::Yes ? yesButton : noButton)->click();
         QTest::qWait(30);
     };
     answerWith(QMessageBox::No, "отказ");

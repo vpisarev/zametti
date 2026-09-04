@@ -297,6 +297,13 @@ add_test(NAME document-only-for-showing
                  "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_CURRENT_SOURCE_DIR}"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/get_document_check.cmake)
 
+# Окна сообщений строятся в одном месте (ZApp::messageBox / warn / inform /
+# ask) — иначе они выглядят по-разному (правило владельца в CLAUDE.md).
+add_test(NAME message-boxes-through-zapp
+         COMMAND ${CMAKE_COMMAND}
+                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/app;${CMAKE_CURRENT_SOURCE_DIR}"
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/message_box_check.cmake)
+
 # ТАБ'У: разрушительное — только через ZSystem (правило владельца, первые
 # строки CLAUDE.md). Наборы и пробники проверяются НАРАВНЕ с программой: каталог
 # владельца снёс именно пробник, и сторож, обходящий tests/, обходил бы место
