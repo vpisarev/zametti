@@ -4,6 +4,8 @@
 
 #include <QFileInfo>
 #include <QImage>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QPainter>
 #include <QSvgRenderer>
 
@@ -138,5 +140,47 @@ QPixmap ZApp::toolbarIcon(const QString& name, int points, const QColor& color, 
 }
 
 void ZApp::clearIconCache() { icons_.clear(); }
+
+QMessageBox* ZApp::messageBox(QWidget* parent, const QString& text) {
+    auto* box = new QMessageBox(parent);
+    // Рисует Qt: родное окно системы само решает про значок (на маке — значок
+    // приложения, у голого бинаря — значок исполняемого файла) и кнопки, и
+    // одинаковыми окна на трёх системах не бывают.
+    box->setOption(QMessageBox::Option::DontUseNativeDialog, true);
+    box->setIcon(QMessageBox::NoIcon);
+    box->setWindowTitle(QStringLiteral("zametti"));
+    box->setText(text);
+    box->setFont(uiStyle().appFont());
+    return box;
+}
+
+void ZApp::warn(QWidget* parent, const QString& text) {
+    QMessageBox* box = messageBox(parent, text);
+    box->setStandardButtons(QMessageBox::Ok);
+    box->exec();
+    delete box;
+}
+
+void ZApp::inform(QWidget* parent, const QString& text) {
+    // Сведение от предупреждения не отличается ничем, кроме смысла у зовущего:
+    // значков нет, и раскрашивать текст нечем. Две двери — чтобы в коде было
+    // видно, беда это или нет.
+    warn(parent, text);
+}
+
+void ZApp::ask(QWidget* parent, const QString& question, std::function<void(bool)> answered,
+               const QString& yes, const QString& no) {
+    QMessageBox* box = messageBox(parent, question);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    QPushButton* agree = box->addButton(yes, QMessageBox::YesRole);
+    QPushButton* refuse = box->addButton(no, QMessageBox::NoRole);
+    box->setDefaultButton(refuse);
+    box->setEscapeButton(refuse);
+    QObject::connect(box, &QMessageBox::finished, box,
+                     [box, agree, answered = std::move(answered)](int) {
+                         answered(box->clickedButton() == agree);
+                     });
+    box->open();
+}
 
 }  // namespace zametti

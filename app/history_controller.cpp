@@ -2,7 +2,8 @@
 
 #include "settings.h"
 
-#include <QMessageBox>
+#include "zapp.h"
+
 #include <QShortcut>
 
 #include <cstdio>
@@ -119,24 +120,17 @@ void HistoryController::askAndRestore() {
     // заметки, и хотя оно отменяется (это новая запись журнала), кнопка стоит
     // рядом с «To current version» и нажимается по ошибке.
     //
-    // Без вложенного цикла событий (open, а не exec): так же спрашивает окно
-    // про внешнюю правку (main.cpp); статический question() крутит свой цикл,
-    // и набор под offscreen на нём вис.
-    const QString when = historyMoment(timeline_->snapshotTime());
-    auto* ask = new QMessageBox(view_.window());
-    ask->setAttribute(Qt::WA_DeleteOnClose);
-    ask->setWindowTitle(QStringLiteral("zametti"));
-    ask->setIcon(QMessageBox::Question);
+    // Через одну дверь окон сообщений (ZApp::ask): без вложенного цикла
+    // событий и в общем облике программы.
     // Слова — про то, что происходит на самом деле: слепок ложится НОВОЙ
     // записью поверх, а не откатывает историю; отменить его можно Ctrl+Z
     // (формулировка владельца, 04.09.2026).
-    ask->setText(QStringLiteral("Put the snapshot from %1 on top of the undo stack?").arg(when));
-    ask->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-    ask->setDefaultButton(QMessageBox::No);
-    connect(ask, &QMessageBox::finished, this, [this, ask](int) {
-        if (ask->clickedButton() == ask->button(QMessageBox::Yes)) restore();
-    });
-    ask->open();
+    const QString when = historyMoment(timeline_->snapshotTime());
+    ZApp::instance().ask(view_.window(),
+                         QStringLiteral("Put the snapshot from %1 on top of the undo stack?").arg(when),
+                         [this](bool yes) {
+                             if (yes) restore();
+                         });
 }
 
 qint64 HistoryController::restore(bool* alreadyCurrent) {

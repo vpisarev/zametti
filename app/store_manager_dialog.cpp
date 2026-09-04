@@ -656,22 +656,24 @@ void StoreManagerDialog::render() {
 // --- намерение модели -------------------------------------------------------
 
 int StoreManagerDialog::ask(const ZStorageManager::Question& question) {
-    QMessageBox box(this);
-    box.setWindowTitle(QStringLiteral("zametti"));
-    box.setText(question.text);
-    if (!question.detail.isEmpty()) box.setInformativeText(question.detail);
+    // Через одну дверь окон сообщений (ZApp::messageBox) — облик общий,
+    // кнопки — по вопросу модели.
+    QMessageBox* box = ZApp::instance().messageBox(this, question.text);
+    if (!question.detail.isEmpty()) box->setInformativeText(question.detail);
     QList<QPushButton*> buttons;
     for (int i = 0; i < question.choices.size(); ++i) {
         const bool last = i + 1 == question.choices.size();
-        buttons.append(box.addButton(question.choices.at(i),
-                                     last ? QMessageBox::RejectRole
-                                          : QMessageBox::DestructiveRole));
+        buttons.append(box->addButton(question.choices.at(i),
+                                      last ? QMessageBox::RejectRole
+                                           : QMessageBox::DestructiveRole));
     }
-    if (!buttons.isEmpty()) box.setDefaultButton(buttons.last());
-    box.exec();
+    if (!buttons.isEmpty()) box->setDefaultButton(buttons.last());
+    box->exec();
+    int chosen = int(buttons.size()) - 1;   // закрыли крестиком — это отказ
     for (int i = 0; i < buttons.size(); ++i)
-        if (box.clickedButton() == buttons.at(i)) return i;
-    return int(buttons.size()) - 1;   // закрыли крестиком — это отказ
+        if (box->clickedButton() == buttons.at(i)) chosen = i;
+    delete box;
+    return chosen;
 }
 
 void StoreManagerDialog::act(const ZStorageManager::Reaction& reaction) {

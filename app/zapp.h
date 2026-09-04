@@ -27,6 +27,7 @@
 #include "zstorage.h"
 #include "zstorage_manager.h"
 
+#include <functional>
 #include <memory>
 
 #include <QColor>
@@ -35,6 +36,8 @@
 #include <QString>
 #include <QStringList>
 
+class QMessageBox;
+class QWidget;
 
 namespace zametti {
 
@@ -132,6 +135,25 @@ public:
     QPixmap toolbarIcon(const QString& name, int points, const QColor& color, qreal dpr);
     void clearIconCache();
     int iconCacheSize() const { return int(icons_.size()); }
+
+    // --- окна сообщений ------------------------------------------------------
+    // ОДНА ДВЕРЬ ДЛЯ ВСЕХ ОКОН-СООБЩЕНИЙ (вопрос, предупреждение, сведение), и
+    // выглядят они одинаково: рисует Qt, а не система (на маке родной NSAlert
+    // ставил значок приложения и свои кнопки, и «Delete permanently?» выбивался
+    // из стиля рядом с вопросом истории — снимок владельца, 04.09.2026), без
+    // значка (цветных значков в программе нет), шрифтом оболочки, с заголовком
+    // «zametti». Кнопки добавляет зовущий. Окно с родителем; кто создал —
+    // тот и удаляет (ask ставит WA_DeleteOnClose сам). Сторож:
+    // tests/message_box_check.cmake — QMessageBox строится только здесь.
+    QMessageBox* messageBox(QWidget* parent, const QString& text);
+    // Предупреждение и сведение: одна кнопка «OK», модально.
+    void warn(QWidget* parent, const QString& text);
+    void inform(QWidget* parent, const QString& text);
+    // Вопрос «да/нет» БЕЗ вложенного цикла событий (open, не exec — статический
+    // question() крутил свой цикл, и набор под offscreen на нём вис): ответ
+    // приходит в answered (true — нажали yes). Умолчание — «нет».
+    void ask(QWidget* parent, const QString& question, std::function<void(bool)> answered,
+             const QString& yes = QStringLiteral("Yes"), const QString& no = QStringLiteral("No"));
 
 protected:
     struct IconKey {

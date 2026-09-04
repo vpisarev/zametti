@@ -2846,8 +2846,8 @@ int NoteEditor::insertImageFiles(const QStringList& paths) {
     if (paths.isEmpty()) return 0;
     const QString dir = attachmentDir();
     if (dir.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("zametti"),
-                             QStringLiteral("The note is not saved yet — the attachment has nowhere to go."));
+        ZApp::instance().warn(
+            this, QStringLiteral("The note is not saved yet — the attachment has nowhere to go."));
         return 0;
     }
 
@@ -2862,8 +2862,7 @@ bool NoteEditor::beginImport(int count) {
     if (importer_ != nullptr && importer_->busy()) {
         // Второй пачки разом не бывает: поток один, и очередь в нём — не то,
         // чего человек ждёт от «вставить ещё раз». Говорим прямо.
-        QMessageBox::information(this, QStringLiteral("zametti"),
-                                 QStringLiteral("The previous images are still being imported."));
+        ZApp::instance().inform(this, QStringLiteral("The previous images are still being imported."));
         return false;
     }
     if (importer_ == nullptr) {
@@ -2960,9 +2959,7 @@ void NoteEditor::onImportFinished(int done, int total, bool cancelled) {
     // О неудачах говорим ПОСЛЕ вставки удачных: молчаливый пропуск — худшее из
     // возможного, а прерывать всю пачку из-за одного битого файла незачем.
     if (!failures.isEmpty())
-        QMessageBox::warning(this, QStringLiteral("zametti"),
-                             QStringLiteral("Not inserted:\n") +
-                                 failures.join(QLatin1Char('\n')));
+        ZApp::instance().warn(this, QStringLiteral("Not inserted:\n") + failures.join(QLatin1Char('\n')));
 }
 
 bool NoteEditor::insertImagePixels(const QImage& image) {
@@ -2983,8 +2980,8 @@ void NoteEditor::chooseAndInsertImages() {
     // должно уже лежать в файле, а не в памяти.
     save(false);
     if (attachmentDir().isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("zametti"),
-                             QStringLiteral("The note is not saved yet — the attachment has nowhere to go."));
+        ZApp::instance().warn(
+            this, QStringLiteral("The note is not saved yet — the attachment has nowhere to go."));
         return;
     }
     // Фильтр строим из того, что читатели УМЕЮТ на этой машине, а не из списка
@@ -3343,13 +3340,14 @@ void NoteEditor::save(bool interactive, bool force) {
     if (mutedComplaints_.contains(note_->path())) return;
     current_.lastComplaint = outcome.message;
 
-    QMessageBox box(QMessageBox::Warning, QStringLiteral("zametti"), outcome.message,
-                    QMessageBox::Ok, this);
+    QMessageBox* box = ZApp::instance().messageBox(this, outcome.message);
+    box->setStandardButtons(QMessageBox::Ok);
     auto* mute = new QCheckBox(
-        QStringLiteral("do not warn about this file again in this session"), &box);
-    box.setCheckBox(mute);
-    box.exec();
+        QStringLiteral("do not warn about this file again in this session"), box);
+    box->setCheckBox(mute);
+    box->exec();
     if (mute->isChecked()) mutedComplaints_.insert(note_->path());
+    delete box;
 }
 
 void NoteEditor::wheelEvent(QWheelEvent* event) {

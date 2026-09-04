@@ -952,14 +952,14 @@ int main(int argc, char** argv) {
     // Файл изменился снаружи, а правки не сохранены. Окно неблокирующее: работа
     // не встаёт, пока человек думает, и молча мы ничего не затираем.
     QObject::connect(&editor, &zametti::NoteEditor::externalChangeDetected, &window, [&] {
-        auto* ask = new QMessageBox(&window);
+        // Через одну дверь окон сообщений (ZApp::messageBox): кнопки свои,
+        // облик общий.
+        QMessageBox* ask = zapp.messageBox(
+            &window, QFileInfo(editor.filePath()).fileName() +
+                         QStringLiteral(" changed outside the app, and there are unsaved "
+                                        "edits here."));
         ask->setAttribute(Qt::WA_DeleteOnClose);
         ask->setWindowModality(Qt::NonModal);
-        ask->setIcon(QMessageBox::Question);
-        ask->setWindowTitle(QStringLiteral("zametti"));
-        ask->setText(QFileInfo(editor.filePath()).fileName() +
-                     QStringLiteral(" changed outside the app, and there are unsaved "
-                                    "edits here."));
         QPushButton* mine =
             ask->addButton(QStringLiteral("Keep mine"), QMessageBox::AcceptRole);
         QPushButton* theirs =
@@ -1423,9 +1423,8 @@ int main(int argc, char** argv) {
     const auto complain = [&window](const QString& file, const QString& why) {
         std::fprintf(stderr, "note edit failed: %s — %s\n",
                      file.toUtf8().constData(), why.toUtf8().constData());
-        QMessageBox::warning(&window, QStringLiteral("zametti"),
-                             QStringLiteral("Could not write %1: %2")
-                                 .arg(QFileInfo(file).fileName(), why));
+        zametti::ZApp::instance().warn(
+            &window, QStringLiteral("Could not write %1: %2").arg(QFileInfo(file).fileName(), why));
     };
 
     // ПЕРЕЧИТАТЬ ХРАНИЛИЩЕ. Каталог меняется и мимо нас: файл вернули из
@@ -1566,25 +1565,34 @@ int main(int argc, char** argv) {
                                ? editor.toPlainText().trimmed().isEmpty()
                                : zapp.storage()->isEmptyNote(noteId);
         if (empty || model.inArchiveId(noteId)) {
-            if (!empty) {
-                const auto answer = QMessageBox::question(
-                    &window, QStringLiteral("zametti"),
-                    QStringLiteral("Delete \"%1\" permanently?")
-                        .arg(model.titleOfId(noteId)));
-                if (answer != QMessageBox::Yes) return;
-            }
-            // Если заметка открыта, сначала сохраняем: иначе последним слепком
-            // в истории осталось бы состояние до последних правок, а человек
-            // удаляет то, что видит. Само удаление — дело хранилища: надгробие
-            // или журнал вместе с архивной, картинки следом.
-            if (wasOpen) editor.save(false);
-            QString deleteError;
-            if (!zapp.storage()->remove(
-                    noteId, zametti::deletedImageLimitsFrom(zametti::settings().images()), &deleteError)) {
-                QMessageBox::warning(&window, QStringLiteral("zametti"), deleteError);
+            // Единственный вопрос про удаление в программе (исключение
+            // владельца из правила «без диалогов»); через ту же дверь и в том
+            // же облике, что вопрос истории. Ответ приходит сигналом, и само
+            // удаление — в нём.
+            const auto deleteForGood = [&, noteId, file, wasOpen] {
+                // Если заметка открыта, сначала сохраняем: иначе последним
+                // слепком в истории осталось бы состояние до последних правок,
+                // а человек удаляет то, что видит. Само удаление — дело
+                // хранилища: надгробие или журнал вместе с архивной, картинки
+                // следом.
+                if (wasOpen) editor.save(false);
+                QString deleteError;
+                if (!zapp.storage()->remove(
+                        noteId, zametti::deletedImageLimitsFrom(zametti::settings().images()),
+                        &deleteError)) {
+                    zapp.warn(&window, deleteError);
+                    return;
+                }
+                settleAfter();
+            };
+            if (empty) {
+                deleteForGood();
                 return;
             }
-            settleAfter();
+            zapp.ask(&window, QStringLiteral("Delete \"%1\" permanently?").arg(model.titleOfId(noteId)),
+                     [deleteForGood](bool yes) {
+                         if (yes) deleteForGood();
+                     });
             return;
         }
 
@@ -1598,9 +1606,8 @@ int main(int argc, char** argv) {
         QStringList failed;
         zapp.storage()->archive(noteId, zametti::NoteEditor::historyRules(), &failed);
         if (!failed.isEmpty())
-            QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                 QStringLiteral("Not everything could be archived:\n%1")
-                                     .arg(failed.join(QLatin1Char('\n'))));
+            zapp.warn(&window, QStringLiteral("Not everything could be archived:\n%1")
+                                   .arg(failed.join(QLatin1Char('\n'))));
         // Открытую заметку перечитываем с диска: на её месте теперь стаб, и
         // редактор обязан показать то, что в файле, а не то, что помнит.
         if (wasOpen) editor.openFile(file);
@@ -1620,9 +1627,8 @@ int main(int argc, char** argv) {
         QStringList failed;
         zapp.storage()->restore(noteId, &failed);
         if (!failed.isEmpty())
-            QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                 QStringLiteral("Not everything could be restored:\n%1")
-                                     .arg(failed.join(QLatin1Char('\n'))));
+            zapp.warn(&window, QStringLiteral("Not everything could be restored:\n%1")
+                                   .arg(failed.join(QLatin1Char('\n'))));
         // Открытая заметка была стабом — перечитываем: тело вернулось.
         if (file == editor.filePath()) editor.openFile(file);
         // И ПОКАЗАТЬ, КУДА ВЕРНУЛАСЬ: вторичным выделением её папки (пунктирная
@@ -1646,7 +1652,7 @@ int main(int argc, char** argv) {
         QString newError;
         const QString madeId = zapp.storage()->createNote(requestedParent, folder, &newError);
         if (madeId.isEmpty()) {
-            QMessageBox::warning(&window, QStringLiteral("zametti"), newError);
+            zapp.warn(&window, newError);
             return;
         }
         const QString made = zapp.storage()->pathOf(madeId);
@@ -1686,11 +1692,9 @@ int main(int argc, char** argv) {
 
         if (!first.isEmpty()) editor.openFile(first);   // дерево уже догнало по сигналу
         if (!failed.isEmpty()) {
-            QMessageBox::warning(
-                &window, QStringLiteral("zametti"),
-                QStringLiteral("Files not imported: %1\n\n%2")
-                    .arg(failed.size())
-                    .arg(failed.join(QLatin1Char('\n'))));
+            zapp.warn(&window, QStringLiteral("Files not imported: %1\n\n%2")
+                                   .arg(failed.size())
+                                   .arg(failed.join(QLatin1Char('\n'))));
         }
     };
 
@@ -1801,18 +1805,15 @@ int main(int argc, char** argv) {
         }
 
         if (!report.ok()) {
-            QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                 QStringLiteral("Could not export the note.\n%1")
-                                     .arg(report.error));
+            zapp.warn(&window, QStringLiteral("Could not export the note.\n%1").arg(report.error));
             return;
         }
         // Молчать нельзя ровно в двух случаях: что-то переименовано или чего-то
         // не нашлось. В остальных человек и так видит файл там, где просил.
         if (!report.notes.isEmpty())
-            QMessageBox::information(&window, QStringLiteral("zametti"),
-                                     QStringLiteral("Note exported to %1.\n\n%2")
-                                         .arg(QFileInfo(target).fileName(),
-                                              report.notes.join(QStringLiteral("\n"))));
+            zapp.inform(&window, QStringLiteral("Note exported to %1.\n\n%2")
+                                     .arg(QFileInfo(target).fileName(),
+                                          report.notes.join(QStringLiteral("\n"))));
     };
 
     // Ctrl+N: редактор перехватывает сочетание через ShortcutOverride, до
@@ -1931,8 +1932,7 @@ int main(int argc, char** argv) {
         // пустым, и это выглядело бы как «не работает».
         if (!gotPlaceholder) parts.append(file);
         if (!zametti::ZSystem::startDetached(program, parts))
-            QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                 QStringLiteral("Failed to start: %1").arg(command));
+            zapp.warn(&window, QStringLiteral("Failed to start: %1").arg(command));
     };
 
     // Внешний редактор снёс или обкорнал шапку. Молчать нельзя: заметка без
@@ -1940,14 +1940,12 @@ int main(int argc, char** argv) {
     // работа не встаёт, пока человек думает.
     QObject::connect(&editor, &zametti::NoteEditor::metaDamaged, &window,
                      [&](const QString& file, const QStringList& keys) {
-        auto* ask = new QMessageBox(&window);
-        ask->setAttribute(Qt::WA_DeleteOnClose);
-        ask->setWindowModality(Qt::NonModal);
-        ask->setIcon(QMessageBox::Warning);
-        ask->setWindowTitle(QStringLiteral("zametti"));
-        ask->setText(QStringLiteral("The external edit of \"%1\" lost: %2.")
+        QMessageBox* ask = zapp.messageBox(
+            &window, QStringLiteral("The external edit of \"%1\" lost: %2.")
                          .arg(model.titleOfId(QFileInfo(file).completeBaseName()),
                               keys.join(QStringLiteral(", "))));
+        ask->setAttribute(Qt::WA_DeleteOnClose);
+        ask->setWindowModality(Qt::NonModal);
         ask->setInformativeText(
             QStringLiteral("Restore the previous values? Text edits will be kept, "
                            "and the restore can be undone (Ctrl+Z)."));
@@ -2696,13 +2694,11 @@ int main(int argc, char** argv) {
             // без FILE_SHARE_DELETE, и forceUnlock честно ответит, что снять
             // не вышло, — увести хранилище у работающей копии этой кнопкой
             // нельзя.
-            auto* ask = new QMessageBox(&window);
-            ask->setAttribute(Qt::WA_DeleteOnClose);
-            ask->setIcon(QMessageBox::Warning);
-            ask->setWindowTitle(QStringLiteral("zametti"));
-            ask->setText(
+            QMessageBox* ask = zametti::ZApp::instance().messageBox(
+                &window,
                 QStringLiteral("This store is already open by another copy of zametti:\n  %1")
                     .arg(root));
+            ask->setAttribute(Qt::WA_DeleteOnClose);
             ask->setInformativeText(
                 QStringLiteral("The lock is held by pid %1 on \"%2\".\n\n"
                                "Close that copy and press Retry. If it is long dead and the "
@@ -2748,8 +2744,8 @@ int main(int argc, char** argv) {
             locked = storage->lock();
             if (!locked.locked) {
                 giveUp();
-                QMessageBox::warning(
-                    &window, QStringLiteral("zametti"),
+                zametti::ZApp::instance().warn(
+                    &window,
                     note.isEmpty() ? QStringLiteral("The store is still open elsewhere:\n  %1")
                                          .arg(root)
                                    : note);
