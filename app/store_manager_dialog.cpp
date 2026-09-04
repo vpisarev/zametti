@@ -658,7 +658,7 @@ void StoreManagerDialog::render() {
 int StoreManagerDialog::ask(const ZStorageManager::Question& question) {
     // Через одну дверь окон сообщений (ZApp::messageBox) — облик общий,
     // кнопки — по вопросу модели.
-    QMessageBox* box = ZApp::instance().messageBox(this, question.text);
+    QMessageBox* box = ZApp::instance().messageBox(this, question.text, ZApp::Notice::Question);
     if (!question.detail.isEmpty()) box->setInformativeText(question.detail);
     QList<QPushButton*> buttons;
     for (int i = 0; i < question.choices.size(); ++i) {

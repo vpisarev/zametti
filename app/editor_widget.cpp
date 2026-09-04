@@ -3340,7 +3340,7 @@ void NoteEditor::save(bool interactive, bool force) {
     if (mutedComplaints_.contains(note_->path())) return;
     current_.lastComplaint = outcome.message;
 
-    QMessageBox* box = ZApp::instance().messageBox(this, outcome.message);
+    QMessageBox* box = ZApp::instance().messageBox(this, outcome.message, ZApp::Notice::Warning);
     box->setStandardButtons(QMessageBox::Ok);
     auto* mute = new QCheckBox(
         QStringLiteral("do not warn about this file again in this session"), box);

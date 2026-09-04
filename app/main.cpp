@@ -955,9 +955,10 @@ int main(int argc, char** argv) {
         // Через одну дверь окон сообщений (ZApp::messageBox): кнопки свои,
         // облик общий.
         QMessageBox* ask = zapp.messageBox(
-            &window, QFileInfo(editor.filePath()).fileName() +
-                         QStringLiteral(" changed outside the app, and there are unsaved "
-                                        "edits here."));
+            &window,
+            QFileInfo(editor.filePath()).fileName() +
+                QStringLiteral(" changed outside the app, and there are unsaved edits here."),
+            zametti::ZApp::Notice::Question);
         ask->setAttribute(Qt::WA_DeleteOnClose);
         ask->setWindowModality(Qt::NonModal);
         QPushButton* mine =
@@ -1941,9 +1942,11 @@ int main(int argc, char** argv) {
     QObject::connect(&editor, &zametti::NoteEditor::metaDamaged, &window,
                      [&](const QString& file, const QStringList& keys) {
         QMessageBox* ask = zapp.messageBox(
-            &window, QStringLiteral("The external edit of \"%1\" lost: %2.")
-                         .arg(model.titleOfId(QFileInfo(file).completeBaseName()),
-                              keys.join(QStringLiteral(", "))));
+            &window,
+            QStringLiteral("The external edit of \"%1\" lost: %2.")
+                .arg(model.titleOfId(QFileInfo(file).completeBaseName()),
+                     keys.join(QStringLiteral(", "))),
+            zametti::ZApp::Notice::Warning);
         ask->setAttribute(Qt::WA_DeleteOnClose);
         ask->setWindowModality(Qt::NonModal);
         ask->setInformativeText(
@@ -2697,7 +2700,8 @@ int main(int argc, char** argv) {
             QMessageBox* ask = zametti::ZApp::instance().messageBox(
                 &window,
                 QStringLiteral("This store is already open by another copy of zametti:\n  %1")
-                    .arg(root));
+                    .arg(root),
+                zametti::ZApp::Notice::Warning);
             ask->setAttribute(Qt::WA_DeleteOnClose);
             ask->setInformativeText(
                 QStringLiteral("The lock is held by pid %1 on \"%2\".\n\n"

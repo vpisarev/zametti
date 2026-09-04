@@ -140,12 +140,14 @@ public:
     // ОДНА ДВЕРЬ ДЛЯ ВСЕХ ОКОН-СООБЩЕНИЙ (вопрос, предупреждение, сведение), и
     // выглядят они одинаково: рисует Qt, а не система (на маке родной NSAlert
     // ставил значок приложения и свои кнопки, и «Delete permanently?» выбивался
-    // из стиля рядом с вопросом истории — снимок владельца, 04.09.2026), без
-    // значка (цветных значков в программе нет), шрифтом оболочки, с заголовком
-    // «zametti». Кнопки добавляет зовущий. Окно с родителем; кто создал —
-    // тот и удаляет (ask ставит WA_DeleteOnClose сам). Сторож:
+    // из стиля рядом с вопросом истории — снимок владельца, 04.09.2026), со
+    // стандартным значком Qt ПО РОДУ окна (большой знак вопроса у вопроса —
+    // просьба владельца: без значков окна скучные), шрифтом оболочки, с
+    // заголовком «zametti». Кнопки добавляет зовущий. Окно с родителем; кто
+    // создал — тот и удаляет (ask ставит WA_DeleteOnClose сам). Сторож:
     // tests/message_box_check.cmake — QMessageBox строится только здесь.
-    QMessageBox* messageBox(QWidget* parent, const QString& text);
+    enum class Notice { Question, Warning, Information };
+    QMessageBox* messageBox(QWidget* parent, const QString& text, Notice kind);
     // Предупреждение и сведение: одна кнопка «OK», модально.
     void warn(QWidget* parent, const QString& text);
     void inform(QWidget* parent, const QString& text);
