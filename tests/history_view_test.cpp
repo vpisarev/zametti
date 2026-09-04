@@ -794,9 +794,10 @@ void checkShellFont() {
 }
 
 // ВОПРОС ПЕРЕД ВОССТАНОВЛЕНИЕМ — второе исключение владельца из правила «без
-// диалогов»: кнопка «Restore this one» сперва спрашивает «Revert note to the
-// snapshot from …?». «Нет» — заметка не тронута и режим идёт; «Да» — слепок
-// восстановлен, режим закрыт. Диалог модальный, отвечаем по таймеру.
+// диалогов»: кнопка «Restore this one» сперва спрашивает «Put the snapshot
+// from … on top of the undo stack?». «Нет» — заметка не тронута и режим идёт;
+// «Да» — слепок восстановлен, режим закрыт. Диалог немодальный (open), и
+// ответить ему можно его же кнопкой.
 void checkRestoreAsks() {
     const QString path = makeNoteWithHistory(
         QStringLiteral("01aaaaaaaaaa02"), note("# Вопрос\n\nстарое\n", "a"),
@@ -819,7 +820,8 @@ void checkRestoreAsks() {
         if (box == nullptr) return;
         const QString asked = box->text();
         ZT_TRUE(what + ": вопрос называет дату слепка — " + asked.toStdString(),
-                asked.startsWith(QStringLiteral("Revert note to the snapshot from ")) &&
+                asked.startsWith(QStringLiteral("Put the snapshot from ")) &&
+                    asked.contains(QStringLiteral(" on top of the undo stack")) &&
                     asked.endsWith(QLatin1Char('?')));
         ZT_TRUE(what + ": по умолчанию — «No»", box->defaultButton() == box->button(QMessageBox::No));
         box->button(answer)->click();
