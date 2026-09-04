@@ -115,6 +115,41 @@ void checkChanged() {
     }
 }
 
+// СЧЁТ ПО СТОРОНАМ — как `git --numstat`: изменённая строка это одна убранная
+// и одна добавленная. Баннер истории пишет «+m/−n», и числа обязаны сходиться
+// с тем, что человек видит на поле знаками «+» и «−».
+void checkSideCounts() {
+    // Соотношение со строками результата — на трёх чистых случаях и на одном
+    // смешанном, чью форму выбирает Майерс (какую именно — не наше дело).
+    const auto agree = [](const std::string& what, const diff::Result& result) {
+        int added = 0;
+        int removed = 0;
+        for (const diff::Row& row : result.rows) {
+            if (row.mark == diff::Mark::Added || row.mark == diff::Mark::Changed) ++added;
+            if (row.mark == diff::Mark::Removed || row.mark == diff::Mark::Changed) ++removed;
+        }
+        ZT_EQ(what + ": добавлено = добавленные + изменённые", num(added), num(result.added));
+        ZT_EQ(what + ": убрано = убранные + изменённые", num(removed), num(result.removed));
+    };
+    const diff::Result add = compareNotes(note("# З\n\nОдин.\n", "a"),
+                                          note("# З\n\nОдин.\n\nДва.\n", "b"));
+    ZT_TRUE("дописали: +2/−0", add.added == 2 && add.removed == 0);
+    agree("дописали", add);
+    const diff::Result cut = compareNotes(note("# З\n\nОдин.\n\nДва.\n", "a"),
+                                          note("# З\n\nОдин.\n", "b"));
+    ZT_TRUE("стёрли: +0/−2", cut.added == 0 && cut.removed == 2);
+    agree("стёрли", cut);
+    const diff::Result fix = compareNotes(note("# З\n\nОдин.\n", "a"),
+                                          note("# З\n\nОдин с добавкой.\n", "b"));
+    ZT_TRUE("поправили строку: +1/−1", fix.added == 1 && fix.removed == 1);
+    agree("поправили", fix);
+    agree("смешанный",
+          compareNotes(note("# З\n\nОдин.\n\nДва.\n\nТри.\n", "a"),
+                       note("# З\n\nОдин с добавкой.\n\nТри.\n\nЧетыре.\n\nПять.\n", "b")));
+    const diff::Result same = compareNotes(note("# З\n\nОдин.\n", "a"), note("# З\n\nОдин.\n", "b"));
+    ZT_TRUE("у одинаковых — нули по обеим сторонам", same.added == 0 && same.removed == 0);
+}
+
 // ПЕРЕСТАНОВКА. Два абзаца поменяли местами; ждём удаление плюс добавление, а
 // не «изменены обе строки»: строки-то не менялись, менялся их порядок, и
 // выдумывать им родство было бы враньём.
@@ -293,6 +328,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkAdded();
     checkRemoved();
     checkChanged();
+    checkSideCounts();
     checkSwapIsDeleteAndAdd();
     checkBlocksAndLinesAgree();
     checkRemovedTail();

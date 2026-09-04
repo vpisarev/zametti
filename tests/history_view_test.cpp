@@ -41,7 +41,11 @@
 #include <QListWidget>
 #include <QScrollBar>
 #include <QTemporaryDir>
+#include <QLabel>
+#include <QPushButton>
 #include <QTest>
+
+#include <cmath>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFrame>
@@ -147,6 +151,19 @@ void checkBasics() {
     ZT_EQ("живой буфер не тронут", liveBefore.toStdString(),
           rig.editor->document()->toPlainText().toStdString());
     ZT_TRUE("редактор не переводился в «только чтение»", !rig.editor->isReadOnly());
+    // «+m/−n» В БАННЕРЕ — своей надписью, числа те же, что у сравнения. Хвостом
+    // строки слепка счёт резался многоточием первым (снимок владельца).
+    {
+        const QString want = QStringLiteral("+%1/−%2")
+                                 .arg(rig.tl()->addedLines())
+                                 .arg(rig.tl()->removedLines());
+        ZT_TRUE("есть и добавленные, и убранные: " + want.toStdString(),
+                rig.tl()->addedLines() > 0 && rig.tl()->removedLines() > 0);
+        bool shown = false;
+        for (QLabel* label : rig.view->findChildren<QLabel*>())
+            if (label->text() == want) shown = true;
+        ZT_TRUE("баннер показывает " + want.toStdString(), shown);
+    }
 
     // УБРАННЫЕ СТРОКИ ВИДНЫ СВОИМ ТЕКСТОМ. «Второй абзац.» исчез — он в
     // документе разности красным, а сводки «удалено: N» нет.
@@ -677,6 +694,74 @@ void checkOpenLeaves() {
 
 // На корпусе: документ разности построчно согласован со сравнением — каждая
 // строка сравнения на месте, убранные и добавленные сходятся по счёту.
+// ШРИФТ ОБОЛОЧКИ — У ВСЕГО ВИДА ИСТОРИИ, а не только у списка записей.
+// Снимок владельца (мак, 04.09.2026): в одной строке баннера три гарнитуры —
+// надпись шрифтом приложения, кнопки системным шрифтом Aqua, список своим.
+// На маке у QPushButton классовый шрифт платформы, и общий
+// QApplication::setFont его не перекрывает, — перекрывает только шрифт,
+// поставленный виджету. Спрашиваем каждого ребёнка, который что-то пишет:
+// надписи, кнопки, список — все обязаны отвечать одной гарнитурой и одним
+// кеглем. Текст разности в счёт не идёт: у него кегль моноширинного.
+void checkShellFont() {
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01ffffffffff01"), note("# Шрифт\n\nстрока\n", "a"),
+        note("# Шрифт\n\nстрока другая\n", "b"));
+    Rig rig;
+    ZT_TRUE("вошли", rig.open(path));
+    rig.show();
+
+    QFont shell(QStringLiteral("IBM Plex Sans SemiCondensed"));
+    shell.setPointSizeF(17.5);   // кегль, которого нет ни у кого по умолчанию
+    rig.view->setShellFont(shell);
+    QApplication::processEvents();
+
+    int seen = 0;
+    const auto probe = [&](QWidget* widget, const std::string& what) {
+        if (widget->parentWidget() == nullptr || widget->window() != &rig.window) return;
+        // Дети текста разности (полосы прокрутки, вьюпорт) — не оболочка.
+        for (QWidget* up = widget; up != nullptr; up = up->parentWidget())
+            if (up == &rig.text()) return;
+        ++seen;
+        const QFont got = widget->font();
+        ZT_EQ(what + ": гарнитура", shell.family().toStdString(), got.family().toStdString());
+        ZT_TRUE(what + ": кегль " + num(int(got.pointSizeF() * 10)),
+                std::fabs(got.pointSizeF() - shell.pointSizeF()) < 0.01);
+    };
+    for (QLabel* label : rig.view->findChildren<QLabel*>())
+        probe(label, "надпись «" + label->text().left(24).toStdString() + "»");
+    for (QPushButton* button : rig.view->findChildren<QPushButton*>())
+        probe(button, "кнопка «" + button->text().toStdString() + "»");
+    for (QListWidget* list : rig.view->findChildren<QListWidget*>()) probe(list, "список записей");
+    // Две надписи и четыре кнопки баннера, заголовок, крестик и список
+    // таймлайна — меньше девяти значит, что кого-то не спросили.
+    ZT_TRUE("спрошены все, кто пишет: " + num(seen), seen >= 9);
+
+    // Надпись слепка после смены шрифта режется заново, а не остаётся с
+    // многоточием от прежних метрик: полный текст хранится в подсказке.
+    QLabel* snapshot = nullptr;
+    for (QLabel* label : rig.view->findChildren<QLabel*>())
+        if (label->toolTip().startsWith(QStringLiteral("Snapshot from"))) snapshot = label;
+    ZT_TRUE("надпись слепка найдена", snapshot != nullptr);
+    if (snapshot != nullptr)
+        ZT_TRUE("и её шрифт — оболочки",
+                snapshot->fontMetrics().height() == QFontMetrics(shell).height());
+
+    // ПОДСВЕТКА «RESTORE THIS ONE» (печатающая клавиша в слепке) ставит кнопке
+    // stylesheet с рамкой — и шрифт кнопки обязан пережить это: stylesheet на
+    // виджете отключает наследование, и без явного шрифта кнопка на 1,2 с
+    // прыгала бы в системный.
+    QTest::keyClick(&rig.text(), Qt::Key_X);
+    QApplication::processEvents();
+    for (QPushButton* button : rig.view->findChildren<QPushButton*>()) {
+        if (button->text() != QStringLiteral("Restore this one")) continue;
+        ZT_TRUE("подсветка стоит", !button->styleSheet().isEmpty());
+        ZT_EQ("шрифт кнопки под подсветкой — оболочки", shell.family().toStdString(),
+              button->font().family().toStdString());
+        ZT_TRUE("и кегль тот же", std::fabs(button->font().pointSizeF() - 17.5) < 0.01);
+    }
+    rig.controller.leave();
+}
+
 void checkCorpus() {
     if (g_corpus.isEmpty()) {
         std::fprintf(stderr, "ПРОПУЩЕНО: корпус не задан — согласованность только на придуманных "
@@ -860,6 +945,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkBaseSwitch();
     checkCopyIsRawText();
     checkOpenLeaves();
+    checkShellFont();
     checkCorpus();
     writeShots(zt::TestData::outDir(QStringLiteral("history-view")));
 
