@@ -3374,6 +3374,70 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "probe: history mode %s\n",
                              history.enter() ? "entered" : "did not enter");
             });
+        // ZAMETTI_PROBE_REPLACE_UNDO=<id>,<искомое>,<замена> — сценарий владельца
+        // в живом окне (05.09.2026): открыть заметку, Ctrl+H, набрать запрос и
+        // замену, нажать Replace, потом Ctrl+Z в поле замены, Ctrl+Y там же,
+        // Ctrl+Z и Ctrl+Shift+Z в поле запроса. Ждём: отмена откатывает замену
+        // В ЗАМЕТКЕ, повтор возвращает её, а поля панели остаются как набраны.
+        // Нажатия — событиями прямо в поле: это та же дорога, что у клавиатуры
+        // после ShortcutOverride (ярлыка окна на Ctrl+Z нет, так что она одна).
+        if (const QByteArray spec = qgetenv("ZAMETTI_PROBE_REPLACE_UNDO"); !spec.isEmpty())
+            QTimer::singleShot(ms / 2, &window, [&, spec] {
+                const QList<QByteArray> parts = spec.split(',');
+                if (!model.isStore() || parts.size() != 3) return;
+                const QString what = QString::fromUtf8(parts[1]);
+                const QString with = QString::fromUtf8(parts[2]);
+                editor.openFile(zapp.storage()->pathOf(QString::fromUtf8(parts[0]).trimmed()),
+                                true);
+                QCoreApplication::processEvents();
+                const auto count = [&] { return int(editor.toPlainText().count(what)); };
+                const auto type = [](QWidget* field, const QString& text) {
+                    field->setFocus();
+                    for (const QChar ch : text) {
+                        QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier,
+                                        QString(ch));
+                        QApplication::sendEvent(field, &press);
+                    }
+                    QCoreApplication::processEvents();
+                };
+                const auto press = [](QWidget* field, Qt::Key key, Qt::KeyboardModifiers mods) {
+                    QKeyEvent down(QEvent::KeyPress, key, mods);
+                    QApplication::sendEvent(field, &down);
+                    QCoreApplication::processEvents();
+                };
+                const int before = count();
+                openFind(zametti::FindBar::Mode::Replace);   // Ctrl+H
+                const QList<QLineEdit*> fields = findBar.findChildren<QLineEdit*>();
+                QToolButton* replaceButton = nullptr;
+                for (QToolButton* button : findBar.findChildren<QToolButton*>())
+                    if (button->text() == QStringLiteral("Replace")) replaceButton = button;
+                if (fields.size() < 2 || replaceButton == nullptr) {
+                    std::fprintf(stderr, "probe replace-undo: panel has no fields\n");
+                    return;
+                }
+                type(fields[0], what);   // поле открыто с выделенным прежним запросом
+                type(fields[1], with);
+                replaceButton->click();
+                const int replaced = count();
+                press(fields[1], Qt::Key_Z, Qt::ControlModifier);
+                const int undone = count();
+                press(fields[1], Qt::Key_Y, Qt::ControlModifier);
+                const int redone = count();
+                press(fields[0], Qt::Key_Z, Qt::ControlModifier);
+                const int undoneAgain = count();
+                press(fields[0], Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+                const int redoneAgain = count();
+                std::fprintf(stderr,
+                             "probe replace-undo: '%s' before=%d replaced=%d | replace field: "
+                             "Ctrl+Z=%d Ctrl+Y=%d | find field: Ctrl+Z=%d Ctrl+Shift+Z=%d | "
+                             "fields='%s' '%s' focus=%s\n",
+                             what.toUtf8().constData(), before, replaced, undone, redone,
+                             undoneAgain, redoneAgain, fields[0]->text().toUtf8().constData(),
+                             fields[1]->text().toUtf8().constData(),
+                             QApplication::focusWidget()
+                                 ? QApplication::focusWidget()->metaObject()->className()
+                                 : "none");
+            });
         if (const QByteArray shot = qgetenv("ZAMETTI_PROBE_SHOT"); !shot.isEmpty())
             QTimer::singleShot(ms * 3 / 4, &window, [&window, shot] {
                 window.grab().save(QString::fromLocal8Bit(shot));
