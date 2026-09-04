@@ -495,24 +495,36 @@ The numbers on the corpus's largest note (239 KB, 200 edits): full snapshots
 
 Key 8 in the header answers the question "has this history been cleaned",
 not "will I manage to read it" — the latter is answered by the format
-version, and mixing them into one number is not allowed. No key at all means
-**v0**, a journal written before stage 10; `"0.1"` — the history has been
-cleaned by the stage 9 rules (equivalent records do not exist, a small edit
-replaces the previous one, returning to a recorded state collapses the tail).
+version, and mixing them into one number is not allowed. The value names a
+**rule set**, not a format. No key at all means **v0**, a journal written
+before stage 10; `"0.1"` — the history has been cleaned by the stage 9 rules
+(equivalent records do not exist, a small edit replaces the previous one,
+returning to a recorded state collapses the tail); `"0.2"` (04.09.2026) — the
+same rules with three fixes: a "small edit" is measured on the body without
+the `modified`/`version` stamps (by raw bytes a one-letter edit at the end of
+a note weighed the whole body from the header down to that letter, and the
+rule never fired); amendment records and voided records are transparent to
+the rules (they lie in the tail after every past collapse, and the rules
+used to stop at them, so they only worked until the first return in a note's
+history); the freshness guard applies to the records being voided, not to
+the record being returned to (an old equal record is the anchor, only the
+fresh work after it is voided). When the rule set changes, journals of the
+previous set are cleaned again, lazily.
 
-Cleaning is **lazy and per-note**: a journal is brought to 0.1 at the first
-write into it and at the first read done for the sake of this note's history
-(Ctrl+Z, entering history, history search). Simply opening a note does not
-touch the journal. Corpus-wide sweeps (`verify` and the future all-notes
-search) **never rewrite** journals: otherwise the very first sweep would
-become a global cleaning utility through the back door.
+Cleaning is **lazy and per-note**: a journal is brought to the current rule
+set at the first write into it and at the first read done for the sake of
+this note's history (Ctrl+Z, entering history, history search). Simply
+opening a note does not touch the journal. Corpus-wide sweeps (`verify` and
+the future all-notes search) **never rewrite** journals: otherwise the very
+first sweep would become a global cleaning utility through the back door.
 
 The migration differs from live writing in exactly one thing — the
-**freshness guard**: live collapsing touches only fresh records (returning to
-a month-old state is legitimate), migration cleans retroactively, paying no
-attention to age. Untouchable in both modes: the anchor record, the
-tombstone, the last record and the `external` marks, across which collapsing
-never jumps.
+**freshness guard**: live collapsing voids only fresh records (returning to
+a month-old state is legitimate and is recorded as a return to that old
+record, but a month of history is not erased for it), migration cleans
+retroactively, paying no attention to age. Untouchable in both modes: the
+anchor record (a small edit never replaces the first content record), the
+tombstone, and the `external` marks, across which collapsing never jumps.
 
 By hand (for testing without the UI): `zametti store history compress
 <id | path>` — forces the same function and prints what came out. There is
@@ -532,8 +544,10 @@ planned.
   torn tail (a crash or a power cut during a write) is a normal case: it is
   cut off on open and on the first append, and the journal is never
   considered corrupt because of its last record;
-- **deduplication is free:** a save happens only when the hash changes, so
-  there are never two identical snapshots in a row.
+- **no equivalent records:** a save happens only when the content changes
+  apart from the stamps, and the rules above collapse a return to an
+  already recorded state — so two equivalent snapshots never stand in the
+  journal, neither in a row nor one apart.
 
 ### Thinning
 

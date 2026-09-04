@@ -100,22 +100,35 @@ std::string NoteHeader::toBytes() const {
 // отменой к состоянию, записанному ДО неё, считался бы новой записью журнала
 // (набор HistoryWrite это и поймал), а заметка, вернувшаяся к исходному
 // тексту, — изменённой.
+QByteArray NoteHeader::strippedOfStamps(const QByteArray& text) {
+    const qsizetype head = text.indexOf("-->");
+    if (head < 0) return text;
+    QByteArray out = text;
+    for (const char* key : {"\nmodified:", "\nversion:"}) {
+        const qsizetype at = out.indexOf(key);
+        if (at < 0 || at > out.indexOf("-->")) continue;
+        const qsizetype eol = out.indexOf('\n', at + 1);
+        if (eol < 0) continue;
+        out.remove(at, eol - at);
+    }
+    return out;
+}
+
 bool NoteHeader::sameFileApartFromStamps(const QByteArray& a, const QByteArray& b) {
-    const auto stripped = [](const QByteArray& text) {
-        const qsizetype head = text.indexOf("-->");
-        if (head < 0) return text;
-        QByteArray out = text;
-        for (const char* key : {"\nmodified:", "\nversion:"}) {
-            const qsizetype at = out.indexOf(key);
-            if (at < 0 || at > out.indexOf("-->")) continue;
-            const qsizetype eol = out.indexOf('\n', at + 1);
-            if (eol < 0) continue;
-            out.remove(at, eol - at);
-        }
-        return out;
-    };
     if (a.size() == b.size() && a == b) return true;
-    return stripped(a) == stripped(b);
+    return strippedOfStamps(a) == strippedOfStamps(b);
+}
+
+int NoteHeader::changedCharsApartFromStamps(const QByteArray& rawA, const QByteArray& rawB) {
+    const QByteArray a = strippedOfStamps(rawA);
+    const QByteArray b = strippedOfStamps(rawB);
+    const qsizetype shared = qMin(a.size(), b.size());
+    qsizetype prefix = 0;
+    while (prefix < shared && a[prefix] == b[prefix]) ++prefix;
+    qsizetype suffix = 0;
+    while (suffix < shared - prefix && a[a.size() - 1 - suffix] == b[b.size() - 1 - suffix])
+        ++suffix;
+    return int(qMax(a.size(), b.size()) - prefix - suffix);
 }
 
 bool NoteHeader::archived() const {

@@ -3,6 +3,7 @@
 #include "zstorage.h"
 
 #include "document_pieces.h"   // sameNoteEssence — «та же заметка» решает формат, не журнал
+#include "note_header.h"       // мерка мелкой правки без штампов — тоже дело формата
 
 #include "zstd.h"
 
@@ -1023,22 +1024,42 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
         }
     }
 
+    // Записи, которые для правил ПРОЗРАЧНЫ: гашение (содержимого не заявляет)
+    // и погашенное (байт у него уже нет). После любого прошлого схлопывания
+    // в хвосте лежат и то и другое, и обрыв обхода на них означал, что
+    // правила работают только до первого возврата в истории заметки — ровно
+    // так у владельца и вышло (снимок 04.09.2026: буква и её отмена дали две
+    // записи одной минуты).
+    const auto transparent = [&](int i) {
+        return !journal.at(i).statesContent() || journal.isVoided(i);
+    };
+
     int sameAs = -1;
     for (int i = kind == ZJournal::Kind::Save ? journal.size() - 1 : -1; i >= 0; --i) {
         const ZJournal::Record& entry = journal.at(i);
-        if (stale(entry.time())) break;      // дальше история старая, её не трогаем
-        if (!entry.hasSnapshot()) break;   // надгробие: за него не заглядываем
+        if (entry.kind() == ZJournal::Kind::Tombstone) break;   // за надгробие не заглядываем
+        if (transparent(i)) continue;
         const QByteArray older = snapshotOf(i);
         if (older.isNull()) break;         // слепок не собрался — дальше не идём
         if (sameNoteEssence(older, fresh)) {
             sameAs = i;   // нашли; но, может, ещё старее лежит такая же
+            // СТОРОЖ СВЕЖЕСТИ — У ГАСИМЫХ, А НЕ У НАЙДЕННОЙ: старая равная
+            // запись никуда не девается, она опора; гасится только то, что
+            // после неё, а оно всё свежее (обход шёл от конца и старую
+            // неравную не перешагнул бы). Старее неё — не заглядываем: та
+            // запись, что нашли, стала бы гасимой, а она старая.
+            if (stale(entry.time())) break;
             continue;
         }
         if (sameAs >= 0) break;                        // старее — уже другое состояние
+        if (stale(entry.time())) break;    // дальше история старая, её не трогаем
         if (entry.kind() != ZJournal::Kind::Save) break;           // чужую вешку не перепрыгиваем
     }
     if (sameAs >= 0) {
-        for (int i = sameAs + 1; i < journal.size(); ++i) step.voided.append(i);
+        // Гасятся содержательные записи после найденной; гашения и уже
+        // погашенное остаются как есть — их адреса уже уехали.
+        for (int i = sameAs + 1; i < journal.size(); ++i)
+            if (!transparent(i)) step.voided.append(i);
         step.writeNew = false;
         step.dropped = step.voided.size() + 1;   // хвост и сама новая
         return step;
@@ -1047,18 +1068,29 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
     // ЗАМЕНА ВМЕСТО ДОБАВЛЕНИЯ: мелкая правка встаёт на место прошлой записи.
     // Условий три, и все обязаны сойтись — прошлая запись свежая (её ещё не
     // поздно переписать), она тоже обычное сохранение, и версии разошлись на
-    // мелочь.
+    // мелочь. «Прошлая» — последняя запись СО СЛЕПКОМ, а не последняя в
+    // файле: за ней могут лежать гашения.
     //
-    // Меньше двух записей — это защита опорной: после замены в журнале
-    // обязана остаться хотя бы одна, а первая — то, с чего заметка начиналась,
-    // и стереть её нельзя ничем.
-    if (kind != ZJournal::Kind::Save || journal.size() < 2) return step;
-    const ZJournal::Record& back = journal.at(journal.size() - 1);
-    if (back.kind() != ZJournal::Kind::Save || !back.hasSnapshot() || stale(back.time())) return step;
-    const QByteArray tail = snapshotOf(journal.size() - 1);
+    // Опорная запись неприкосновенна: после замены в журнале обязана остаться
+    // хотя бы одна содержательная запись, а первая — то, с чего заметка
+    // начиналась, и стереть её нельзя ничем. Считаются именно содержательные и
+    // не погашенные: гашения в файле опорную не защитили бы.
+    if (kind != ZJournal::Kind::Save) return step;
+    const int back = journal.lastSnapshotIndex();
+    if (back < 0) return step;
+    int content = 0;
+    for (int i = 0; i < journal.size(); ++i)
+        if (!transparent(i)) ++content;
+    if (content < 2) return step;
+    const ZJournal::Record& last = journal.at(back);
+    if (last.kind() != ZJournal::Kind::Save || stale(last.time())) return step;
+    const QByteArray tail = snapshotOf(back);
     if (tail.isNull() || tail.isEmpty()) return step;
-    if (ZJournal::changedChars(tail, fresh) > qMax(0, rules.mergeChars)) return step;
-    step.voided.append(journal.size() - 1);
+    // Мерка — по телу без штампов (NoteHeader): штамп modified меняется на
+    // каждой записи, и по сырым байтам правка одной буквы в конце заметки
+    // весила бы всё тело от шапки до буквы.
+    if (NoteHeader::changedCharsApartFromStamps(tail, fresh) > qMax(0, rules.mergeChars)) return step;
+    step.voided.append(back);
     step.merged = 1;
     return step;
 }
@@ -1234,8 +1266,17 @@ bool ZJournal::record(ZJournal::Kind kind, const QByteArray& snapshot, QString* 
         tailKnown_ = false;   // что там теперь — неизвестно
         return false;
     }
-    tail_ = snapshot;
-    tailTime_ = now;
+    // Хвост в памяти — ТОЛЬКО ЕСЛИ НОВАЯ ЗАПИСЬ УШЛА В ФАЙЛ. Иначе последняя
+    // запись файла — гашение или прежняя, и snapshotOf по её номеру отдавал
+    // бы не её байты, а незаписанный слепок (ловушка, найденная разбором
+    // 04.09.2026; сегодня её прикрывали проверки hasSnapshot у зовущих).
+    if (step.writeNew) {
+        tail_ = snapshot;
+        tailTime_ = now;
+    } else {
+        tailKnown_ = false;
+        tailTime_ = 0;
+    }
     return true;
 }
 

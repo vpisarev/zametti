@@ -49,7 +49,7 @@ bool HistoryController::enter(int index) {
     lastIndex_ = timeline_->index();
     // О начале режима сообщаем ДО показа: слушатель на этом сигнале показывает
     // виды, а список заполняется здесь же — номер приезжает в готовый список.
-    list_.setEntries(timeline_->entries());
+    list_.setEntries(timeline_->journal());
     view_.attach(timeline_);
     for (QShortcut* shortcut : shortcuts_) shortcut->setEnabled(true);
     emit modeChanged(true);

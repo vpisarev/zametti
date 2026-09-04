@@ -104,9 +104,11 @@ class HistoryTimeline : public QWidget {
 public:
     explicit HistoryTimeline(QWidget* parent = nullptr);
 
-    // Заполнить записями. Свежие сверху: в прошлое человек идёт сверху вниз,
-    // как в списке заметок.
-    void setEntries(const QVector<ZJournal::Record>& entries);
+    // Заполнить записями журнала. Свежие сверху: в прошлое человек идёт сверху
+    // вниз, как в списке заметок. Журнал целиком, а не его записи: погашенные
+    // (isVoided) человеку не показываются, а погашенность — свойство журнала,
+    // не записи.
+    void setEntries(const ZJournal& journal);
     // Отметить показанную запись (номер в журнале, не в списке).
     void setCurrent(int index);
     // Ширина, при которой строки списка не режутся: по самой длинной записи

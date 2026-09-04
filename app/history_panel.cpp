@@ -236,7 +236,8 @@ HistoryTimeline::HistoryTimeline(QWidget* parent) : QWidget(parent) {
     });
 }
 
-void HistoryTimeline::setEntries(const QVector<ZJournal::Record>& entries) {
+void HistoryTimeline::setEntries(const ZJournal& journal) {
+    const QVector<ZJournal::Record>& entries = journal.entries();
     entries_ = entries;
     quiet_ = true;
     list_->clear();
@@ -247,8 +248,10 @@ void HistoryTimeline::setEntries(const QVector<ZJournal::Record>& entries) {
         // говорит о содержимом, смотреть в нём нечего, и строкой без имени
         // рода оно только мусорило бы список. С переходом чистки на гашение
         // адресом (m17) такая запись появляется после КАЖДОЙ чистки, а не
-        // изредка, — и без этой строки её увидел бы каждый.
-        if (!entry.statesContent()) continue;
+        // изредка, — и без этой строки её увидел бы каждый. ПОГАШЕННОЕ — тоже:
+        // байт у него нет, показать нечего, а строкой оно врало бы, что вешка
+        // есть (все остальные потребители журнала isVoided уже пропускают).
+        if (!entry.statesContent() || journal.isVoided(i)) continue;
         QString line = historyMoment(entry.time());
         if (entry.kind() != ZJournal::Kind::Save)
             line += QStringLiteral("  ·  %1").arg(historyKindName(entry.kind()));
