@@ -29,6 +29,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
+#include <QKeyEvent>
 #include <QTextBlock>
 #include <QShortcut>
 #include <QSignalSpy>
@@ -852,6 +853,90 @@ void checkQueryHistory() {
     ZT_TRUE("выше самого старого не уходим", walk.query() == QStringLiteral("третий"));
 }
 
+// ОТМЕНА ИЗ ПОЛЯ ПАНЕЛИ — ТЕКСТУ, А НЕ ПОЛЮ (сценарий владельца: заменил, не
+// понравилось, Ctrl+Z — а откатывалась буква в поле запроса, потому что
+// QLineEdit объявляет Ctrl+Z своим). Проверяется обоими полями и всеми
+// сочетаниями, какие платформа считает отменой и повтором: набор не знает, есть
+// ли здесь Ctrl+Y, — он спрашивает у QKeySequence, как и редактор.
+void checkUndoFromFindBarGoesToText() {
+    QWidget window;
+    auto* layout = new QVBoxLayout(&window);
+    zametti::NoteEditor editor;
+    zametti::FindBar bar;
+    layout->addWidget(&editor);
+    layout->addWidget(&bar);
+    // Та же одна строка, что в окне: нажатие уходит искомому виджету.
+    QObject::connect(&bar, &zametti::FindBar::textKeyPressed, &window,
+                     [&](QKeyEvent* event) { QApplication::sendEvent(&editor, event); });
+    window.resize(700, 500);
+    window.show();
+    QTest::qWait(20);
+    editor.openFile(g_root + QStringLiteral("/00000000000002.md"));
+    QTest::qWait(20);
+    const std::string before = markdownOf(blocksOf(*editor.document()));
+
+    bar.open(zametti::FindBar::Mode::Replace, QStringLiteral("сено"));
+    QTest::qWait(20);
+    editor.findMatches(zametti::makeQuery(QStringLiteral("сено")));
+    editor.stepMatch(1);
+    ZT_TRUE("замена сделана", editor.replaceCurrentMatch(QStringLiteral("солома")));
+    const std::string replaced = markdownOf(blocksOf(*editor.document()));
+    ZT_TRUE("и текст изменился", replaced != before);
+
+    const QList<QLineEdit*> fields = bar.findChildren<QLineEdit*>();
+    ZT_TRUE("оба поля на месте", fields.size() >= 2);
+    if (fields.size() < 2) return;
+    // Выделенные клавиши Undo/Redo (есть на редких клавиатурах) QTest нажать
+    // не умеет и ругается на каждую; в перебор идут сочетания с буквой.
+    const auto pressable = [](QKeySequence::StandardKey standard) {
+        QList<QKeySequence> keys;
+        for (const QKeySequence& keySequence : QKeySequence::keyBindings(standard)) {
+            const Qt::Key key = keySequence[0].key();
+            if (key != Qt::Key_Undo && key != Qt::Key_Redo) keys.push_back(keySequence);
+        }
+        return keys;
+    };
+    const QList<QKeySequence> undoKeys = pressable(QKeySequence::Undo);
+    const QList<QKeySequence> redoKeys = pressable(QKeySequence::Redo);
+    ZT_TRUE("у платформы есть отмена и повтор", !undoKeys.isEmpty() && !redoKeys.isEmpty());
+    const auto press = [](QWidget* field, const QKeySequence& keys) {
+        const QKeyCombination combo = keys[0];
+        QTest::keyClick(field, combo.key(), combo.keyboardModifiers());
+        QTest::qWait(10);
+    };
+
+    for (QLineEdit* field : fields) {
+        field->setFocus();
+        // Полю — своя правка: без починки Ctrl+Z откатил бы именно её.
+        field->setText(QStringLiteral("сено"));
+        QTest::keyClicks(field, QStringLiteral("x"));   // латиница: QTest не умеет иных знаков
+        QTest::qWait(10);
+        ZT_TRUE("буква набрана в поле", field->text() == QStringLiteral("сеноx"));
+
+        for (const QKeySequence& undo : undoKeys) {
+            press(field, undo);
+            ZT_TRUE("отмена из поля откатила замену в тексте",
+                    markdownOf(blocksOf(*editor.document())) == before);
+            ZT_TRUE("а поле осталось как было", field->text() == QStringLiteral("сеноx"));
+            // Повтор — каждым сочетанием, какое есть у платформы (Ctrl+Shift+Z,
+            // Ctrl+Y…): после каждого текст снова с заменой, и он отменяется
+            // заново перед следующим.
+            for (const QKeySequence& redo : redoKeys) {
+                press(field, redo);
+                ZT_TRUE("повтор из поля вернул замену в текст",
+                        markdownOf(blocksOf(*editor.document())) == replaced);
+                ZT_TRUE("и повтор поля не тронул", field->text() == QStringLiteral("сеноx"));
+                press(field, undo);
+                ZT_TRUE("отмена после повтора — снова исходный текст",
+                        markdownOf(blocksOf(*editor.document())) == before);
+            }
+            press(field, redoKeys.first());   // к следующему сочетанию отмены — с заменой
+            ZT_TRUE("перед следующей отменой замена на месте",
+                    markdownOf(blocksOf(*editor.document())) == replaced);
+        }
+    }
+}
+
 // Сочетания должны доходить до окна, а не застревать в редакторе: QTextEdit
 // объявляет своими куда больше сочетаний, чем кажется, и через ShortcutOverride
 // съедает их молча. На этом уже дважды ловились (Ctrl+Z и Ctrl+N), поэтому
@@ -926,6 +1011,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkRegexToggle();
     shootFindBar();
     checkQueryHistory();
+    checkUndoFromFindBarGoesToText();
     checkShortcutsReachWindow();
 
     zt::dropTree(g_root);
