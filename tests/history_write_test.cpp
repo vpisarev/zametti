@@ -363,6 +363,73 @@ void checkAcrossRestart() {
 //   было: …, M0            набрали: …, M0, M0'      отменили: …, M0
 //
 // Самая старая из одинаковых остаётся, новая не пишется вовсе.
+// СЛУЧАЙ ВЛАДЕЛЬЦА КАК ЕСТЬ (снимок 04.09.2026): в заметке, у которой уже
+// были схлопывания (в хвосте журнала — гашение и погашенная запись), заменили
+// одну букву далеко от шапки, нажали Ctrl+Z (первый Ctrl+Z пишет правленое),
+// сохранили. В истории оказались ДВЕ записи одной минуты. Ждём: ни одной
+// новой вешки — буква и её отмена схлопнулись в ничто.
+void checkLetterUndoAfterCollapse() {
+    const QString id = QStringLiteral("01aabbccddee11");
+    // Тело длиннее порога мелкой правки: буква в конце дальше 100 знаков от
+    // штампа в шапке — на снимке так и было (2 КБ, правка внизу).
+    std::string text = "# Letter\n\n";
+    for (int i = 0; i < 12; ++i) text += "line " + std::to_string(i) + " of a note long enough to matter\n\n";
+    text += "the end\n";
+    const QString path = makeNote(id, text);
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+    editor.save(false);
+    const int base = contentRecordCount(id);
+    ZT_TRUE("опорная запись есть", base >= 1);
+
+    // Прошлое схлопывание: крупная правка, отмена, запись — журнал получает
+    // гашение в хвост и погашенную запись без байт.
+    {
+        QTextCursor caret = editor.textCursor();
+        caret.movePosition(QTextCursor::End);
+        caret.insertText(QString(300, QLatin1Char('x')));
+        editor.setTextCursor(caret);
+        editor.save(false);
+        editor.undo();
+        editor.save(false, true);
+        ZT_TRUE("после первого возврата вешек столько же: " + std::to_string(contentRecordCount(id)),
+                contentRecordCount(id) == base);
+        ZT_TRUE("а гашение в хвосте есть", recordCount(id) > contentRecordCount(id));
+    }
+
+    // Буква: последний знак заметки заменяется другим. Затем Ctrl+Z и запись.
+    {
+        QTextCursor caret = editor.document()->find(QStringLiteral("the end"));
+        ZT_TRUE("хвост заметки найден", !caret.isNull());
+        caret.setPosition(caret.selectionEnd());
+        caret.movePosition(QTextCursor::PreviousCharacter, QTextCursor::KeepAnchor);
+        ZT_EQ("под кареткой последняя буква", std::string("d"), caret.selectedText().toStdString());
+        caret.insertText(QStringLiteral("D"));
+        editor.setTextCursor(caret);
+        editor.undo();            // первый Ctrl+Z после правки сначала сохраняет правленое
+        editor.save(false, true);
+    }
+    ZT_TRUE("буква и её отмена не оставили вешек: было " + std::to_string(base) + ", стало " +
+                std::to_string(contentRecordCount(id)),
+            contentRecordCount(id) == base);
+
+    // Последняя вешка — то, что в файле, и это исходный текст.
+    const std::vector<QByteArray> all = snapshots(id);
+    QFile file(path);
+    ZT_TRUE("файл читается", file.open(QIODevice::ReadOnly));
+    const QByteArray disk = file.readAll();
+    ZT_TRUE("в файле исходный текст", disk.contains("the end\n") && !disk.contains("the enD"));
+    bool tailMatches = false;
+    for (auto it = all.rbegin(); it != all.rend(); ++it)
+        if (!it->isEmpty()) {
+            tailMatches = zametti::NoteHeader::sameFileApartFromStamps(*it, disk);
+            break;
+        }
+    ZT_TRUE("последний слепок — это то, что в файле", tailMatches);
+}
+
 void checkUndoDoesNotDuplicate() {
     const QString id = QStringLiteral("01aabbccddeeff");
     const QString path = makeNote(id, "# Отмена\n\nОснова.\n");
@@ -476,7 +543,7 @@ void checkSaveMigrates() {
     editor.setTextCursor(caret);
     editor.save(false);
 
-    ZT_EQ("после первой же записи журнал чищен", std::string("0.1"),
+    ZT_EQ("после первой же записи журнал чищен", std::string(zametti::ZJournal::kCleanVersion),
           cleanVersionOf(id).toStdString());
     // Три записи с возвратом сходятся к одной, и к ней добавляется свежая.
     // Считаем ВЕШКИ: выброшенное чисткой названо записью гашения, которая
@@ -500,7 +567,7 @@ void checkHistoryReadMigrates() {
 
     zt::HistoryRig rig(editor);
     ZT_TRUE("вход в историю удался", rig.enter());
-    ZT_EQ("журнал вычищен входом в историю", std::string("0.1"),
+    ZT_EQ("журнал вычищен входом в историю", std::string(zametti::ZJournal::kCleanVersion),
           cleanVersionOf(id).toStdString());
     ZT_TRUE("и таймлайн показывает уже чистую историю: вешек " +
                 std::to_string(contentRecordCount(id)),
@@ -808,6 +875,7 @@ int ztRunSuite(int argc, char** argv) {
     checkRealEditWrites();
     checkSmallEditsReplace();
     checkUndoDoesNotDuplicate();
+    checkLetterUndoAfterCollapse();
     checkLazyTimeMigration();
     checkSameEssenceIsNotRecorded();
     checkAcrossRestart();

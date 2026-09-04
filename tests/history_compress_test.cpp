@@ -71,10 +71,10 @@ QByteArray fileBytes(const QString& path) {
 // Журнал, какие писала программа ДО этапа 10: та же последовательность записей,
 // но в шапке нет ключа версии содержимого. Иначе миграцию не на чем проверять —
 // нынешний append заводит журнал сразу чищеным.
-void makeV0(const QString& path) {
+void stampVersion(const QString& path, const QString& version) {
     QByteArray bytes = fileBytes(path);
     const QByteArray clean = ZJournal::headerBytes(QString::fromLatin1(ZJournal::kCleanVersion));
-    const QByteArray old = ZJournal::headerBytes(QString());
+    const QByteArray old = ZJournal::headerBytes(version);
     ZT_TRUE("журнал начинается нынешней шапкой", bytes.startsWith(clean));
     bytes = old + bytes.mid(clean.size());
     QFile file(path);
@@ -82,6 +82,8 @@ void makeV0(const QString& path) {
     file.write(bytes);
     file.close();
 }
+
+void makeV0(const QString& path) { stampVersion(path, QString()); }
 
 // Что дописать — по роду записи. Наборам удобно перечислять роды, а
 // именованные создатели не дают собрать неверное сочетание.
@@ -190,25 +192,32 @@ void checkRealJournal() {
 
     const ZStorage::CompressReport report = compress(h, id, false);
     ZT_EQ("версия была", std::string(), str(report.versionBefore));
-    ZT_EQ("версия стала", std::string("0.1"), str(report.versionAfter));
+    ZT_EQ("версия стала", std::string(ZJournal::kCleanVersion), str(report.versionAfter));
     ZT_EQ("записей было", num(11), num(report.recordsBefore));
     // ВОТ ОЖИДАЕМОЕ СХЛОПЫВАНИЕ, записанное явно: одиннадцать записей, шесть из
     // которых — возвраты к уже записанному состоянию (человек набирал и
-    // отменял), сходятся к пяти.
-    // Пять содержательных плюс запись гашения, называющая шесть выброшенных.
-    ZT_EQ("записей стало", num(6), num(report.recordsAfter));
-    ZT_EQ("содержательных из них", num(5), num(contentRecords(h, id)));
+    // отменял), сходятся к ДВУМ: опорной и последней.
+    //
+    // Сводом «0.1» оставалось пять (0, 15680, 15850, 15872, 15880 минут):
+    // три последние были мелкими правками одна за другой, но мерка по сырым
+    // байтам считала штамп modified и не сливала их никогда. Сводом «0.2»
+    // мерка идёт по телу, и цепочка мелких правок сливается в последнюю —
+    // ровно как десять мелких правок в checkSmallEditsReplace дают одну
+    // запись. Два содержательных плюс запись гашения, называющая девять
+    // выброшенных: шесть возвратов и три слитые правки.
+    ZT_EQ("записей стало", num(3), num(report.recordsAfter));
+    ZT_EQ("содержательных из них", num(2), num(contentRecords(h, id)));
     int addresses = 0;
     ZT_EQ("и ровно одна запись гашения", num(1), num(voidingRecords(h, id, &addresses)));
-    ZT_EQ("она называет все шесть выброшенных", num(6), num(addresses));
-    ZT_EQ("и все шесть ушли дубликатами", num(6), num(report.duplicates));
-    ZT_EQ("схлопнутых мелких правок нет", num(0), num(report.merged));
+    ZT_EQ("она называет все девять выброшенных", num(9), num(addresses));
+    ZT_EQ("шесть ушли дубликатами", num(6), num(report.duplicates));
+    ZT_EQ("и три — слитыми мелкими правками", num(3), num(report.merged));
     ZT_TRUE("файл переписан", report.rewritten);
 
     ZJournal after;
     ZT_TRUE("чищеный журнал читается", h.readJournal(id, &after, &error));
-    ZT_EQ("версия в шапке", std::string("0.1"), str(after.cleanVersion()));
-    ZT_EQ("уцелевшие записи (минуты от первой)", std::string("0 15680 15850 15872 15880"),
+    ZT_EQ("версия в шапке", std::string(ZJournal::kCleanVersion), str(after.cleanVersion()));
+    ZT_EQ("уцелевшие записи (минуты от первой)", std::string("0 15880"),
           timesOf(h, id, before.at(0).time()));
 
     // СОСТОЯНИЕ ЗАМЕТКИ НЕ ПОТЕРЯНО. Именно состояние, а не байты: из пары
@@ -358,9 +367,170 @@ void checkCleanLeftAlone(const QString& root) {
     const QByteArray bytes = fileBytes(h.journalPath(id));
 
     const ZStorage::CompressReport report = compress(h, id, false);
-    ZT_EQ("новый журнал заведён сразу чищеным", std::string("0.1"), str(report.versionBefore));
+    ZT_EQ("новый журнал заведён сразу чищеным", std::string(ZJournal::kCleanVersion),
+          str(report.versionBefore));
     ZT_TRUE("и не переписан", !report.rewritten);
     ZT_TRUE("байт в байт тот же", fileBytes(h.journalPath(id)) == bytes);
+}
+
+// --- живые правила: причины пары «11:58 / 11:58» ----------------------------
+//
+// Снимок владельца 04.09.2026: правка одной буквы и её отмена в одну минуту
+// дали ДВЕ записи истории. Разбор planStep нашёл обрывы, и каждый ниже прибит
+// своей проверкой (все были красными до починки):
+//   (а) мера мелкой правки шла по СЫРЫМ БАЙТАМ вместе со штампом modified:,
+//       который меняется на каждой записи, — одна буква весила сотни знаков;
+//   (б) запись гашения в хвосте (после ЛЮБОГО прошлого схлопывания) и
+//       погашенная запись без байт обрывали обход «возврата к записанному» и
+//       правило замены;
+//   (в) сторож свежести обрывал обход на СТАРОЙ записи, хотя гасить надо
+//       только свежие после неё — сама старая никуда не девается.
+
+// Шаг живой записи над журналом как есть — ровно то, что решает автосохранение.
+ZJournal::Step liveStep(ZStorage& h, const QString& id, const QByteArray& fresh, qint64 now) {
+    ZJournal j;
+    QString error;
+    ZT_TRUE("журнал читается", h.readJournal(id, &j, &error));
+    const auto snapshotOf = [&](int at) {
+        QByteArray out;
+        QString why;
+        if (!h.journalSnapshot(id, at, &out, &why)) return QByteArray();
+        return out;
+    };
+    return j.planStep(snapshotOf, fresh, ZJournal::Kind::Save, now, ZJournal::Rules{});
+}
+
+std::string voidedOf(const ZJournal::Step& step) {
+    std::string out;
+    for (int i : step.voided) {
+        if (!out.empty()) out += " ";
+        out += num(i);
+    }
+    return out;
+}
+
+// Длинное тело: правка одной буквы В КОНЦЕ — дальше порога от штампа в шапке.
+// Латиница: кириллица в однобайтовом литерале не помещается (-Werror в Debug).
+QByteArray longBody(char last, int stamp) {
+    std::string text;
+    for (int i = 0; i < 20; ++i)
+        text += "line " + std::to_string(i) + " of a note long enough to matter\n";
+    text += "tail ";
+    text += last;
+    return body(text.c_str(), stamp);
+}
+
+// Гашение в хвост журнала — руками, с адресами или без: так выглядит журнал
+// после любого прошлого схлопывания.
+void appendAmendment(ZStorage& h, const QString& id, qint64 time, const QVector<int>& voids) {
+    ZJournal j;
+    QString error;
+    ZT_TRUE("журнал читается", h.readJournal(id, &j, &error));
+    QVector<ZJournal::RecordRef> refs;
+    for (int at : voids) refs.append(ZJournal::RecordRef(j.at(at).time(), j.at(at).digest()));
+    ZT_TRUE("гашение дописано",
+            h.appendToJournal(id, ZJournal::NewRecord::amendment(ZJournal::Stamp::at(time)).voiding(refs),
+                              &error));
+}
+
+// (а) Мелкая правка меряется ПО ТЕЛУ БЕЗ ШТАМПОВ.
+void checkSmallEditMeasuredByBody(const QString& root) {
+    ZStorage h(root);
+    const QString id = QStringLiteral("01n6r08s8wy52h");
+    append(h, id, ZJournal::Kind::Save, kNow - 2 * kMinute, body("start", 1));
+    append(h, id, ZJournal::Kind::Save, kNow - kMinute, longBody('x', 2));
+    ZT_EQ("мерка правки — одна буква, штамп не в счёт", num(1),
+          num(NoteHeader::changedCharsApartFromStamps(longBody('x', 2), longBody('y', 3))));
+    const ZJournal::Step step = liveStep(h, id, longBody('y', 3), kNow);
+    ZT_TRUE("одна буква — мелкая правка: сливается", step.merged == 1 && step.writeNew);
+    ZT_EQ("и встаёт на место прошлой записи", std::string("1"), voidedOf(step));
+}
+
+// (б) Гашение в хвосте и погашенная запись без байт — ПРОЗРАЧНЫ для правил.
+void checkAmendmentIsTransparent(const QString& root) {
+    ZStorage h(root);
+    {
+        // Возврат к записанному через гашение и погашенную запись:
+        // A, [B погашена, байт нет], гашение, D — и приходит A'.
+        const QString id = QStringLiteral("01n6r08s8wy52i");
+        append(h, id, ZJournal::Kind::Save, kNow - 4 * kMinute, body("раз", 1));
+        append(h, id, ZJournal::Kind::Save, kNow - 3 * kMinute, body("два больше на много знаков и ещё", 2));
+        appendAmendment(h, id, kNow - 2 * kMinute, {1});
+        append(h, id, ZJournal::Kind::Save, kNow - kMinute, body("три совсем другое и тоже длинное", 3));
+        // Погашенная запись из файла УХОДИТ (её адрес — в гашении), и D стоит
+        // сразу за гашением; номер спрашиваем у журнала, а не считаем в уме.
+        ZJournal j;
+        QString error;
+        ZT_TRUE("журнал читается", h.readJournal(id, &j, &error));
+        const int d = j.size() - 1;
+        ZT_TRUE("последняя по файлу — D", j.at(d).kind() == ZJournal::Kind::Save);
+        ZT_TRUE("а перед ней гашение", j.at(d - 1).kind() == ZJournal::Kind::Amendment);
+        const ZJournal::Step step = liveStep(h, id, body("раз", 4), kNow);
+        ZT_TRUE("возврат к A найден сквозь гашение", !step.writeNew);
+        ZT_EQ("гасится только D — не гашение", num(d), voidedOf(step));
+    }
+    {
+        // Замена мелкой правкой, когда последняя запись файла — гашение.
+        const QString id = QStringLiteral("01n6r08s8wy52j");
+        append(h, id, ZJournal::Kind::Save, kNow - 3 * kMinute, body("start", 1));
+        append(h, id, ZJournal::Kind::Save, kNow - 2 * kMinute, longBody('x', 2));
+        appendAmendment(h, id, kNow - kMinute, {});
+        const ZJournal::Step step = liveStep(h, id, longBody('y', 3), kNow);
+        ZT_TRUE("мелкая правка сливается и с гашением в хвосте", step.merged == 1 && step.writeNew);
+        ZT_EQ("на место последней записи СО СЛЕПКОМ", std::string("1"), voidedOf(step));
+    }
+    {
+        // Опорная запись неприкосновенна и сквозь гашение: под ней должна
+        // остаться содержательная запись, а её нет — правка пишется рядом.
+        const QString id = QStringLiteral("01n6r08s8wy52k");
+        append(h, id, ZJournal::Kind::Save, kNow - 2 * kMinute, longBody('x', 1));
+        appendAmendment(h, id, kNow - kMinute, {});
+        const ZJournal::Step step = liveStep(h, id, longBody('y', 2), kNow);
+        ZT_TRUE("опорную мелкая правка не заменяет", step.merged == 0 && step.writeNew);
+        ZT_EQ("и ничего не гасит", std::string(), voidedOf(step));
+    }
+}
+
+// (в) Сторож свежести — у ГАСИМЫХ записей, а не у найденной.
+void checkReturnToOldRecord(const QString& root) {
+    ZStorage h(root);
+    {
+        // A старше суток, B свежая, приходит A': B — отменённая работа, гасится.
+        const QString id = QStringLiteral("01n6r08s8wy52l");
+        append(h, id, ZJournal::Kind::Save, kNow - 30 * kHour, body("раз", 1));
+        append(h, id, ZJournal::Kind::Save, kNow - kMinute, body("два больше на много знаков и ещё", 2));
+        const ZJournal::Step step = liveStep(h, id, body("раз", 3), kNow);
+        ZT_TRUE("возврат к старой записи найден", !step.writeNew);
+        ZT_EQ("гасится свежая B", std::string("1"), voidedOf(step));
+    }
+    {
+        // А если и B старая — гасить её нельзя, и возврат пишется новой записью:
+        // вернуться к состоянию месячной давности — законное дело, стирать за
+        // это месяц истории — разбой.
+        const QString id = QStringLiteral("01n6r08s8wy52m");
+        append(h, id, ZJournal::Kind::Save, kNow - 30 * kHour, body("раз", 1));
+        append(h, id, ZJournal::Kind::Save, kNow - 26 * kHour, body("два больше на много знаков и ещё", 2));
+        const ZJournal::Step step = liveStep(h, id, body("раз", 3), kNow);
+        ZT_TRUE("старую B не гасим — пишем новую запись", step.writeNew && step.voided.isEmpty());
+    }
+}
+
+// Свод правил сменился — журналы прежнего свода чистятся заново, лениво.
+// Иначе пара, накопившаяся при старых правилах, лежала бы вечно.
+void checkOldCleanIsRedone(const QString& root) {
+    ZStorage h(root);
+    const QString id = QStringLiteral("01n6r08s8wy52n");
+    append(h, id, ZJournal::Kind::Save, kNow - 3 * kMinute, body("раз", 1));
+    append(h, id, ZJournal::Kind::Save, kNow - 2 * kMinute, body("два больше на много знаков и ещё", 2));
+    append(h, id, ZJournal::Kind::Save, kNow - kMinute, body("раз", 3));
+    // Журнал, чищенный ПРЕЖНИМ сводом «0.1»: такая пара при нём оставалась.
+    stampVersion(h.journalPath(id), QStringLiteral("0.1"));
+
+    const ZStorage::CompressReport report = compress(h, id, false);
+    ZT_EQ("была версия прежнего свода", std::string("0.1"), str(report.versionBefore));
+    ZT_EQ("стала — нынешнего", std::string(ZJournal::kCleanVersion), str(report.versionAfter));
+    ZT_TRUE("а нынешний — не «0.1»", std::string(ZJournal::kCleanVersion) != "0.1");
+    ZT_EQ("и пара схлопнулась", num(1), num(contentRecords(h, id)));
 }
 
 // Живая запись и миграция расходятся ТОЛЬКО сторожем свежести. Одни и те же
@@ -430,6 +600,10 @@ static int ztRunSuite(int argc, char** argv) {
     checkAgeIgnored(dir.path());
     checkAddressByTimeAndHash(dir.path());
     checkCleanLeftAlone(dir.path());
+    checkSmallEditMeasuredByBody(dir.path());
+    checkAmendmentIsTransparent(dir.path());
+    checkReturnToOldRecord(dir.path());
+    checkOldCleanIsRedone(dir.path());
     checkLiveAndMigrationAgree(dir.path());
 
     return zt::report("history-compress");
