@@ -6,7 +6,7 @@
 //
 //   c++ -std=c++17 -fPIC $(pkg-config --cflags --libs Qt6Gui) \
 //       -o /tmp/make-ico resources/make-ico.cpp
-//   /tmp/make-ico resources/zametti_alt_512x512.png resources/zametti_alt.ico
+//   /tmp/make-ico resources/zametti_alt_lossless_512.png resources/zametti_alt.ico
 //
 // ЗАЧЕМ ВООБЩЕ. QGuiApplication::setWindowIcon() красит заголовок окна и панель
 // задач на ИСПОЛНЕНИИ, а значок самого .exe в проводнике, на рабочем столе и в
