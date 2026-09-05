@@ -394,9 +394,9 @@ CodePlate codePlate(const ZDocStyle& look, qreal scale) {
     const qreal lineUnit =
         std::round(QFontMetricsF(codeLine).height() * look.lineHeightFactor());
 
-    // Полоска и значок — от ШРИФТА ПОДПИСИ (см. codeStripHeight в settings.h):
-    // один регулятор — кегль подписи.
-    const qreal langUnit = QFontMetricsF(codeLangFont(look, scale)).height();
+    // The strip and the icon follow the CAPTION FONT (see codeStripHeight in
+    // settings.h): one knob — the caption size.
+    const qreal langUnit = QFontMetricsF(look.captionFont(scale)).height();
 
     CodePlate plate;
     plate.strip = std::round(look.codeStripHeight() * langUnit);
@@ -410,13 +410,11 @@ CodePlate codePlate(const ZDocStyle& look, qreal scale) {
     return plate;
 }
 
-QFont codeLangFont(const ZDocStyle& style, qreal scale) {
-    QFont font{QString(style.codeLangFamily())};
-    font.setPointSizeF(style.codeLangPointSize() * (scale > 0.0 ? scale : 1.0));
+QFont ZDocStyle::captionFont(qreal scale) const {
+    QFont font{QString(imageCaptionFamily())};
+    font.setPointSizeF(qMax(1.0, imageCaptionPoints() * (scale > 0.0 ? scale : 1.0)));
     return font;
 }
-
-QFont codeLangFont() { return codeLangFont(g_settings.style()); }
 
 
 QByteArray defaultSettingsJson() {

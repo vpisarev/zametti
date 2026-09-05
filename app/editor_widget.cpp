@@ -2329,7 +2329,7 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
     languageEditor_ = new LanguageEditor(note_->doc().codeLanguagesNear(firstBlockNumber),
                                          block.blockFormat().stringProperty(InfoProperty),
                                          viewport());
-    languageEditor_->setFont(codeLangFont(docStyle(), plateScale()));
+    languageEditor_->setFont(docStyle().captionFont(plateScale()));
     // Пока правят — своя надпись не рисуется, чтобы под полем ничего не было.
     setEditedCodeLanguage(firstBlockNumber);
     // Поле ввода прижато ВПРАВО, к кнопке копирования. Место под имя языка —
@@ -2341,7 +2341,7 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
     QRect box = strip;
     const int want =
         qMax(1, int(std::round(
-                   QFontMetricsF(codeLangFont(docStyle(), plateScale())).horizontalAdvance(QLatin1Char('A')) * 12)));
+                   QFontMetricsF(docStyle().captionFont(plateScale())).horizontalAdvance(QLatin1Char('A')) * 12)));
     if (box.width() > want) box.setLeft(box.right() - want);
     languageEditor_->setGeometry(box);
     languageEditor_->show();

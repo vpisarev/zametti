@@ -190,10 +190,20 @@ qreal NoteView::plateScale() const {
     if (wanted <= 1.0) return wanted;
     const CodePlate base = codePlate(docStyle(), 1.0);
     if (base.strip <= 0.0) return 1.0;
-    const qreal langUnit = QFontMetricsF(codeLangFont(docStyle(), 1.0)).height();
+    const qreal langUnit = QFontMetricsF(docStyle().captionFont(1.0)).height();
     if (langUnit <= 0.0) return 1.0;
-    // В резерв высотой strip помещается подпись высотой strip: дальше не растём.
-    return qBound(1.0, base.strip / langUnit, wanted);
+    // A label as tall as the strip fits the strip: no growth beyond that.
+    qreal scale = qBound(1.0, base.strip / langUnit, wanted);
+    // Font heights do not grow linearly with the point size (ascent and descent
+    // are rounded separately), so the label at that scale may still overshoot
+    // the reserve by a pixel — seen at 10 pt: 24.7 px in a 24 px strip. Ask the
+    // metrics and shrink until it fits; a couple of rounds is always enough.
+    for (int round = 0; round < 4 && scale > 1.0; ++round) {
+        const qreal height = QFontMetricsF(docStyle().captionFont(scale)).height();
+        if (height <= base.strip) break;
+        scale = qMax(1.0, scale * base.strip / height);
+    }
+    return scale;
 }
 
 qreal NoteView::displayScale() const {
@@ -784,11 +794,7 @@ qreal NoteView::columnWidth(const QTextBlock& block) const {
     return qMax(16.0, width);
 }
 
-QFont NoteView::captionFont() const {
-    QFont font(docStyle().imageCaptionFamily());
-    font.setPointSizeF(qMax(1.0, docStyle().imageCaptionPoints() * displayScale()));
-    return font;
-}
+QFont NoteView::captionFont() const { return docStyle().captionFont(displayScale()); }
 
 NoteView::ImageBox NoteView::imageBoxFor(const QTextBlock& block) {
     ImageBox box;
@@ -1891,7 +1897,7 @@ void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
     painter.save();
     if (!band.info.isEmpty() && !where.isEmpty() &&
         band.firstBlockNumber != editedCodeLanguage_) {
-        painter.setFont(codeLangFont(docStyle(), plateScale()));
+        painter.setFont(docStyle().captionFont(plateScale()));
         painter.setPen(docStyle().codeLangColor());
         painter.drawText(where, Qt::AlignVCenter | Qt::AlignRight, band.info);
     }

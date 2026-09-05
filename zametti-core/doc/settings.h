@@ -269,14 +269,16 @@ public:
     // копирования (решение владельца — прежде полоска была сверху и отделялась
     // чертой). Черты нет вовсе, и цвет у полоски тот же, что у подложки: это
     // не отдельная планка, а нижнее поле плашки, в котором есть что показать.
-    // ОДИН РЕГУЛЯТОР — КЕГЛЬ ПОДПИСИ (codeLangPointSize; решение владельца,
-    // refactor3): высота полоски и сторона значка копирования считаются от
-    // ШРИФТА ПОДПИСИ, а не от строки кода: крупнее кегль — выше полоска и
-    // крупнее значок, и поле ввода языка (оно и так от этого шрифта). Высота
-    // полоски — в высотах строки подписи; умолчание подобрано по замеру так,
-    // чтобы при 8.5 pt выходили прежние 22 px (14.28 × 1.55). Верхнее поле —
-    // по-прежнему в высотах строки КОДА и меньше полоски нарочно: снизу стоит
-    // надпись, сверху нужен только воздух под скругление.
+    // ONE KNOB — THE CAPTION SIZE (imageCaptionPoints; owner's decision,
+    // refactor3, and since 05.09.2026 the language name shares the image
+    // caption's font, see captionFont()): the strip height and the copy icon
+    // side are derived from the CAPTION FONT, not from the code line: a larger
+    // caption means a taller strip and a larger icon, and the language field
+    // follows the same font anyway. The strip height is in caption line
+    // heights; the default was measured so that 8.5 pt gave the former 22 px
+    // (14.28 × 1.55). The top padding stays in CODE line heights and is
+    // deliberately smaller than the strip: the label sits at the bottom, the
+    // top only needs air for the rounded corners.
     ZM_SETTING(qreal, codeStripHeight, CodeStripHeight, 1.55, 0.0, 5.0)
     ZM_SETTING(qreal, codePadTop, CodePadTop, 0.4, 0.0, 5.0)
     // Сторона значка копирования — в высотах строки подписи (0.95 × 14.28 —
@@ -295,12 +297,12 @@ public:
     // тут нужен воздух между двумя соседями, и владелец просил именно его —
     // «отодвинь надпись от значка на пару пробелов».
     ZM_SETTING(qreal, codeLangGap, CodeLangGap, 2.0, 0.0, 20.0)
-    // Имя языка набирается гарнитурой подписи, а не кода (просьба владельца):
-    // в полоске это подпись. Гарнитура — своё поле СТИЛЯ (прежде бралась у
-    // боковой панели, и геометрия плашки зависела от настроек окна); умолчание
-    // то же, что у панели. Кегль — главный регулятор полоски (см. выше).
-    ZM_SETTING_PLAIN(QString, codeLangFamily, CodeLangFamily, QStringLiteral("IBM Plex Sans SemiCondensed"))
-    ZM_SETTING(qreal, codeLangPointSize, CodeLangPointSize, 11, 4.0, 48.0)
+    // The language name is typeset in the CAPTION font (imageCaptionFamily /
+    // imageCaptionPoints, see captionFont()), not in the code font: on the
+    // strip it is a caption, the same kind of side note as the alt-text under
+    // a picture. It used to have its own family and size (11 pt); the owner
+    // asked for the picture caption's font and size instead (05.09.2026) —
+    // one knob for both, and the two labels can never drift apart.
     ZM_SETTING_PLAIN(QColor, codeLangColor, CodeLangColor, 0x7a, 0x80, 0x88)
 
     // --- маркированный список ---
@@ -414,6 +416,15 @@ public:
     // Отступ подписи от нижнего края снимка.
     ZM_SETTING(qreal, imageCaptionGap, ImageCaptionGap, 4.0, 0.0, 60.0)
     ZM_SETTING_PLAIN(QColor, imageCaptionColor, ImageCaptionColor, 0x77, 0x7e, 0x86)
+    // ONE FONT FOR EVERY CAPTION: the alt-text under a picture and the
+    // language name on the code plate are typeset with this family and size
+    // (owner's decision, 05.09.2026 — the two are the same kind of thing).
+    // `scale` is the display scale (zoom); the size never drops below 1 pt.
+    // The code plate's strip height and copy icon are derived from this font
+    // as well (codePlate), so the reserve the builder puts into the block
+    // margins and the label drawn into it can never disagree.
+public:
+    QFont captionFont(qreal scale = 1.0) const;
     // БЕЗЫМЯННАЯ ПОДПИСЬ — та, что под снимком не показывается (решение
     // владельца, 17.08.2026: «хорошие имена показывать, дурацкие скрывать»).
     // Это подписи, которые картинке дал не человек, а камера, телефон или
@@ -1351,11 +1362,9 @@ struct CodePlate {
 // known_bugs.md.
 CodePlate codePlate(const ZDocStyle& style, qreal scale = 1.0);
 inline CodePlate codePlate() { return codePlate(settings().style()); }
-
-// Шрифт имени языка в полоске: своя гарнитура и кегль из стиля, умноженный на
-// масштаб показа. От него же считаются высота полоски и значок (codePlate).
-QFont codeLangFont(const ZDocStyle& style, qreal scale = 1.0);
-QFont codeLangFont();
+// The font of the language name on the strip is the caption font:
+// ZDocStyle::captionFont(scale). The strip height and the icon are derived
+// from it as well (codePlate).
 
 
 // КАТАЛОГ НАШЕГО ХОЗЯЙСТВА — ОДИН ОТВЕТ НА ВЕСЬ ПРОЕКТ. Здесь лежат

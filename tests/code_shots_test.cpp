@@ -274,7 +274,7 @@ void checkBuilderReservesStrip() {
 void checkPlateFollowsLangSize() {
     const zametti::CodePlate base = zametti::codePlate();
     zametti::ZDocStyle big = zametti::settings().style();
-    big.setCodeLangPointSize(zametti::settings().style().codeLangPointSize() * 2.0);
+    big.setImageCaptionPoints(zametti::settings().style().imageCaptionPoints() * 2.0);
     const zametti::CodePlate grown = zametti::codePlate(big);
     check(grown.strip > base.strip, "полоска выше при крупной подписи: " + num(grown.strip) +
                                         " > " + num(base.strip));
@@ -300,17 +300,17 @@ void checkPlateFollowsLangSize() {
 void checkPlateFollowsZoom(Peek& editor) {
     const zametti::ZDocStyle& look = editor.note().style();
     const zametti::CodePlate one = zametti::codePlate(look, 1.0);
-    check(std::fabs(zametti::codeLangFont(look, 2.0).pointSizeF() -
-                    2 * zametti::codeLangFont(look, 1.0).pointSizeF()) < 0.1,
+    check(std::fabs(look.captionFont(2.0).pointSizeF() - 2 * look.captionFont(1.0).pointSizeF()) <
+              0.1,
           "кегль подписи считается от масштаба");
 
     const int undoBefore = editor.document()->availableUndoSteps();
     const qreal plainScale = editor.plateScaleForTest();
-    const QFont plain = zametti::codeLangFont(look, plainScale);
+    const QFont plain = look.captionFont(plainScale);
     editor.applyZoom(2.0);
     QTest::qWait(20);
     const qreal zoomedScale = editor.plateScaleForTest();
-    const QFont zoomed = zametti::codeLangFont(look, zoomedScale);
+    const QFont zoomed = look.captionFont(zoomedScale);
     check(zoomedScale > plainScale, "под зумом подпись крупнее: " + num(zoomedScale) + " > " +
                                         num(plainScale));
     check(zoomed.pointSizeF() > plain.pointSizeF(), "и кегль её и правда вырос");
@@ -616,14 +616,14 @@ void checkCompletionSitsAtCaret(Peek& editor) {
     };
 
     zametti::LanguageEditor whole({}, QStringLiteral("cpp"), editor.viewport());
-    whole.setFont(zametti::codeLangFont());
+    whole.setFont(zametti::settings().style().captionFont());
     whole.resize(120, 20);
     // Каретку уводим в начало: её столбик правый край не сдвинет.
     whole.setCursorPosition(0);
     const int wholeRight = rightEdge(whole);
 
     zametti::LanguageEditor typed({QStringLiteral("cpp")}, QString(), editor.viewport());
-    typed.setFont(zametti::codeLangFont());
+    typed.setFont(zametti::settings().style().captionFont());
     typed.resize(120, 20);
     QTest::keyClicks(&typed, QStringLiteral("c"));
     QTest::qWait(10);
