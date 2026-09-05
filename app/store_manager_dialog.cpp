@@ -287,14 +287,21 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
         (*line)->setObjectName(QLatin1String(name));
         (*line)->setTextInteractionFlags(Qt::TextSelectableByMouse);
         (*line)->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-        // Резерв на ДВЕ строки всегда, даже когда факт короткий: скачущая
-        // при переключении строк высота — худшее, что может делать форма.
-        (*line)->setMinimumHeight(2 * (*line)->fontMetrics().lineSpacing());
         // Факт отодвинут от полей/кнопок своей секции на ЛИШНИЙ шаг формы
         // (третья проба владельца 31.08: было dy — стало 2·dy). Ровно на этот
         // же dy ниже урезаны отступы заголовка Cloud и строки события — общие
         // вертикальные расстояния секций не изменились.
         (*line)->setContentsMargins(0, formStep(), 0, 0);
+        // Резерв на ДВЕ строки всегда, даже когда факт короткий: скачущая
+        // при переключении строк высота — худшее, что может делать форма.
+        // ВМЕСТЕ С ОТСТУПОМ ВЫШЕ: отступ лежит внутри высоты ярлыка, и резерв
+        // «две строки» без него — это полторы строки. Так и было (живая
+        // жалоба владельца 05.09.2026, .testdata/zametti_storages_dialog_defect.png):
+        // при его кегле форма не влезала в стартовую высоту окна, единственной
+        // сжимаемой строкой формы был факт, и «modified …» срезалось пополам.
+        // Минимум ярлыка — это и минимум окна: ниже него окно не сожмётся.
+        (*line)->setMinimumHeight((*line)->contentsMargins().top() +
+                                  2 * (*line)->fontMetrics().lineSpacing());
     };
     makeFactLine(&localLine_, "localLine");
     makeFactLine(&cloudLine_, "cloudLine");
@@ -407,8 +414,11 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     whole->addLayout(columns, 1);
     whole->addLayout(bottom);
     // Ширина — под кегль из настроек: на 14pt прежние 760 обрезали и путь, и
-    // подсказки полей. Высота — под форму с двумя рамками фактов.
-    resize(900, 560);
+    // подсказки полей. Высота — под форму с двумя рамками фактов, а просит
+    // форма больше (крупный кегль оболочки) — по её просьбе: окно, которому
+    // форма не влезла, сжимает строки до минимума, и первым — факт.
+    const QSize wanted = sizeHint();
+    resize(qMax(900, wanted.width()), qMax(560, wanted.height()));
 
     connect(addButton_, &QPushButton::clicked, this, &StoreManagerDialog::addStore);
     connect(removeButton_, &QPushButton::clicked, this,
