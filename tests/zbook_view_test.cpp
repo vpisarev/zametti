@@ -183,7 +183,17 @@ void checkPagesAndKeys() {
     ZT_TRUE("положение объявлено", spy.count() >= 1);
     if (spy.count() >= 1) {
         const QList<QVariant> last = spy.last();
-        ZT_EQ("глава над второй страницей", std::string("Chapter 1"), last.at(0).toString().toStdString());
+        // The chapter is the last one that began before the next page's top
+        // (owner's rule): asked of the block just before that start.
+        PageStart boundary;
+        rig.book->pageStep(+1);
+        boundary = rig.left().start();
+        rig.book->pageStep(-1);
+        const int named = boundary.line > 0 ? boundary.block : boundary.block - 1;
+        ZT_EQ("глава над второй страницей — последняя, начавшаяся до её низа",
+              rig.left().note()->doc().headingAbove(named).toStdString(),
+              last.at(0).toString().toStdString());
+        ZT_TRUE("и это глава", last.at(0).toString().startsWith(QStringLiteral("Chapter")));
         ZT_TRUE("номер страницы — 2", last.at(1).toInt() == 2);
         ZT_TRUE("число страниц известно", last.at(2).toInt() > 2);
         ZT_TRUE("процент между нулём и сотней", last.at(3).toInt() >= 0 && last.at(3).toInt() <= 100);
