@@ -219,20 +219,29 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     //
     // ФИКСИРОВАННУЮ ВЫСОТУ НЕ СТАВИТЬ. Замер 28.08.2026: кнопку НЕСТАНДАРТНОЙ
     // высоты маковский стиль не умеет — рисует родной бэзель и ОБРЕЗАЕТ его.
-    browseButton_ = new QPushButton(this);
+    // ТРОЕТОЧИЕ — ТЕКСТОМ, А НЕ ИКОНКОЙ (жалоба владельца 05.09.2026: «…»
+    // заметно выше Check и Reset cloud, а подпись Folder выше поля). Кнопке
+    // без текста, с одной иконкой, маковский стиль назначает высоту не
+    // стандартной кнопки, а свою, крупнее; строка пути росла до неё, и подпись
+    // с полем расходились. С текстом это ровно такая же кнопка, как Check.
+    // Три точки, а не знак «…»: знак в кнопке выглядит слишком узко
+    // (владелец, 05.09.2026).
+    browseButton_ = new QPushButton(QStringLiteral("..."), this);
     browseButton_->setObjectName(QStringLiteral("browse"));
     browseButton_->setToolTip(QStringLiteral("Choose another folder"));
-    {
-        const int points = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
-        browseButton_->setIcon(QIcon(toolbarIcon(QStringLiteral("ellipsis"), points,
-                                                 palette().color(QPalette::Text),
-                                                 devicePixelRatioF())));
-        // ШИРИНУ НЕ ТРОГАЕМ, И ЭТО ВАЖНО: сплющенная кнопка маковского стиля
-        // теряет фаску и садится иначе (замер 28.08.2026 — расхождение
-        // видимых центров у нетронутой кнопки 0.0 точек).
-    }
+    // ШИРИНУ И ВЫСОТУ НЕ ТРОГАЕМ, И ЭТО ВАЖНО: сплющенная кнопка маковского
+    // стиля теряет фаску и садится иначе (замер 28.08.2026 — расхождение
+    // видимых центров у нетронутой кнопки 0.0 точек).
     browseHolder_ = new QWidget(this);
-    browseHolder_->setFixedSize(browseButton_->sizeHint());
+    // РАСПОРКА — В ВЫСОТУ ПОЛЯ, А НЕ КНОПКИ. sizeHint кнопки на маке включает
+    // поля фокусного кольца (32 точки при видимых 21), строка пути росла до
+    // них, а QFormLayout подписи по вертикали не центрирует — кладёт сверху
+    // строки (qformlayout.cpp, arrangeWidgets), и подпись Folder оказывалась на
+    // пять точек выше поля (жалоба владельца 05.09.2026). Кнопка же ставится
+    // СВОЕЙ высотой, центром на распорке (placeBrowseButton): видимая фаска
+    // центрирована в её прямоугольнике (замер 28.08 — 0.0 точек).
+    browseHolder_->setFixedSize(browseButton_->sizeHint().width(),
+                                folder_->sizeHint().height());
     browseHolder_->installEventFilter(this);
 
     auto* folderRow = new QHBoxLayout;
@@ -914,7 +923,10 @@ void StoreManagerDialog::placeBrowseButton() {
     if (browseHolder_ == nullptr || browseButton_ == nullptr || formFrame_ == nullptr) return;
     const QPoint at = formFrame_->mapFrom(browseHolder_->parentWidget(),
                                           browseHolder_->pos());
-    browseButton_->setGeometry(QRect(at, browseHolder_->size()));
+    // Натуральный размер кнопки, центром по высоте распорки (см. её создание).
+    const QSize hint = browseButton_->sizeHint();
+    browseButton_->setGeometry(
+        QRect(QPoint(at.x(), at.y() + (browseHolder_->height() - hint.height()) / 2), hint));
     // НАВЕРХ СТЕКА ОБЯЗАТЕЛЬНО: поля формы реparent'ятся в рамку ПОЗЖЕ
     // кнопки (addRow) и встают выше — распорка съедала клик, кнопка выглядела
     // мёртвой (живая жалоба владельца, 30.08.2026: «не могу нажать "…"»;
