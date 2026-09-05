@@ -6,6 +6,9 @@
 
 #include "exif.h"
 #include "deleted_image.h"
+#include "fb2_book.h"
+#include "hash.h"
+#include "import.h"
 #include "times.h"
 #include "journal.h"
 #include "note_id.h"
@@ -14,10 +17,12 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QSet>
+#include <QTemporaryFile>
 
 #include <map>
 #include <set>
@@ -193,6 +198,23 @@ QString ZStorage::importNote(const QString& parentId, const QString& sourcePath,
     ZNote doc;
     doc.load(bytes);
 
+    // id и role чужого файла не наследуются: id принадлежит этому хранилищу
+    // (иначе две заметки с одним id), а role сделал бы из заметки папку.
+    doc.setHeaderValue(QStringLiteral("role"), QString());
+    return finishImport(doc, parentId, info, QString(), error);
+}
+
+// THE TAIL OF EVERY IMPORT — a note from a foreign .md and a book from an
+// fb2 alike: the times, the header envelope, the canonical self-check, the
+// file under a fresh id, the index. createdHint — what the source knows
+// about its birth (a book's document date); empty — the note's own header,
+// then the file system.
+QString ZStorage::finishImport(ZNote& doc, const QString& parentId, const QFileInfo& info,
+                               const QString& createdHint, QString* error) {
+    const auto fail = [&](const QString& why) {
+        if (error != nullptr) *error = why;
+        return QString();
+    };
     // Времена. СОЗДАНА заметка тогда, когда её написали: своя шапка знает это
     // лучше файловой системы (файл могли скопировать, и mtime стал бы датой
     // копирования), поэтому created берётся у источника.
@@ -205,7 +227,7 @@ QString ZStorage::importNote(const QString& parentId, const QString& sourcePath,
     // «сейчас»; хронология источника при этом не теряется — она в created.
     const QDateTime fsModified = info.lastModified();
     const QDateTime fsBirth = info.birthTime();
-    QString created = doc.created();
+    QString created = createdHint.isEmpty() ? doc.created() : createdHint;
     // Своего created у файла нет — годится и чужая дата правки: заметка точно
     // существовала уже тогда. Это ближе к правде, чем время появления файла на
     // диске, которое у копии равно времени копирования.
@@ -215,10 +237,7 @@ QString ZStorage::importNote(const QString& parentId, const QString& sourcePath,
                                                                                    : fsModified);
     const QString modified = store::isoNow();
 
-    // id и role чужого файла не наследуются: id принадлежит этому хранилищу
-    // (иначе две заметки с одним id), а role сделал бы из заметки папку.
     doc.setHeaderValue(QStringLiteral("id"), QString());
-    doc.setHeaderValue(QStringLiteral("role"), QString());
     doc.setParentId(parentId);   // пусто снимает ключ — «в корне»
     doc.setHeaderValue(QStringLiteral("created"), created);
     doc.setHeaderValue(QStringLiteral("modified"), modified);
@@ -243,6 +262,118 @@ QString ZStorage::importNote(const QString& parentId, const QString& sourcePath,
         return fail(QStringLiteral("could not write into %1").arg(root_));
     const QString id = idOfPath(fromUtf8(path));
     refreshNote(id);   // новая — структурная новость сама по себе
+    return id;
+}
+
+// A BOOK FROM AN FB2 FILE (brief 18). The reader gives blocks and binaries;
+// here the binaries become attachments through the ordinary picture pipeline
+// (importImage: jpeg → jxl transcode, oversize → the photo path), the blocks
+// become the note's canonical text, and the header gets the book keys, the
+// soft lock and the source's name with its BLAKE3.
+QString ZStorage::importBook(const QString& parentId, const QString& sourcePath,
+                             const ImportLimits& limits, QString* error, BookImport* report) {
+    const auto fail = [&](const QString& why) {
+        if (error != nullptr) *error = why;
+        return QString();
+    };
+    if (!store_) return fail(QStringLiteral("not a store"));
+    const QFileInfo info(sourcePath);
+    if (!info.isFile()) return fail(QStringLiteral("not a file: %1").arg(sourcePath));
+    if (!parentId.isEmpty() && !QFileInfo::exists(pathOf(parentId)))
+        return fail(QStringLiteral("folder is not in the store: %1").arg(parentId));
+
+    QElapsedTimer clock;
+    clock.start();
+    std::string raw;
+    if (!readFileBytes(sourcePath, raw))
+        return fail(QStringLiteral("cannot read: %1").arg(sourcePath));
+    const QByteArray bytes(raw.data(), qsizetype(raw.size()));
+
+    Fb2Book book;
+    QString why;
+    if (!book.load(bytes, &why))
+        return fail(QStringLiteral("%1: %2").arg(info.fileName(), why));
+    BookImport stats;
+    stats.parseMs = clock.restart();
+
+    // Pictures: every binary the text (or the cover) refers to, once.
+    QHash<QString, QString> fileNames;
+    for (const QString& id : book.referencedBinaries()) {
+        const Fb2Book::Binary* binary = book.binary(id);
+        if (binary == nullptr || binary->bytes.isEmpty()) {
+            stats.notes.append(QStringLiteral("no binary for image %1").arg(id));
+            continue;
+        }
+        // The pipeline reads a FILE (it probes the header, keeps EXIF, can
+        // transcode a JPEG byte-exactly); the binary goes through a temporary
+        // one in the system's temp zone, which Qt removes itself.
+        QString suffix = binary->contentType.section(u'/', 1, 1);
+        if (suffix.isEmpty()) suffix = QFileInfo(id).suffix().toLower();
+        if (suffix == QLatin1String("jpg")) suffix = QStringLiteral("jpeg");
+        QTemporaryFile temp(QDir::tempPath() + QStringLiteral("/zametti-fb2-XXXXXX.") +
+                            (suffix.isEmpty() ? QStringLiteral("bin") : suffix));
+        if (!temp.open() || temp.write(binary->bytes) != binary->bytes.size()) {
+            stats.notes.append(QStringLiteral("cannot spool image %1").arg(id));
+                        continue;
+        }
+        temp.flush();
+        const ImportResult picture = importImage(temp.fileName(), limits);
+        if (!picture.ok()) {
+            stats.notes.append(QStringLiteral("image %1 refused: %2").arg(id, picture.message));
+                        continue;
+        }
+        const std::string name = createAttachmentFile(toUtf8(root_), picture.extension.toStdString(),
+                                                      picture.bytes.constData(),
+                                                      std::size_t(picture.bytes.size()));
+        if (name.empty()) {
+            stats.notes.append(QStringLiteral("cannot write attachment for %1").arg(id));
+                        continue;
+        }
+        fileNames.insert(id, QString::fromStdString(name));
+        stats.attachmentBytes += picture.bytes.size();
+        ++stats.images;
+    }
+    // Every picture that lost its run — no binary, refused, unwritable.
+    stats.imagesFailed = book.rewriteImages(fileNames);
+    stats.imagesMs = clock.restart();
+
+    // The blocks become a note: written by the one writer, read back by the
+    // one reader — the canonical text is whatever that round gives.
+    const QString text = writePieces(book.pieces());
+    const QByteArray utf8 = text.toUtf8();
+    ZNote doc;
+    doc.load(std::string_view(utf8.constData(), size_t(utf8.size())));
+
+    doc.setRole(QStringLiteral("book"));
+    doc.setLocked(true);
+    for (const auto& [key, value] : book.headerFields())
+        doc.setHeaderValue(QString::fromStdString(key), QString::fromStdString(value));
+    if (!book.coverId().isEmpty()) {
+        const auto cover = fileNames.constFind(book.coverId());
+        if (cover != fileNames.constEnd()) doc.setHeaderValue(QStringLiteral("cover"), *cover);
+    }
+    doc.setHeaderValue(QStringLiteral("source"),
+                       QString::fromStdString(NoteHeader::safeValue(
+                           (info.fileName() + QStringLiteral(" blake3:") +
+                            QString::fromStdString(hashOf(raw).hex()))
+                               .toStdString())));
+
+    // The document date of the fb2 ("2019-08-30") is when the file was made,
+    // the closest thing a book has to a birth.
+    QString created;
+    const QDate documentDate = QDate::fromString(book.created().left(10), Qt::ISODate);
+    if (documentDate.isValid())
+        created = store::isoWithOffset(QDateTime(documentDate, QTime(0, 0)));
+
+    const QString id = finishImport(doc, parentId, info, created, error);
+    stats.writeMs = clock.restart();
+    stats.footnotes = book.stats().footnotes;
+    stats.references = book.stats().references;
+    stats.sections = book.stats().sections;
+    stats.tables = book.stats().tables;
+    stats.renumberedIds = book.stats().renumberedIds;
+    stats.noteBytes = qint64(doc.toMarkdown().size());
+    if (report != nullptr) *report = stats;
     return id;
 }
 
@@ -340,8 +471,13 @@ bool ZStorage::verify(Report& report) {
 
     // Цели картинок: канонное плоское имя "<id>.<ext>" и существование.
     for (const auto& [id, note] : notes) {
-        for (const Attachment& image : note->doc().attachments()) {
-            const QString href = image.id;
+        // A book's cover is referred to by the header (`cover:`), not by the
+        // text: it holds the attachment the same way an image span does.
+        QStringList targets;
+        for (const Attachment& image : note->doc().attachments()) targets.append(image.id);
+        const QString cover = note->headerValue(QStringLiteral("cover"));
+        if (!cover.isEmpty()) targets.append(cover);
+        for (const QString& href : targets) {
             if (!isLocalRelative(href)) continue;
             const qsizetype dot = href.lastIndexOf(QLatin1Char('.'));
             const bool canonical = dot > 0 && !href.contains(QLatin1Char('/')) &&

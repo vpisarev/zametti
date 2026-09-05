@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <genre>prose_classic</genre>
+      <genre>sf</genre>
+      <author><first-name>Иван</first-name><middle-name>Петрович</middle-name><last-name>Пробников</last-name></author>
+      <author><nickname>соавтор</nickname></author>
+      <book-title>Пробная книга: всё, что умеет fb2</book-title>
+      <annotation>
+        <p>Маленькая книга, в которой есть   каждый элемент таблицы §2 брифа.</p>
+        <p>&lt;p&gt;Экранированный HTML в аннотации&lt;/p&gt; снимается.</p>
+      </annotation>
+      <coverpage><image l:href="#cover.png"/></coverpage>
+      <lang>ru</lang>
+      <translator><first-name>Мария</first-name><last-name>Толмачёва</last-name></translator>
+      <sequence name="Пробники" number="3"/>
+      <date value="1999-05-01">1999</date>
+    </title-info>
+    <document-info>
+      <date value="2021-10-22">22.10.2021</date>
+    </document-info>
+    <publish-info>
+      <publisher>Издательство «Проба -- два»</publisher>
+      <city>Москва</city>
+      <year>2001</year>
+      <isbn>978-5-00000-000-1</isbn>
+    </publish-info>
+  </description>
+  <body>
+    <title><p>Пробная книга: всё, что умеет fb2</p></title>
+    <epigraph>
+      <p>Читай медленно.</p>
+      <text-author>Неизвестный автор</text-author>
+    </epigraph>
+    <section>
+      <title><p>Книга первая</p><p>Начало</p></title>
+      <epigraph>
+        <poem>
+          <stanza>
+            <v>Не сохами-то славная землюшка наша распахана…</v>
+            <v>Распахана наша землюшка лошадиными копытами,</v>
+          </stanza>
+        </poem>
+        <text-author>Старинная песня</text-author>
+      </epigraph>
+      <section>
+        <title><p>I</p></title>
+        <p>Первый абзац с <emphasis>курсивом</emphasis>, <strong>жирным</strong>, <strikethrough>зачёркнутым</strikethrough> и <code>кодом</code>; вода H<sub>2</sub>O, площадь x<sup>2</sup>.</p>
+        <p>Сноска простая<a l:href="#n_1" type="note">[1]</a> и сноска с плохим id<a l:href="#note 2" type="note">[2]</a>, и ещё раз первая<a l:href="#n_1" type="note">[1]</a>.</p>
+        <p>Ссылка наружу: <a l:href="http://example.org/book">пример</a>; ссылка внутрь: <a l:href="#sec2">вторая глава</a>.</p>
+        <subtitle>Подзаголовок</subtitle>
+        <empty-line/>
+        <p>Картинка в строке: <image l:href="#pic.png" alt="крошка"/> и всё.</p>
+        <image l:href="#pic.png" alt="Картинка целиком"/>
+        <image l:href="#missing.png"/>
+        <cite>
+          <p>Цитата из книги, <emphasis>с курсивом</emphasis>.</p>
+          <p>Второй абзац цитаты.</p>
+          <text-author>Кто-то</text-author>
+        </cite>
+        <poem>
+          <title><p>Стихи</p></title>
+          <stanza>
+            <v>Строка первая,</v>
+            <v>    строка с отступом,</v>
+            <v>строка третья.</v>
+          </stanza>
+          <stanza>
+            <v>Вторая строфа</v>
+            <v>из двух строк.</v>
+          </stanza>
+          <text-author>Поэт</text-author>
+        </poem>
+        <table>
+          <tr><th>Имя</th><th>Число</th></tr>
+          <tr><td>раз | один</td><td>1</td></tr>
+          <tr><td>два</td><td>2</td><td>лишняя</td></tr>
+        </table>
+        <p>Хвост главы.</p>
+      </section>
+      <section id="sec2">
+        <p>Секция без заголовка — перед ней черта.</p>
+        <section>
+          <title><p>Глубина три</p></title>
+          <p>Текст на третьем уровне.</p>
+        </section>
+      </section>
+    </section>
+  </body>
+  <body name="notes">
+    <title><p>Примечания</p></title>
+    <section id="n_1">
+      <title><p>1</p></title>
+      <p>Простая сноска с <emphasis>курсивом</emphasis>.</p>
+    </section>
+    <section id="note 2">
+      <title><p>2</p></title>
+      <p>Сноска из двух абзацев.</p>
+      <p>Второй абзац сноски.</p>
+    </section>
+    <section id="orphan">
+      <title><p>3</p></title>
+      <p>Сирота: на неё никто не ссылается.</p>
+    </section>
+  </body>
+  <binary id="cover.png" content-type="image/png">iVBORw0KGgoAAAANSUhEUgAAAAQAAAAGCAIAAABrW6giAAAAEElEQVR42mM4IWcDRwyUcgAx+hsxBcJzMgAAAABJRU5ErkJggg==</binary>
+  <binary id="pic.png" content-type="image/png">iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR42mMQqbgDQQxwFgBPxAhxs2VHPAAAAABJRU5ErkJggg==</binary>
+</FictionBook>

@@ -58,6 +58,7 @@ add_library(zametti-core STATIC
     store/zsystem.h             store/zsystem.cpp
     store/store.cpp
     store/import_tree.cpp
+    import/fb2_book.h           import/fb2_book.cpp
     store/archive.cpp
     store/lost_found.cpp
     store/store_identity.cpp
@@ -148,6 +149,7 @@ add_library(zametti-core STATIC
 target_include_directories(zametti-core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/format
     ${CMAKE_CURRENT_SOURCE_DIR}/store
+    ${CMAKE_CURRENT_SOURCE_DIR}/import
     ${CMAKE_CURRENT_SOURCE_DIR}/image
     ${CMAKE_CURRENT_SOURCE_DIR}/doc
     ${CMAKE_CURRENT_SOURCE_DIR}/note

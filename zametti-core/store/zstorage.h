@@ -37,6 +37,7 @@
 #include "zsystem.h"
 
 #include <QDateTime>
+#include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QHash>
 #include <QJsonObject>
@@ -592,6 +593,31 @@ public:
     // этому хранилищу, а role сделал бы из заметки папку.
     QString importNote(const QString& parentId, const QString& sourcePath, QString* error);
 
+    // A BOOK FROM AN FB2 FILE (brief 18): the same door as importNote — the
+    // note is written canonically under a fresh id, `created` comes from the
+    // book's document date, `modified` is now — plus `role: book`, the soft
+    // lock, the book keys (author, year, isbn…, see docs/info) and `source`
+    // with the BLAKE3 of the file. The pictures inside become attachments
+    // through the picture pipeline under `limits`. Returns the id; empty —
+    // the error says why (not a book, a broken file, nothing written).
+    struct BookImport {
+        int sections = 0;
+        int footnotes = 0;
+        int references = 0;
+        int images = 0;
+        int imagesFailed = 0;
+        int tables = 0;
+        int renumberedIds = 0;
+        qint64 attachmentBytes = 0;
+        qint64 noteBytes = 0;
+        qint64 parseMs = 0;
+        qint64 imagesMs = 0;
+        qint64 writeMs = 0;
+        QStringList notes;   // what went wrong with a picture, per picture
+    };
+    QString importBook(const QString& parentId, const QString& sourcePath,
+                       const ImportLimits& limits, QString* error, BookImport* report = nullptr);
+
     // --- ВВОЗ ДЕРЕВА И ПРОВЕРКА (zametti store import / verify) ---------------
     struct ImportOptions {
         QString from;
@@ -741,6 +767,10 @@ protected:
     // setReadOnly: снятие замка не может требовать снятого замка.
     bool rewriteNoteAllowed(const QString& id, const std::function<void(ZNote&)>& change,
                             const ZJournal::Rules& rules, QString* error);
+    // The tail shared by importNote and importBook: times, envelope, the
+    // canonical self-check, the file under a fresh id, the index. See store.cpp.
+    QString finishImport(ZNote& doc, const QString& parentId, const QFileInfo& info,
+                         const QString& createdHint, QString* error);
 
     // Виртуальные папки в порядке заведения: он же порядок строк в дереве.
     std::vector<VirtualFolder> virtual_;

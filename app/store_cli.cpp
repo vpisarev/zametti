@@ -2,6 +2,7 @@
 
 #include "diff.h"
 #include "document_pieces.h"
+#include "image_insert.h"
 #include "journal.h"
 #include "keyfile.h"
 #include "keyring_secrets.h"
@@ -78,6 +79,7 @@ int StoreCli::usage() const {
                  "  zametti store new --root <dir> [--parent <id>]\n"
                  "  zametti store import --root <dir> --from <srcdir>"
                  " [--apple-manifest <json>] [--dry-run]\n"
+                 "  zametti store import-book <file.fb2> --root <dir> [--parent <id>]\n"
                  "  zametti store verify --root <dir>\n"
                  "  zametti store thin --root <dir> [--dry-run]\n"
                  "  zametti store history compress <id | path to .md> [--root <dir>]\n"
@@ -210,6 +212,7 @@ int StoreCli::run() {
     if (command_ == QStringLiteral("root")) return cmdRoot();
     if (command_ == QStringLiteral("new")) return cmdNew();
     if (command_ == QStringLiteral("import")) return cmdImport();
+    if (command_ == QStringLiteral("import-book")) return cmdImportBook();
     if (command_ == QStringLiteral("archive")) return cmdArchive();
     if (command_ == QStringLiteral("remove")) return cmdRemove();
     if (command_ == QStringLiteral("resurrect")) return cmdResurrect();
@@ -586,6 +589,36 @@ int StoreCli::cmdImport() {
     const bool ok = ZStorage(root_).importTree(options, report);
     printLines(report);
     return ok ? 0 : 1;
+}
+
+// A BOOK FROM AN FB2 FILE into the store, with the numbers the report wants:
+// how long the parse, the pictures and the write took, how many footnotes,
+// references, pictures and sections the book has, how big the note came out.
+// The same verb the window calls (ZStorage::importBook); the picture limits
+// are the config's, as in the window.
+int StoreCli::cmdImportBook() {
+    if (root_.isEmpty() || positional_.isEmpty()) return usage();
+    ZStorage storage(root_);
+    if (!takeLock(storage)) return 1;
+    storage.reload();
+    QString error;
+    ZStorage::BookImport report;
+    const QString id = storage.importBook(parent_, positional_, importLimitsFrom(settings().images()),
+                                          &error, &report);
+    for (const QString& line : report.notes) std::fprintf(stderr, "%s\n", line.toUtf8().constData());
+    if (id.isEmpty()) {
+        std::fprintf(stderr, "import-book: %s\n", error.toUtf8().constData());
+        return 1;
+    }
+    std::printf("%s\n", storage.pathOf(id).toUtf8().constData());
+    std::printf("parse %lld ms, images %lld ms (%d stored, %d failed, %lld bytes), write %lld ms\n",
+                (long long)report.parseMs, (long long)report.imagesMs, report.images,
+                report.imagesFailed, (long long)report.attachmentBytes, (long long)report.writeMs);
+    std::printf("sections %d, footnotes %d, references %d, tables %d, renumbered ids %d, "
+                "note %lld bytes\n",
+                report.sections, report.footnotes, report.references, report.tables,
+                report.renumberedIds, (long long)report.noteBytes);
+    return 0;
 }
 
 // УБРАТЬ В АРХИВ И ВЕРНУТЬ ОТТУДА. Тем же путём, что окно: хранилище

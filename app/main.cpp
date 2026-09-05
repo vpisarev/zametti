@@ -5,6 +5,7 @@
 
 #include "doc_model.h"
 #include "editor_widget.h"
+#include "image_insert.h"
 #include "key_binding.h"
 #include "formula.h"
 #include "font_dpi.h"
@@ -1675,16 +1676,24 @@ int main(int argc, char** argv) {
     const auto importNotes = [&](const QString& parentId) {
         if (!model.isStore()) return;
         if (refuseLocked(parentId)) return;
+        // One door for text of both kinds (owner's decision, 05.09.2026): a
+        // markdown note and an fb2 book are told apart by the extension.
         const QStringList files = QFileDialog::getOpenFileNames(
-            &window, QStringLiteral("Import notes"), QString(),
-            QStringLiteral("Markdown notes (*.md *.markdown);;All files (*)"));
+            &window, QStringLiteral("Import text"), QString(),
+            QStringLiteral("Notes and books (*.md *.markdown *.fb2);;"
+                           "Markdown notes (*.md *.markdown);;FictionBook (*.fb2);;All files (*)"));
         if (files.isEmpty()) return;
 
         QString first;
         QStringList failed;
         for (const QString& file : files) {
             QString error;
-            const QString madeId = zapp.storage()->importNote(parentId, file, &error);
+            const bool book = QFileInfo(file).suffix().compare(QLatin1String("fb2"),
+                                                               Qt::CaseInsensitive) == 0;
+            const QString madeId =
+                book ? zapp.storage()->importBook(parentId, file,
+                                                  zametti::importLimitsFrom(zametti::settings().images()), &error)
+                     : zapp.storage()->importNote(parentId, file, &error);
             const QString made = madeId.isEmpty() ? QString() : zapp.storage()->pathOf(madeId);
             if (made.isEmpty()) {
                 failed.append(QFileInfo(file).fileName() + QStringLiteral(": ") + error);

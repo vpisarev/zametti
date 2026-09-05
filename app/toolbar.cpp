@@ -26,7 +26,7 @@ constexpr Toolbar::Spec kSpecs[] = {
 
     {B::NewNote, "file-plus-corner", "New note", "Ctrl+N", 1, false},
     {B::NewFolder, "folder-plus", "New folder", "", 1, false},
-    {B::ImportNotes, "folder-input", "Import .md", "", 1, false},
+    {B::ImportNotes, "folder-input", "Import text", "", 1, false},
     {B::InsertImages, "image-down", "Insert images", "", 1, false},
 
     {B::Export, "square-arrow-out-up-right", "Export note", "", 2, false},

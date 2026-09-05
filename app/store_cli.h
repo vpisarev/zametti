@@ -55,6 +55,7 @@ protected:
     int cmdRoot();
     int cmdNew();
     int cmdImport();
+    int cmdImportBook();
     int cmdArchive();
     int cmdRemove();
     int cmdResurrect();
