@@ -44,7 +44,6 @@
 #include <QTextDocument>
 #include <QTextFrame>
 #include <QTextLayout>
-#include <QtMath>
 #include <QTextFrameFormat>
 
 #include <algorithm>
@@ -409,7 +408,6 @@ void NoteView::repaintOverNativeCaret(QPainter& painter) {
     painter.setClipRect(clip);
     painter.fillRect(clip, pageColour());
     paintCodeBackground(painter, clip);
-    paintSelectionBackplate(painter, clip);
 
     QAbstractTextDocumentLayout::PaintContext ctx;
     ctx.palette = palette();
@@ -1997,7 +1995,6 @@ void NoteView::paintEvent(QPaintEvent* event) {
                              event->rect().width(), event->rect().height());
         paintCodeBackground(painter, visible);
         paintUnderlay(painter, visible);
-        paintSelectionBackplate(painter, visible);
     }
     QTextBrowser::paintEvent(event);
 
@@ -2295,51 +2292,5 @@ void NoteView::clearMatches() {
 void NoteView::paintBlockMargin(QPainter&, const QTextBlock&, const QRectF&) {}
 
 void NoteView::paintUnderlay(QPainter&, const QRectF&) {}
-
-void NoteView::paintSelectionBackplate(QPainter& painter, const QRectF& visible) {
-    const QTextCursor cursor = textCursor();
-    if (!cursor.hasSelection()) return;
-    const int from = cursor.selectionStart();
-    const int to = cursor.selectionEnd();
-    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
-    const QBrush brush = palette().brush(QPalette::Highlight);
-    for (QTextBlock block = blockAtHeight(visible.top()); block.isValid(); block = block.next()) {
-        const QRectF rect = layout->blockBoundingRect(block);
-        if (rect.top() > visible.bottom()) break;
-        if (rect.bottom() < visible.top()) continue;
-        const int start = block.position();
-        if (start + block.length() <= from) continue;
-        if (start >= to) break;
-        const QTextLayout* text = block.layout();
-        const QTextBlockFormat format = block.blockFormat();
-        const QPointF origin = text->position();
-        for (int i = 0; i < text->lineCount(); ++i) {
-            const QTextLine line = text->lineAt(i);
-            const int lineFrom = start + line.textStart();
-            const bool last = i == text->lineCount() - 1;
-            // Перевод строки принадлежит последней строке блока — как у Qt.
-            const int lineTo = lineFrom + line.textLength() + (last ? 1 : 0);
-            if (lineTo <= from || lineFrom >= to) continue;
-            // По горизонтали — как красит сам Qt: от начала выделения в строке
-            // до его конца, а у строк, где выделение продолжается, — до края
-            // текста строки.
-            const QRectF natural = line.naturalTextRect().translated(origin);
-            qreal x0 = natural.left();
-            qreal x1 = natural.right();
-            if (from > lineFrom) x0 = origin.x() + line.cursorToX(from - start);
-            if (to < lineTo) x1 = origin.x() + line.cursorToX(to - start);
-            if (x1 <= x0) continue;
-            // По вертикали — шаг строки, каким его считает вёрстка Qt
-            // (getLineHeightParams в qtextdocumentlayout.cpp): доля от
-            // целой естественной высоты. Так подложка стыкуется с
-            // прямоугольником Qt и не залезает в поля блока.
-            const qreal top = origin.y() + line.y();
-            const qreal pitch = format.lineHeight(
-                qCeil(line.ascent() + line.descent() + line.leading()), 1.0);
-            const qreal bottom = qMax(top + pitch, natural.bottom());
-            painter.fillRect(QRectF(x0, top, x1 - x0, bottom - top), brush);
-        }
-    }
-}
 
 }  // namespace zametti
