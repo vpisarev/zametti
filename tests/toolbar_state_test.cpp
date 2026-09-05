@@ -121,8 +121,8 @@ static int ztRunRule() {
         state.store = true;
         state.cloudConfigured = true;
         state.documentation = true;
-        expectDark("на документации гаснут три кнопки", darkOf(state),
-                   {Button::InsertImages, Button::History, Button::MarkdownEdit});
+        expectDark("на документации гаснут четыре кнопки", darkOf(state),
+                   {Button::InsertImages, Button::History, Button::Lock, Button::MarkdownEdit});
         ZT_EQ("и причина говорит про документацию", "documentation is read-only",
               s(zametti::toolbarPromiseFor(Button::MarkdownEdit, state)));
     }
@@ -135,12 +135,30 @@ static int ztRunRule() {
         state.cloudConfigured = true;
         (kind == 0 ? state.readOnlyNote : state.archivedNote) = true;
         const std::string what = kind == 0 ? "на запертой" : "на архивной";
-        expectDark(what + " гаснут две кнопки", darkOf(state),
-                   {Button::InsertImages, Button::MarkdownEdit});
+        // The lock button too: a frozen or archived note is not unlocked by it.
+        expectDark(what + " гаснут три кнопки", darkOf(state),
+                   {Button::InsertImages, Button::Lock, Button::MarkdownEdit});
         ZT_EQ(what + " причина говорит про заметку", "this note is read-only",
               s(zametti::toolbarPromiseFor(Button::InsertImages, state)));
         ZT_TRUE(what + " история горит",
                 zametti::toolbarPromiseFor(Button::History, state).isEmpty());
+    }
+
+    // THE SOFT LOCK (brief 18): a locked note is edited by the program, so
+    // nothing goes dark — the lock button itself lights, whatever the state
+    // of the lock. A BOOK hides its history (owner's decision, 05.09.2026).
+    {
+        ToolbarState state;
+        state.store = true;
+        state.cloudConfigured = true;
+        state.lockedNote = true;
+        expectDark("на запертой мягким замком не гаснет ничего", darkOf(state), {});
+        state.tempUnlocked = true;
+        expectDark("на временно открытой — тоже", darkOf(state), {});
+        state.book = true;
+        expectDark("у книги гаснет история", darkOf(state), {Button::History});
+        ZT_EQ("и причина говорит про книгу", "a book keeps its journal, but shows no history",
+              s(zametti::toolbarPromiseFor(Button::History, state)));
     }
 
     // Облако: не настроен синк — кнопка гаснет, и причина это его же слова.
@@ -156,12 +174,15 @@ static int ztRunRule() {
 
     // ПОГАШЕННЫХ БЕЗ ПРИЧИНЫ НЕ БЫВАЕТ: серая кнопка молча читается как
     // поломка. Спрашиваем на всех состояниях сразу.
-    for (int mask = 0; mask < 16; ++mask) {
+    for (int mask = 0; mask < 128; ++mask) {
         ToolbarState state;
         state.store = (mask & 1) != 0;
         state.documentation = (mask & 2) != 0;
         state.readOnlyNote = (mask & 4) != 0;
         state.archivedNote = (mask & 8) != 0;
+        state.lockedNote = (mask & 16) != 0;
+        state.tempUnlocked = (mask & 32) != 0;
+        state.book = (mask & 64) != 0;
         state.cloudConfigured = true;
         for (const Toolbar::Spec& spec : Toolbar::specs()) {
             const QString why = zametti::toolbarPromiseFor(spec.id, state);
@@ -218,8 +239,8 @@ static int ztRunWiring() {
 
     editor.openFile(storage->pathOf(locked));
     QCoreApplication::processEvents();
-    expectDark("на запертой гаснут две", darkOnBar(bar),
-               {Button::InsertImages, Button::MarkdownEdit});
+    expectDark("на запертой гаснут три", darkOnBar(bar),
+               {Button::InsertImages, Button::Lock, Button::MarkdownEdit});
     ZT_EQ("и причина написана в подсказке", "this note is read-only",
           s(bar.promiseFor(Button::MarkdownEdit)));
 
@@ -236,8 +257,8 @@ static int ztRunWiring() {
     if (!docFiles.isEmpty()) {
         docs.showFile(docFiles.first(), QStringLiteral("info:probe"));
         QCoreApplication::processEvents();
-        expectDark("на документации гаснут три", darkOnBar(bar),
-                   {Button::InsertImages, Button::History, Button::MarkdownEdit});
+        expectDark("на документации гаснут четыре", darkOnBar(bar),
+                   {Button::InsertImages, Button::History, Button::Lock, Button::MarkdownEdit});
         ZT_EQ("и причина про документацию", "documentation is read-only",
               s(bar.promiseFor(Button::History)));
 

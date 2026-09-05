@@ -95,6 +95,24 @@ public:
     // ввезённые книжки, у которых это обычное состояние.
     bool isReadOnlyNote() const;
 
+    // THE SOFT LOCK (`lock: yes`, brief 18). Unlike `access: read-only` it is
+    // the EDITOR's restriction: typing, paste and drop are refused, while the
+    // note is still written by the program (annotations, the lock itself) and
+    // moved, renamed, archived like any other. The person may open it
+    // temporarily — until the next note: the flag lives here, keyed by the
+    // note's id, never in the file, and stashCurrentNote drops it.
+    bool isLockedNote() const;
+    bool isTemporarilyUnlocked() const;
+    void setTemporaryUnlock(bool on);
+    // Put the lock on or take it off: a header edit written at once
+    // (editMeta), `modified` untouched. Emits lockChanged.
+    void setNoteLocked(bool locked);
+    // What the lock, the archive and `access: read-only` add up to: whether
+    // typing is refused right now.
+    bool isEffectivelyLocked() const;
+    // A book (`role: book`).
+    bool isBookNote() const;
+
     // СНИМКИ ЭТОЙ ЗАМЕТКИ ПО ПОРЯДКУ и номер того, на котором стоит каретка
     // (-1 — каретка не на картинке). Нужен полноэкранному просмотру: он листает
     // картинки заметки, а не всего хранилища. Пути — абсолютные, как их видит
@@ -299,6 +317,9 @@ signals:
     // живут снаружи документа: наложить их можно только до подмены.
     void fileAboutToChange(const QString& next);
     void fileChanged(const QString& path);
+    // The lock of the open note changed — put on, taken off, opened until the
+    // next note or closed back. The toolbar's lock button follows it.
+    void lockChanged();
     // Ctrl+Z дошёл до дна цепочки отмены: дальше — слепки журнала. Режим
     // истории заводит не редактор, а контроллер (это и защита от случайного
     // глубокого отката: режим объявляет себя сам — баннером и заголовком).
@@ -849,6 +870,8 @@ private:
     // Открытая заметка. Всё, что переживает уход и возврат, — здесь; смена
     // заметки это смена этого объекта целиком.
     std::shared_ptr<ZNote> note_ = std::make_shared<ZNote>();
+    // The id of the note opened "until I switch notes"; empty — none.
+    QString tempUnlockedId_;
     // И то, что уход не переживает, — здесь. Выбрасывается при каждой смене
     // заметки, целиком и без разбора.
     CurrentNoteState current_;

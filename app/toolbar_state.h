@@ -38,6 +38,16 @@ struct ToolbarState {
     bool readOnlyNote = false;
     // Открытая заметка убрана в архив: правится она только после возврата.
     bool archivedNote = false;
+    // THE SOFT LOCK (`lock: yes`, brief 18): typing is refused, the lock
+    // button shows a closed lock. tempUnlocked — the person opened it "until
+    // I switch notes": the button shows an open lock in the accent colour.
+    bool lockedNote = false;
+    bool tempUnlocked = false;
+    // A book (`role: book`): its history is not shown — the journal keeps
+    // going (it carries the book to the cloud), but a history of one's own
+    // marks and comments is not a history worth a mode (owner's decision,
+    // 05.09.2026).
+    bool book = false;
     // Синхронизация настроена. Не настроена — кнопка облака не поломка, а
     // состояние, и подсказка говорит словами, что сделать.
     bool cloudConfigured = false;
@@ -69,6 +79,14 @@ inline QString toolbarPromiseFor(Toolbar::Button id, const ToolbarState& state) 
     // на документации, у которой прошлого нет вовсе.
     if (state.documentation && id == Button::History)
         return QStringLiteral("documentation is read-only");
+    if (state.book && id == Button::History)
+        return QStringLiteral("a book keeps its journal, but shows no history");
+    // The lock is a mark of the note's own header: nothing to write on the
+    // documentation, and a frozen or archived note is not unlocked by it.
+    if (id == Button::Lock && locked)
+        return state.documentation ? QStringLiteral("documentation is read-only")
+             : state.archivedNote  ? QStringLiteral("an archived note is read-only")
+                                   : QStringLiteral("this note is read-only");
 
     // Облако: кнопка живая только у настроенного синка.
     if (id == Button::Cloud && !state.cloudConfigured) return state.cloudStatus;

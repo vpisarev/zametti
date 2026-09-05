@@ -42,6 +42,7 @@ add_executable(zametti-tests
     table_test.cpp
     golden_test.cpp
     fb2_import_test.cpp
+    lock_test.cpp
     corpus_test.cpp
     math_scan_test.cpp
     math_ir_test.cpp

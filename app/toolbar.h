@@ -63,6 +63,11 @@ public:
         // правок проваливание требует сперва размотать свои же правки, а
         // человек хочет просто посмотреть прошлое (решение владельца).
         History,
+        // THE LOCK (brief 18): closed — the note refuses typing (`lock: yes`
+        // in its header); open — it is edited as any other. A click on the
+        // open lock closes it at once; a click on the closed one asks whether
+        // to open it until the next note or to take the lock off.
+        Lock,
         // ПРАВКА ИСХОДНИКА: заметка показывается сырым markdown, как в файле.
         // Тоже ПЕРЕКЛЮЧАТЕЛЬ и тоже со своим видом: горит — идёт режим. Он
         // принадлежит ПРИЛОЖЕНИЮ, а не заметке (решение владельца): по заметкам

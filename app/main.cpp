@@ -1306,10 +1306,64 @@ int main(int argc, char** argv) {
                                   !markdown.active() && !history.active();
             state.readOnlyNote = editor.isReadOnlyNote();
             state.archivedNote = editor.isArchivedNote();
+            state.lockedNote = editor.isLockedNote();
+            state.tempUnlocked = editor.isTemporarilyUnlocked();
+            state.book = editor.isBookNote();
             state.cloudConfigured = cloudSync.configured();
             state.cloudStatus = cloudSync.statusText();
             return state;
         });
+
+    // THE LOCK BUTTON SHOWS THE LOCK: closed on a locked note, open otherwise,
+    // open in the accent colour while the note is opened "until I switch".
+    // Follows the note (fileChanged) and the lock itself (lockChanged) — the
+    // availability is the controller's, the face is the window's.
+    const auto syncLockButton = [&] {
+        const bool locked = editor.isLockedNote();
+        const bool temp = editor.isTemporarilyUnlocked();
+        toolbar.setIcon(zametti::Toolbar::Button::Lock, locked && !temp ? QStringLiteral("lock")
+                                                      : QStringLiteral("lock-open"));
+        toolbar.setTip(zametti::Toolbar::Button::Lock, temp     ? QStringLiteral("Unlocked until the next note — click to lock back")
+                                     : locked ? QStringLiteral("Unlock the note")
+                                              : QStringLiteral("Lock the note"));
+        toolbar.setAccent(zametti::Toolbar::Button::Lock, temp);
+        toolbarState.refresh();
+    };
+    QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
+                     [&](const QString&) { syncLockButton(); });
+    QObject::connect(&editor, &zametti::NoteEditor::lockChanged, &window, syncLockButton);
+    syncLockButton();
+
+    // A click on the lock. Open → closed at once, no questions: the lock is
+    // the safety, not the dialog. Temporarily open → closed back, likewise.
+    // Closed → the one question with three answers (brief 18 §3).
+    const auto toggleLock = [&] {
+        if (!model.isStore() || editor.filePath().isEmpty()) return;
+        if (editor.isTemporarilyUnlocked()) {
+            editor.setTemporaryUnlock(false);
+            return;
+        }
+        if (!editor.isLockedNote()) {
+            editor.setNoteLocked(true);
+            return;
+        }
+        QMessageBox* box = zapp.messageBox(
+            &window, QStringLiteral("This note is locked against accidental edits."),
+            zametti::ZApp::Notice::Question);
+        box->setAttribute(Qt::WA_DeleteOnClose);
+        QPushButton* until = box->addButton(QStringLiteral("Allow editing until I switch notes"),
+                                            QMessageBox::AcceptRole);
+        QPushButton* remove = box->addButton(QStringLiteral("Remove the lock"),
+                                             QMessageBox::DestructiveRole);
+        QPushButton* cancel = box->addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
+        box->setDefaultButton(cancel);
+        box->setEscapeButton(cancel);
+        QObject::connect(box, &QMessageBox::finished, box, [box, until, remove, &editor](int) {
+            if (box->clickedButton() == until) editor.setTemporaryUnlock(true);
+            else if (box->clickedButton() == remove) editor.setNoteLocked(false);
+        });
+        box->open();
+    };
 
     QObject::connect(&history, &zametti::HistoryController::modeChanged, &window, [&](bool on) {
         // Кнопки — за режимом: вход в историю поверх документации закрывает её
@@ -3035,6 +3089,9 @@ int main(int argc, char** argv) {
                 // исходником. Кнопку в согласие с режимом приводит modeChanged
                 // (вход бывает и с клавиши), здесь только просьба переключить.
                 markdown.toggle();
+                break;
+            case Button::Lock:
+                toggleLock();
                 break;
             case Button::History:
                 // ПЕРЕКЛЮЧАТЕЛЬ: горит — идёт режим истории, нажали снова —

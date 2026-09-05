@@ -588,6 +588,9 @@ void NoteEditor::trimNoteCache() {
 }
 
 void NoteEditor::stashCurrentNote() {
+    // A temporary unlock lasts until the next note: this is the one door a
+    // note leaves through, and the permission leaves with it.
+    tempUnlockedId_.clear();
     // Место каретки — свойство заметки, и живёт оно в её объекте. Но объект
     // тяжёлый и в кэше остаётся не всегда, а место каретки весит четыре байта
     // и терять его незачем. Поэтому здесь, в единственной точке ухода заметки
@@ -691,7 +694,39 @@ bool NoteEditor::isReadOnlyNote() const {
 // отдельная страница стека, как история и исходник. Здесь остаётся страховка на
 // случай ошибки в выборе страницы: редактор такую заметку правку не примет.
 void NoteEditor::applyNoteMode() {
-    setReadOnly(isArchivedNote() || isReadOnlyNote());
+    setReadOnly(isEffectivelyLocked());
+}
+
+bool NoteEditor::isLockedNote() const {
+    return note_ != nullptr && !note_->path().isEmpty() && note_->isLocked();
+}
+
+bool NoteEditor::isTemporarilyUnlocked() const {
+    return note_ != nullptr && !tempUnlockedId_.isEmpty() && tempUnlockedId_ == note_->id();
+}
+
+void NoteEditor::setTemporaryUnlock(bool on) {
+    if (note_ == nullptr || note_->path().isEmpty()) return;
+    tempUnlockedId_ = on ? note_->id() : QString();
+    applyNoteMode();
+    emit lockChanged();
+}
+
+void NoteEditor::setNoteLocked(bool locked) {
+    if (note_ == nullptr || note_->path().isEmpty()) return;
+    if (note_->isLocked() == locked && !isTemporarilyUnlocked()) return;
+    tempUnlockedId_.clear();
+    editMeta([locked](NoteHeader& meta) { meta.setLocked(locked); });
+    applyNoteMode();
+    emit lockChanged();
+}
+
+bool NoteEditor::isEffectivelyLocked() const {
+    return isArchivedNote() || isReadOnlyNote() || (isLockedNote() && !isTemporarilyUnlocked());
+}
+
+bool NoteEditor::isBookNote() const {
+    return note_ != nullptr && !note_->path().isEmpty() && note_->isBook();
 }
 
 void NoteEditor::activateNote(bool takeFocus) {
@@ -1782,6 +1817,16 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     }
     if (event->matches(QKeySequence::Redo)) {
         redo();
+        return;
+    }
+
+    // A LOCKED NOTE TAKES NO TYPING (the soft lock, the archive, `access:
+    // read-only`): everything below edits, and the base view already knows
+    // how to move, select and copy in a read-only field. Undo and redo stay
+    // above this line on purpose — the marks a locked book collects are
+    // undoable like any edit.
+    if (isReadOnly()) {
+        NoteView::keyPressEvent(event);
         return;
     }
 
