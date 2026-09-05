@@ -24,6 +24,7 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 
+#include <functional>
 #include <string>
 
 namespace {
@@ -91,7 +92,29 @@ void checkTemplate() {
     ZT_TRUE("шаблон разбирается: " + s(parseError.errorString()),
             parseError.error == QJsonParseError::NoError);
     ZT_TRUE("шаблон — объект", doc.isObject());
-    ZT_TRUE("отклонений в шаблоне нет", doc.object().isEmpty());
+    // СЕКЦИИ РАСКРЫТЫ, ЗНАЧЕНИЯ ЗАКОММЕНТИРОВАНЫ (просьба владельца 05.09.2026):
+    // разобранный шаблон — объекты в объектах и ни одного листа. Раскрытость
+    // проверяется по существу: секция реестра и вложенная группа темы обязаны
+    // быть в разобранном объекте, иначе шаблон снова «всё комментарием».
+    const std::function<bool(const QJsonObject&)> leafless = [&](const QJsonObject& node) {
+        for (auto it = node.begin(); it != node.end(); ++it)
+            if (!it.value().isObject() || !leafless(it.value().toObject())) return false;
+        return true;
+    };
+    ZT_TRUE("отклонений в шаблоне нет — одни раскрытые секции", leafless(doc.object()));
+    ZT_TRUE("секция editor раскрыта", doc.object().value(QStringLiteral("editor")).isObject());
+    ZT_TRUE("секция theme раскрыта", doc.object().value(QStringLiteral("theme")).isObject());
+    ZT_TRUE("вложенная группа темы раскрыта",
+            !doc.object().value(QStringLiteral("theme")).toObject().isEmpty());
+    // И настоящая загрузка такого файла — без ошибки и без «неизвестных» ключей:
+    // пустая секция — не отклонение и не чужак.
+    {
+        QString loadError;
+        QStringList unknown;
+        ZT_TRUE("шаблон загружается: " + s(loadError), zametti::loadSettings(&loadError, &unknown));
+        ZT_TRUE("в шаблоне нет неизвестных ключей: " + s(unknown.join(QStringLiteral(", "))),
+                unknown.isEmpty());
+    }
 
     // 2. В нём есть КАЖДЫЙ ПУБЛИЧНЫЙ ключ — иначе это не меню, а пустышка, — и
     //    у каждого своя подпись: имя без объяснения человеку ничего не даёт,
