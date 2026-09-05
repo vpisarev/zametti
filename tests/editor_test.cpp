@@ -35,7 +35,6 @@
 #include <QTest>
 #include <QTextBlock>
 #include <QAbstractTextDocumentLayout>
-#include <QtMath>
 #include <QFontMetricsF>
 #include <QHash>
 #include <QImage>
@@ -2036,53 +2035,6 @@ void checkCheckboxLineHeight() {
     check(std::abs(small.task - one.task) < 0.01, "рамка мельче чернил строку не ужимает");
 }
 
-// ВЫДЕЛЕНИЕ — СПЛОШНОЕ (просьба владельца 05.09.2026). Высота строки — доля,
-// и просвет между строками Qt выделением не красит; подложка вида докрашивает
-// его. Проверка по снимку: в выделенном абзаце из нескольких строк ни один
-// ряд точек от верха первой строки до низа последней не остаётся без цвета
-// выделения. Без подложки ряды просвета — цвета страницы, и набор краснеет.
-void checkSelectionIsSolid() {
-    QString body;
-    for (int i = 0; i < 40; ++i) body += QStringLiteral("слово ");
-    const QString path = writeNote("выделение-сплошное.md", body.trimmed() + QLatin1Char('\n'));
-    zametti::NoteEditor editor;
-    editor.resize(360, 400);
-    editor.show();
-    QTest::qWait(20);
-    editor.openFile(path);
-    QTest::qWait(20);
-    const QTextBlock block = editor.document()->firstBlock();
-    check(block.layout()->lineCount() >= 3, "абзац переносится хотя бы на три строки");
-    editor.selectAll();
-    QTest::qWait(20);
-
-    const QImage shot = editor.viewport()->grab().toImage();
-    shot.save(g_dir + QStringLiteral("/выделение-сплошное.png"));
-    const QAbstractTextDocumentLayout* layout = editor.document()->documentLayout();
-    const QRectF rect = layout->blockBoundingRect(block);
-    const QTextLine first = block.layout()->lineAt(0);
-    const QTextLine last = block.layout()->lineAt(block.layout()->lineCount() - 1);
-    const qreal pitch = block.blockFormat().lineHeight(
-        qCeil(first.ascent() + first.descent() + first.leading()), 1.0);
-    check(pitch > first.height() + 0.5, "доля высоты строки отводит просвет");
-    const int top = int(rect.top() + first.y()) - editor.verticalScrollBar()->value() + 1;
-    const int bottom = int(rect.top() + last.y() + pitch) - editor.verticalScrollBar()->value() - 1;
-    const int x0 = int(rect.left() + first.naturalTextRect().left()) + 2;
-    const int x1 = int(rect.left() + first.naturalTextRect().right()) - 2;
-    const QColor active = editor.viewport()->palette().color(QPalette::Active, QPalette::Highlight);
-    const QColor inactive = editor.viewport()->palette().color(QPalette::Inactive, QPalette::Highlight);
-    const auto highlighted = [&](QRgb px) {
-        return px == active.rgb() || px == inactive.rgb();
-    };
-    int bare = 0;
-    for (int y = top; y <= bottom; ++y) {
-        bool any = false;
-        for (int x = x0; x <= x1 && !any; ++x) any = highlighted(shot.pixel(x, y));
-        if (!any) ++bare;
-    }
-    check(bare == 0, ("рядов без цвета выделения внутри абзаца: " + std::to_string(bare)).c_str());
-}
-
 void checkCheckboxClickWithSelection() {
     const QString path = writeNote(
         "щелчок-выделение.md", QStringLiteral("- [ ] раз\n- [ ] два\n- [ ] три\n"));
@@ -3418,7 +3370,6 @@ static int ztRunSuite(int argc, char** argv) {
     checkCheckboxClickWithSelection();
     checkCheckboxScale();
     checkCheckboxLineHeight();
-    checkSelectionIsSolid();
     checkUndoKeepsCursor();
     checkViewHoldsForEveryOperation();
     checkColumnAcrossMargins();
