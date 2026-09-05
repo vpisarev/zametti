@@ -967,6 +967,12 @@ void checkShortcutsReachWindow() {
         {"F3 доходит до окна", QKeySequence(Qt::Key_F3), Qt::Key_F3, Qt::NoModifier},
         {"Shift+F3 доходит до окна", QKeySequence(Qt::SHIFT | Qt::Key_F3), Qt::Key_F3,
          Qt::ShiftModifier},
+        // Ctrl+G — на маке Cmd+G, штатное «Find Next» (просьба владельца
+        // 05.09.2026); QTextEdit его себе не забирает.
+        {"Ctrl+G доходит до окна", QKeySequence(QStringLiteral("Ctrl+G")), Qt::Key_G,
+         Qt::ControlModifier},
+        {"Ctrl+Shift+G доходит до окна", QKeySequence(QStringLiteral("Ctrl+Shift+G")),
+         Qt::Key_G, Qt::ControlModifier | Qt::ShiftModifier},
     };
     for (Probe& probe : probes) {
         auto* shortcut = new QShortcut(probe.keys, &window);
