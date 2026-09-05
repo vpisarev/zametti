@@ -132,11 +132,15 @@ qreal gapFor(MarkerStyle style, const QFont& base, const ZDocStyle& look) {
     return look.bulletTextGap() * unit;
 }
 
-qreal checkboxSide(const QFont& base) { return metricsOf(base).checkboxSide; }
+// Сторона рамки: чернила строчных с выносными, помноженные на ручку владельца
+// (layout.checkboxScale). Одна и та же для колонки маркера и для рисунка.
+qreal checkboxSide(const QFont& base, const ZDocStyle& look) {
+    return metricsOf(base).checkboxSide * look.checkboxScale();
+}
 
 qreal glyphWidth(MarkerStyle style, int ordinal, int level, const QFont& base,
                  const ZDocStyle& look) {
-    if (drawnCheckbox(style, look)) return checkboxSide(base);
+    if (drawnCheckbox(style, look)) return checkboxSide(base, look);
     if (drawnBullet(style, look)) return metricsOf(base).xHeight * look.bulletDiameter();
     return QFontMetricsF(markerFont(style, base, look))
         .horizontalAdvance(markerText(style, ordinal, level, look));
@@ -259,12 +263,16 @@ QRectF checkboxRect(const QTextBlock& block) {
 
     // Рамка меряется зумленным шрифтом документа — как и весь пункт
     // (см. scaleFontOf): растёт с текстом и стоит при нём.
-    const QRectF ink = QFontMetricsF(scaleFontOf(block))
-                           .tightBoundingRect(QStringLiteral("iy"));
-    const qreal side = ink.height();
-    // ink.top() отрицателен: столько чернил выше базовой линии. Поправка со
+    const QFont ruler = scaleFontOf(block);
+    const QRectF ink = QFontMetricsF(ruler).tightBoundingRect(QStringLiteral("iy"));
+    // Та же сторона, что отведена колонке маркера (glyphWidth): иначе рамка
+    // крупнее единицы наползала бы на текст, а мельче — отходила бы от него.
+    const qreal side = checkboxSide(ruler, look);
+    // ink.top() отрицателен: столько чернил выше базовой линии. Рамка иного
+    // размера, чем чернила, растёт и убывает вокруг их середины; поправка со
     // знаком: больше нуля поднимает рамку.
-    const qreal top = anchor.baseline + ink.top() - look.checkboxOpticalRise() * side;
+    const qreal top = anchor.baseline + ink.top() - (side - ink.height()) / 2 -
+                      look.checkboxOpticalRise() * side;
     return QRectF(anchor.right - side, top, side, side);
 }
 

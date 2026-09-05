@@ -184,6 +184,9 @@ const std::vector<Key>& keys() {
                     listIndent, ListIndent),
         ZM_KEY_REAL("layout", "quoteIndent", "indent of a quote, in widths of 'A'", style(),
                     quoteIndent, QuoteIndent),
+        ZM_KEY_REAL("layout", "checkboxScale",
+                    "side of a task checkbox against the text ink height (1.0 = as tall as 'iy')",
+                    style(), checkboxScale, CheckboxScale),
 
         // --- ПРАВКА --------------------------------------------------------
         ZM_KEY_INT("editor", "autosaveDelayMs", "pause in typing after which the note is written",
