@@ -25,7 +25,7 @@ const Role kRoles[] = {
     {"foreground", "#1a1a1a", "text, plain bullets, panel icons"},
     {"selectionBackground", "#fae8a8", "selected text"},
     {"selectionForeground", "#453d1f", "text inside a selection; transparent = leave as is"},
-    {"searchHighlight", "#e3dac1", "matches of the current search"},
+    {"searchHighlight", "#cbabff", "matches of the current search"},
     {"accent", "#da9100", "caret, checked tasks, a pressed toolbar toggle"},
     {"link", "#325cc0", "links"},
     {"mark", "#7c3aed", "a sort order set by the folder itself"},
