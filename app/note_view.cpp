@@ -32,6 +32,7 @@
 #include <QTextFragment>
 #include <QResizeEvent>
 #include <QPalette>
+#include <QProxyStyle>
 #include <QScrollBar>
 #include <QDateTime>
 #include <QWidget>
@@ -246,7 +247,40 @@ void NoteView::setZoom(qreal zoom) {
     applyIndentScale(*document());
 }
 
+namespace {
+
+// ВЫДЕЛЕНИЕ — ПО ШИРИНЕ ТЕКСТА, А НЕ НА ВСЮ СТРОКУ (живая бага владельца
+// 05.09.2026, .testdata/zametti_bad_selection2.png). Маковский стиль Qt отвечает
+// на SH_RichText_FullWidthSelection «да», и QWidgetTextControl тянет
+// прямоугольник выделения до правого края ОБЛАСТИ ПЕРЕРИСОВКИ: при полной
+// отрисовке — до края вьюпорта, а при частичной — восстановление выделения
+// после переключения заметок, мигание каретки — до правого края того куска,
+// что перерисовывался (ширина документа, десяток точек у края). Два разных
+// правых края одного выделения и давали «лишние блоки» у края, пропадавшие с
+// любой клавишей (полная перерисовка). Прямоугольник по ширине текста от
+// области перерисовки не зависит — и на Linux (Fusion) он таков и есть.
+// Стиль спрашивается у САМОГО ВЬЮПОРТА (drawContents получает его), а
+// QWidget::style() у родителя не наследуется — ставим обоим. База nullptr —
+// стиль приложения, без владения: смена стиля программы проходит сквозь.
+class TextWidthSelectionStyle : public QProxyStyle {
+public:
+    using QProxyStyle::QProxyStyle;
+    int styleHint(StyleHint hint, const QStyleOption* option, const QWidget* widget,
+                  QStyleHintReturn* returnData) const override {
+        if (hint == SH_RichText_FullWidthSelection) return 0;
+        return QProxyStyle::styleHint(hint, option, widget, returnData);
+    }
+};
+
+}  // namespace
+
 NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
+    {
+        auto* selectionStyle = new TextWidthSelectionStyle(nullptr);
+        selectionStyle->setParent(this);
+        setStyle(selectionStyle);
+        viewport()->setStyle(selectionStyle);
+    }
     // Свой документ у вида уже есть — его завела Qt; объекты в нём тоже надо
     // уметь показывать (в него собирает вывоз на бумагу).
     attachObjectHandlers(document());
