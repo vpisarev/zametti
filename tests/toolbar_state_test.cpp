@@ -121,8 +121,10 @@ static int ztRunRule() {
         state.store = true;
         state.cloudConfigured = true;
         state.documentation = true;
-        expectDark("на документации гаснут четыре кнопки", darkOf(state),
-                   {Button::InsertImages, Button::History, Button::Lock, Button::MarkdownEdit});
+        // The reading mode too (brief 18): the documentation has a page of its own.
+        expectDark("на документации гаснут пять кнопок", darkOf(state),
+                   {Button::InsertImages, Button::History, Button::Lock, Button::Reading,
+                    Button::MarkdownEdit});
         ZT_EQ("и причина говорит про документацию", "documentation is read-only",
               s(zametti::toolbarPromiseFor(Button::MarkdownEdit, state)));
     }
@@ -136,8 +138,14 @@ static int ztRunRule() {
         (kind == 0 ? state.readOnlyNote : state.archivedNote) = true;
         const std::string what = kind == 0 ? "на запертой" : "на архивной";
         // The lock button too: a frozen or archived note is not unlocked by it.
-        expectDark(what + " гаснут три кнопки", darkOf(state),
-                   {Button::InsertImages, Button::Lock, Button::MarkdownEdit});
+        // And the reading mode on an archived note: the archive page shows it
+        // as it was; a frozen note reads as a book like any other.
+        if (kind == 0)
+            expectDark(what + " гаснут три кнопки", darkOf(state),
+                       {Button::InsertImages, Button::Lock, Button::MarkdownEdit});
+        else
+            expectDark(what + " гаснут четыре кнопки", darkOf(state),
+                       {Button::InsertImages, Button::Lock, Button::Reading, Button::MarkdownEdit});
         ZT_EQ(what + " причина говорит про заметку", "this note is read-only",
               s(zametti::toolbarPromiseFor(Button::InsertImages, state)));
         ZT_TRUE(what + " история горит",
@@ -257,8 +265,9 @@ static int ztRunWiring() {
     if (!docFiles.isEmpty()) {
         docs.showFile(docFiles.first(), QStringLiteral("info:probe"));
         QCoreApplication::processEvents();
-        expectDark("на документации гаснут четыре", darkOnBar(bar),
-                   {Button::InsertImages, Button::History, Button::Lock, Button::MarkdownEdit});
+        expectDark("на документации гаснут пять", darkOnBar(bar),
+                   {Button::InsertImages, Button::History, Button::Lock, Button::Reading,
+                    Button::MarkdownEdit});
         ZT_EQ("и причина про документацию", "documentation is read-only",
               s(bar.promiseFor(Button::History)));
 

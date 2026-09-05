@@ -132,6 +132,7 @@ add_executable(zametti-tests
     deleted_image_test.cpp
 
     # --- окно ---
+    zbook_view_test.cpp
     history_search_test.cpp
     history_view_test.cpp
     history_write_test.cpp
