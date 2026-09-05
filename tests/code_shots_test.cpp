@@ -262,10 +262,57 @@ void checkBuilderReservesStrip() {
     check(blocks == 1, "блок кода в собранном документе один (" + std::to_string(blocks) + ")");
     check(lines == 2, "а строк в нём две (" + std::to_string(lines) + ")");
 
-    // Блок кода в самом конце заметки до полоски долистывается и без своего
-    // поля: нижнее поле страницы (verticalMargin, 27 px) само по себе выше
-    // полоски (21 px) — замерено. Проверки на это нет НАРОЧНО: со снятой
-    // починкой она оставалась зелёной, то есть спрашивала не то, что обещала.
+    // A NOTE ENDING WITH A CODE BLOCK KEEPS AIR UNDER THE STRIP. Qt drops the
+    // bottom margin of the LAST block of a frame (measured with a probe), so
+    // the strip of a trailing code block used to be painted into the page's
+    // bottom margin — and once the strip outgrew that margin, nothing was left
+    // under the block at all (owner's screenshot, 05.09.2026). The builder puts
+    // the strip's reserve into the page's bottom margin; here the laid-out
+    // document itself is asked: under the last line of the trailing block there
+    // must be room for the strip AND the page margin. Goes red without the
+    // reserve: the tail is then the page margin alone.
+    {
+        QTextDocument tail;
+        zametti::buildDocument(pieces("текст\n\n```python\nx = 1\n```\n"), tail);
+        tail.setTextWidth(600);
+        const QTextBlock last = tail.lastBlock();
+        check(!zametti::isRawBlock(last) && zametti::kindOf(last) == zametti::Kind::Code,
+              "сборщик: документ кончается блоком кода");
+        const qreal lastBottom = tail.documentLayout()->blockBoundingRect(last).bottom();
+        const qreal height = tail.documentLayout()->documentSize().height();
+        const qreal pageMargin =
+            zametti::settings().style().verticalMargin() * zametti::layoutLineUnit();
+        check(height - lastBottom >= plate.strip + pageMargin - 0.5,
+              "сборщик: под последней строкой блока кода есть место и полоске, и полю "
+              "страницы: " + num(height - lastBottom) + " >= " + num(plate.strip) + " + " +
+                  num(pageMargin));
+    }
+}
+
+// THE SAME AIR IN THE WINDOW. The builder check above asks a bare document;
+// this one asks the editor with the sample note loaded (it ends with a code
+// block on purpose): the scroll range comes from the laid-out document, and
+// the strip of the trailing block must not be the last thing one can scroll
+// to.
+void checkTailAir(Peek& editor) {
+    const zametti::CodePlate plate = zametti::codePlate(editor.note().style());
+    const QAbstractTextDocumentLayout* layout = editor.document()->documentLayout();
+    const QTextBlock last = editor.document()->lastBlock();
+    check(!zametti::isRawBlock(last) && zametti::kindOf(last) == zametti::Kind::Code,
+          "образец кончается блоком кода");
+    const zametti::CodeBand* tail = nullptr;
+    const QVector<zametti::CodeBand> bands = editor.bands();
+    for (const zametti::CodeBand& band : bands)
+        if (band.last && band.blockNumber == last.blockNumber()) tail = &band;
+    check(tail != nullptr, "у последнего блока кода есть полоса с полоской");
+    if (tail == nullptr) return;
+    const qreal height = layout->documentSize().height();
+    const qreal pageMargin =
+        editor.note().style().verticalMargin() * zametti::layoutLineUnit(editor.note().style());
+    check(height - tail->rect.bottom() >= plate.strip + pageMargin - 0.5,
+          "окно: под полоской последнего блока кода остаётся поле страницы: " +
+              num(height - tail->rect.bottom()) + " >= " + num(plate.strip) + " + " +
+              num(pageMargin));
 }
 
 // ОДИН РЕГУЛЯТОР — КЕГЛЬ ПОДПИСИ (решение владельца, refactor3): полоска и
@@ -644,7 +691,8 @@ void shots(int width, int height, const QString& tag, bool checks) {
         checkStripIsNotText(editor);
         checkPlateGeometry(editor);
         checkBuilderReservesStrip();
-    checkPlateFollowsLangSize();
+        checkTailAir(editor);
+        checkPlateFollowsLangSize();
         checkCornersAreRound(editor);
         checkStripIsNotDarker(editor);
         checkPaperHasNoStrip(editor);
