@@ -53,6 +53,7 @@ constexpr Toolbar::Spec kSpecs[] = {
     // The shortcut is configurable (shortcuts.readingMode) and shown from the
     // settings (tipFor), like the source mode's.
     {B::Reading, "book-open-text", "Read as a book", "", 4, true},
+    {B::Toc, "scroll-text", "Table of contents", "", 4, true},
     {B::History, "rotate-ccw-clock", "Note history", "", 4, true},
     // Сочетание у этой кнопки НАСТРАИВАЕМОЕ (editor.markdownModeKey) и по
     // умолчанию пустое: в тултип оно подставляется из настроек (tipFor), а не
@@ -76,6 +77,11 @@ constexpr Toolbar::SortSpec kSortSpecs[] = {
 // Сочетание для тултипа: у настраиваемых кнопок — из настроек (список через
 // точку с запятой человеку читается через запятую), у прочих — из спецификации.
 QString shortcutFor(const Toolbar::Spec& spec) {
+    if (spec.id == B::Reading)
+        return QString(settings().editor().readingModeKey())
+            .replace(QLatin1Char(';'), QLatin1Char(','));
+    if (spec.id == B::Toc)
+        return QString(settings().editor().tocKey()).replace(QLatin1Char(';'), QLatin1Char(','));
     if (spec.id == B::MarkdownEdit)
         return QString(settings().editor().markdownModeKey())
             .replace(QStringLiteral("; "), QStringLiteral(", "));

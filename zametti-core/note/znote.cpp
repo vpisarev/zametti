@@ -62,6 +62,11 @@ bool ZNote::load(std::string_view bytes) {
     return true;
 }
 
+const std::vector<ZDocument::OutlineEntry>& ZNote::outline() {
+    if (!outline_.freshFor(doc_.revision())) outline_.set(doc_.outline(), doc_.revision());
+    return outline_.value();
+}
+
 std::string ZNote::toMarkdown() const { return doc_.toMarkdown(header_); }
 
 QByteArray ZNote::fileBytes(std::vector<Piece>* fileBlocks, bool* enriched, bool* reshaped) const {

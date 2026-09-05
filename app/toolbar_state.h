@@ -51,6 +51,9 @@ struct ToolbarState {
     // The reading mode is on (brief 18): the side panels are hidden for its
     // duration and their button is dark — the book takes the whole window.
     bool reading = false;
+    // A flat view is on screen — the source, the settings, a history diff:
+    // there is no outline to show there.
+    bool flatView = false;
     // Синхронизация настроена. Не настроена — кнопка облака не поломка, а
     // состояние, и подсказка говорит словами, что сделать.
     bool cloudConfigured = false;
@@ -86,6 +89,9 @@ inline QString toolbarPromiseFor(Toolbar::Button id, const ToolbarState& state) 
         return QStringLiteral("a book keeps its journal, but shows no history");
     if (id == Button::Panels && state.reading)
         return QStringLiteral("the side panels come back when the reading ends");
+    if (id == Button::Toc && (state.flatView || state.documentation))
+        return state.documentation ? QStringLiteral("documentation has no table of contents")
+                                   : QStringLiteral("no table of contents in this view");
     // The reading mode shows the OPEN note's document; the documentation and
     // an archived note are shown by pages of their own.
     if (id == Button::Reading && (state.documentation || state.archivedNote))

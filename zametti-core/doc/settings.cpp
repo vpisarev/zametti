@@ -255,6 +255,8 @@ const std::vector<Key>& keys() {
                    editor(), markdownModeKey, MarkdownModeKey),
         ZM_KEY_STR("shortcuts", "readingMode", "read the note as a book, pages side by side",
                    editor(), readingModeKey, ReadingModeKey),
+        ZM_KEY_STR("shortcuts", "toc", "show the table of contents; pick a heading or Esc",
+                   editor(), tocKey, TocKey),
         ZM_KEY_STR("shortcuts", "replace", "find and replace in the current note", editor(),
                    replaceKey, ReplaceKey),
         ZM_KEY_STR("shortcuts", "findNext", "next search match", editor(), findNextKey,

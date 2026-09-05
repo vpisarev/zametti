@@ -722,6 +722,9 @@ struct ZSettings {
         ZM_SETTING_PLAIN(QString, toggleTaskKey, ToggleTaskKey, QStringLiteral("Ctrl+D; Ctrl+SPACE"))
         // The reading mode (brief 18): the note as a book, pages side by side.
         ZM_SETTING_PLAIN(QString, readingModeKey, ReadingModeKey, QStringLiteral("Ctrl+Shift+R"))
+        // The table of contents (brief 18): the list of headings at the right
+        // edge; a choice or Esc hides it again. Ctrl+N is taken by "New note".
+        ZM_SETTING_PLAIN(QString, tocKey, TocKey, QStringLiteral("Ctrl+Shift+O"))
         ZM_SETTING_PLAIN(QString, moveUpKey, MoveUpKey, QStringLiteral("Ctrl+Up"))
         ZM_SETTING_PLAIN(QString, moveDownKey, MoveDownKey, QStringLiteral("Ctrl+Down"))
         // Смена рода блоков — по знаку, который на клавише: звёздочка живёт на

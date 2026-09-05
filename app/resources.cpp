@@ -59,7 +59,7 @@ constexpr const char* kIcons[] = {
     "image-down",          "folder-search",        "list-clock",
     // Books (brief 18): the lock, the reading mode, bookmarks, comments.
     "book-open-text",      "bookmark",             "lock",
-    "lock-open",           "message-square-more",
+    "lock-open",           "message-square-more",  "scroll-text",
     "regex",               "rewind",
     "rotate-ccw-clock",
     "search",              "settings",             "square-arrow-out-up-right",

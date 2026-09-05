@@ -77,6 +77,7 @@
         <file alias="list-clock.svg">icons/list-clock.svg</file>
         <file alias="lock.svg">icons/lock.svg</file>
         <file alias="lock-open.svg">icons/lock-open.svg</file>
+        <file alias="scroll-text.svg">icons/scroll-text.svg</file>
         <file alias="message-square-more.svg">icons/message-square-more.svg</file>
         <file alias="regex.svg">icons/regex.svg</file>
         <file alias="rewind.svg">icons/rewind.svg</file>

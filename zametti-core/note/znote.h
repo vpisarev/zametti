@@ -264,6 +264,9 @@ public:
     // Числа отвечают тому, что в документе сейчас, только пока свежи — по
     // ревизии документа: ложь тут дороже молчания, окно показывает «?».
     const NoteStats& stats() const { return stats_.value(); }
+    // The outline of the document as it is now (recounted when the document
+    // changed since the last ask).
+    const std::vector<ZDocument::OutlineEntry>& outline();
     bool statsFresh() const { return stats_.freshFor(doc_.revision()); }
     // Считались и не сброшены вслух — даже если с тех пор правили. Нужно
     // тому, кто сообщает «числа устарели» ровно один раз, а не на каждую букву.
@@ -304,6 +307,9 @@ protected:
     QByteArray lastSaved_;
     std::shared_ptr<ZJournal> journal_ = std::make_shared<ZJournal>();
     NoteSearch search_;
+    // The table of contents, by revision (brief 18): asked by the ToC list
+    // and by the reading mode's status line; one walk when stale.
+    Derived<std::vector<ZDocument::OutlineEntry>> outline_;
     Derived<NoteStats> stats_;
     bool selfCheckFailed_ = false;
     CaretSpot caret_;

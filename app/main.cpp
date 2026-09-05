@@ -17,6 +17,7 @@
 #include "history_panel.h"
 #include "reader_view.h"
 #include "reading_controller.h"
+#include "toc_list.h"
 #include "zbook_view.h"
 #include "toolbar_controller.h"
 #include "zoom_scale.h"
@@ -691,6 +692,9 @@ int main(int argc, char** argv) {
     zametti::MarkdownEditView markdownView;
     // Правка настроек — четвёртая страница стека, на месте редактора.
     zametti::JsonEditView settingsView;
+    // THE TABLE OF CONTENTS (brief 18): a list over the right edge of the
+    // text, shown by its toolbar button and gone with a choice or Esc.
+    zametti::TocList toc(&rightSide);
     zametti::SearchResultsModel results;
     zametti::SearchResultsDelegate resultsDelegate;
     QListView resultsView;
@@ -723,6 +727,7 @@ int main(int argc, char** argv) {
         layout->addWidget(&textStack, 1);
         layout->addWidget(&resultsView);
         layout->addWidget(&findBar);
+        toc.follow(&textStack);
     }
     // Дебаунс по замеру этапа 4: полный проход по хранилищу — 11 мс тёплым и
     // 113 мс на десятикратном корпусе, так что 150 мс успевают проглотить
@@ -771,6 +776,7 @@ int main(int argc, char** argv) {
         markdown.refreshAppearance();
         settingsMode.refreshAppearance();
         reading.refreshAppearance();
+        toc.refreshAppearance();
 
         // Делегаты читают настройки прямо при отрисовке — им довольно
         // перерисовки, но размеры строк они считают там же, и без сброса
@@ -1268,6 +1274,35 @@ int main(int argc, char** argv) {
         }
         editor.setFocus();
     };
+    // THE TABLE OF CONTENTS: a sticky button; the list is gone with a choice
+    // or Esc, and the button follows the list, not the other way round.
+    const auto toggleToc = [&] {
+        if (toc.isOpen()) {
+            toc.close();
+            return;
+        }
+        const bool flat = markdown.active() || history.active() || settingsMode.active();
+        if (editor.filePath().isEmpty() || flat || !docView.path().isEmpty()) {
+            toolbar.setChecked(zametti::Toolbar::Button::Toc, false);
+            return;
+        }
+        const int block = reading.active() ? bookView.place().block : editor.textCursor().blockNumber();
+        toc.open(editor.noteHandle(), block);
+        toolbar.setChecked(zametti::Toolbar::Button::Toc, true);
+    };
+    QObject::connect(&toc, &zametti::TocList::closed, &window, [&] {
+        toolbar.setChecked(zametti::Toolbar::Button::Toc, false);
+        if (!markdown.active() && !history.active() && !settingsMode.active()) focusNoteView();
+    });
+    QObject::connect(&toc, &zametti::TocList::headingChosen, &window, [&](int block) {
+        if (reading.active()) {
+            bookView.showBlock(block);
+            return;
+        }
+        editor.showBlockInGolden(editor.document()->findBlockByNumber(block));
+    });
+    QObject::connect(&editor, &zametti::NoteEditor::fileAboutToChange, &window,
+                     [&](const QString&) { toc.close(); });
     // ЧТО СЕЙЧАС НА СТРАНИЦЕ ЧТЕНИЯ. Она показывает два разных рода: вшитую
     // документацию (за ней нет файла в хранилище) и настоящую заметку под
     // меткой `access: read-only`. Отличаем не своим флагом рядом, а вопросом
@@ -1339,6 +1374,7 @@ int main(int argc, char** argv) {
             state.tempUnlocked = editor.isTemporarilyUnlocked();
             state.book = editor.isBookNote();
             state.reading = reading.active();
+            state.flatView = markdown.active() || history.active() || settingsMode.active();
             state.cloudConfigured = cloudSync.configured();
             state.cloudStatus = cloudSync.statusText();
             return state;
@@ -1451,7 +1487,14 @@ int main(int argc, char** argv) {
     // THE READING MODE — its own page of the stack, a toggle on the toolbar
     // (brief 18). The button follows the mode wherever it was entered from: a
     // book enters it by itself when opened.
+    QObject::connect(&history, &zametti::HistoryController::modeChanged, &window,
+                     [&](bool on) { if (on) toc.close(); });
+    QObject::connect(&markdown, &zametti::MarkdownController::modeChanged, &window,
+                     [&](bool on) { if (on) toc.close(); });
+    QObject::connect(&settingsMode, &zametti::SettingsController::modeChanged, &window,
+                     [&](bool on) { if (on) toc.close(); });
     QObject::connect(&reading, &zametti::ReadingController::modeChanged, &window, [&](bool on) {
+        toc.close();
         showPage();
         toolbarState.refresh();
         toolbar.setChecked(zametti::Toolbar::Button::Reading, on);
@@ -2639,6 +2682,8 @@ int main(int argc, char** argv) {
     for (const QKeySequence& keys :
          zametti::keySequencesOf(zametti::settings().editor().readingModeKey()))
         shortcut(keys, [&] { reading.toggle(); });
+    for (const QKeySequence& keys : zametti::keySequencesOf(zametti::settings().editor().tocKey()))
+        shortcut(keys, [&] { toggleToc(); });
     // Ходьба по находкам — сочетания из настроек (shortcuts.findNext /
     // findPrevious: F3 и Ctrl+G, на маке Cmd+G); подсказки кнопок панели —
     // из того же списка, чтобы панель не обещала клавишу, которой нет.
@@ -3170,6 +3215,9 @@ int main(int argc, char** argv) {
                 // A toggle, like the source mode: lit — the note is read as a
                 // book; modeChanged squares the button with the mode.
                 reading.toggle();
+                break;
+            case Button::Toc:
+                toggleToc();
                 break;
             case Button::History:
                 // ПЕРЕКЛЮЧАТЕЛЬ: горит — идёт режим истории, нажали снова —

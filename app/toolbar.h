@@ -72,6 +72,10 @@ public:
         // keys turn them. A toggle with a page of its own, like the source
         // mode; a book opens in it by itself.
         Reading,
+        // THE TABLE OF CONTENTS (brief 18): a sticky toggle — pressed, the
+        // list of headings appears at the right edge; a choice or Esc hides
+        // it and the button pops back up by itself.
+        Toc,
         // ПРАВКА ИСХОДНИКА: заметка показывается сырым markdown, как в файле.
         // Тоже ПЕРЕКЛЮЧАТЕЛЬ и тоже со своим видом: горит — идёт режим. Он
         // принадлежит ПРИЛОЖЕНИЮ, а не заметке (решение владельца): по заметкам

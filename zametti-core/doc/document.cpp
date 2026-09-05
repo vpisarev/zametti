@@ -9,6 +9,7 @@
 #include "text_stats.h"
 
 #include <QTextBlock>
+#include <algorithm>
 #include <QTextCursor>
 #include <QTextDocument>
 
@@ -244,6 +245,21 @@ QString ZDocument::headingAbove(int index) const {
         if (format.intProperty(KindProperty) == int(Kind::Heading)) return block.text();
     }
     return {};
+}
+
+std::vector<ZDocument::OutlineEntry> ZDocument::outline() const {
+    std::vector<OutlineEntry> out;
+    for (QTextBlock block = d_->text.begin(); block.isValid(); block = block.next()) {
+        const QTextBlockFormat format = block.blockFormat();
+        if (format.boolProperty(RawProperty)) continue;
+        if (format.intProperty(KindProperty) != int(Kind::Heading)) continue;
+        OutlineEntry entry;
+        entry.block = block.blockNumber();
+        entry.level = std::clamp(format.headingLevel(), 1, 6);
+        entry.text = block.text();
+        out.push_back(std::move(entry));
+    }
+    return out;
 }
 
 BlockInfo ZDocument::blockAt(int index) const {

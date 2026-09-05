@@ -137,6 +137,8 @@ add_library(zametti-ui STATIC
     zbook_view.cpp
     reading_controller.h
     reading_controller.cpp
+    toc_list.h
+    toc_list.cpp
     json_edit_view.h
     json_edit_view.cpp
     settings_controller.h

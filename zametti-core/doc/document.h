@@ -259,6 +259,15 @@ public:
     // empty when there is none. An outline of the whole note replaces it
     // where the walk would be long (brief 18, the table of contents).
     QString headingAbove(int index) const;
+    // THE OUTLINE: every heading in order, with its level and block number —
+    // the table of contents (brief 18). One linear walk over the blocks; the
+    // note caches it by revision (ZNote::outline).
+    struct OutlineEntry {
+        int block = 0;
+        int level = 1;
+        QString text;
+    };
+    std::vector<OutlineEntry> outline() const;
 
     // Канонический текст построчно, с картой «строка → блок». На этом стоит
     // разность версий.
