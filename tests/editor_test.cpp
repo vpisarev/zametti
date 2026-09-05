@@ -1935,6 +1935,48 @@ void checkLinkDoesNotGrow() {
 // Щелчок по рамке при выделении: переключает всё выделенное разом и выделение
 // сохраняет — ровно как Ctrl+D. А двойной щелчок не должен выделять строку:
 // человек метил в чекбокс, а не в слово под ним.
+// РУЧКА РАЗМЕРА ЧЕКБОКСА (просьба владельца 05.09.2026: «крупнее на 15–20 %,
+// но регулировать»). layout.checkboxScale множит сторону рамки; растёт рамка
+// вокруг середины чернил строчных, а колонка маркера растёт вместе с ней —
+// зазор до текста остаётся тем же, а не съедается рамкой.
+void checkCheckboxScale() {
+    const zametti::ZSettings saved = zametti::settings();
+    struct Restore {
+        const zametti::ZSettings& from;
+        ~Restore() { zametti::mutableSettingsForTests() = from; }
+    } restore{saved};
+
+    const QString path = writeNote("чекбокс-размер.md",
+                                   QStringLiteral("- [ ] задача\n"));
+    const auto measure = [&path](qreal scale, QRectF* box, qreal* textLeft) {
+        zametti::mutableSettingsForTests().style().setCheckboxScale(scale);
+        zametti::NoteEditor editor;
+        editor.resize(700, 300);
+        editor.show();
+        QTest::qWait(20);
+        editor.openFile(path);
+        QTest::qWait(20);
+        const QTextBlock block = editor.document()->firstBlock();
+        *box = zametti::checkboxRect(block);
+        *textLeft = block.layout()->position().x() + zametti::blockLeftPad(block);
+    };
+    QRectF one, big;
+    qreal textOne = 0, textBig = 0;
+    measure(1.0, &one, &textOne);
+    measure(1.2, &big, &textBig);
+    check(!one.isNull() && !big.isNull(), "у задачи есть рамка при обоих масштабах");
+    check(std::abs(big.width() - one.width() * 1.2) < 0.5,
+          "сторона рамки растёт на заданный множитель");
+    check(std::abs(big.height() - big.width()) < 0.01, "рамка остаётся квадратом");
+    check(std::abs(big.center().y() - one.center().y()) < 1.0,
+          "рамка растёт вокруг середины чернил, а не сползает вниз");
+    // Зазор от рамки до текста — тот же (колонка маркера выросла вместе с
+    // рамкой); текст пункта сдвинулся вправо на ту же величину, что и рамка.
+    check(std::abs((textBig - big.right()) - (textOne - one.right())) < 0.5,
+          "зазор между рамкой и текстом не изменился");
+    check(textBig > textOne, "текст пункта отодвинулся под крупную рамку");
+}
+
 void checkCheckboxClickWithSelection() {
     const QString path = writeNote(
         "щелчок-выделение.md", QStringLiteral("- [ ] раз\n- [ ] два\n- [ ] три\n"));
@@ -3268,6 +3310,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkScrollHoldsWhenBlockChangesHeight();
     checkLinkDoesNotGrow();
     checkCheckboxClickWithSelection();
+    checkCheckboxScale();
     checkUndoKeepsCursor();
     checkViewHoldsForEveryOperation();
     checkColumnAcrossMargins();
