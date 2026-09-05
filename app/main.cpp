@@ -81,6 +81,8 @@
 #include <QTextCursor>
 #include <QFile>
 #include <QElapsedTimer>
+#include <QScreen>
+#include <QWindow>
 #include <QTimer>
 #include <QTreeView>
 #include <QPointer>
@@ -3456,6 +3458,28 @@ int main(int argc, char** argv) {
             QTimer::singleShot(ms * 3 / 4, &window, [&window, shot] {
                 window.grab().save(QString::fromLocal8Bit(shot));
             });
+        // ZAMETTI_PROBE_SCREEN=<файл.png> — снимок ЭКРАНА в границах окна, а не
+        // перерисовка: следы недорисовки (05.09.2026, выделение после
+        // переключения заметок) grab() не покажет — он рисует заново.
+        if (const QByteArray shot = qgetenv("ZAMETTI_PROBE_SCREEN"); !shot.isEmpty()) {
+            // Два снимка: сразу после переключений и перед выходом — след,
+            // который «появляется через полсекунды», виден только на втором.
+            const auto grab = [&window, shot](const char* suffix) {
+                QScreen* screen = window.windowHandle() != nullptr
+                                      ? window.windowHandle()->screen()
+                                      : QGuiApplication::primaryScreen();
+                if (screen == nullptr) return;
+                const QRect g = window.geometry();
+                std::fprintf(stderr, "probe screen %s: screen %dx%d dpr %.2f, window %d,%d %dx%d\n",
+                             suffix, screen->geometry().width(), screen->geometry().height(),
+                             screen->devicePixelRatio(), g.x(), g.y(), g.width(), g.height());
+                QString file = QString::fromLocal8Bit(shot);
+                file.insert(file.lastIndexOf(QLatin1Char('.')), QLatin1String(suffix));
+                screen->grabWindow(window.winId()).save(file);
+            };
+            QTimer::singleShot(ms / 2, &window, [grab] { grab("-early"); });
+            QTimer::singleShot(ms - 300, &window, [grab] { grab("-late"); });
+        }
         // ZAMETTI_PROBE_SWITCH=<id,id,…> — переключение заметок В ЖИВОМ ОКНЕ:
         // той же дверью, что список (openFile + всё, что окно делает по
         // fileChanged), два круга, каждое — от команды до отрисованного кадра.
@@ -3465,22 +3489,38 @@ int main(int argc, char** argv) {
             QTimer::singleShot(ms / 4, &window, [&, ids] {
                 if (!model.isStore()) return;
                 const QStringList list = QString::fromLocal8Bit(ids).split(QLatin1Char(','), Qt::SkipEmptyParts);
+                // ZAMETTI_PROBE_SELECT=<от,до> — выделить диапазон в ПЕРВОЙ
+                // открытой заметке: сценарий владельца «выделил, переключился,
+                // вернулся» (05.09.2026) воспроизводится только с выделением.
+                const QList<QByteArray> select = qgetenv("ZAMETTI_PROBE_SELECT").split(',');
+                bool selected = false;
                 for (int round = 0; round < 2; ++round)
                     for (const QString& id : list) {
                         const QString path = zapp.storage()->pathOf(id.trimmed());
                         QElapsedTimer t;
                         t.start();
                         editor.openFile(path, true);
+                        if (!selected && select.size() == 2) {
+                            selected = true;
+                            QTextCursor range = editor.textCursor();
+                            range.setPosition(select[0].toInt());
+                            range.setPosition(select[1].toInt(), QTextCursor::KeepAnchor);
+                            editor.setTextCursor(range);
+                            QCoreApplication::processEvents();
+                            editor.viewport()->repaint();
+                            window.repaint();
+                        }
                         const qint64 opened = t.nsecsElapsed() / 1000;
                         QCoreApplication::processEvents();
                         const qint64 events = t.nsecsElapsed() / 1000;
                         editor.viewport()->repaint();
                         window.repaint();
                         const qint64 frame = t.nsecsElapsed() / 1000;
-                        std::fprintf(stderr, "probe switch %d %s: open %lld, +events %lld, +frame %lld, total %lld us\n",
+                        std::fprintf(stderr, "probe switch %d %s: open %lld, +events %lld, +frame %lld, total %lld us; caret %d anchor %d\n",
                                      round, id.toUtf8().constData(), (long long)opened,
                                      (long long)(events - opened), (long long)(frame - events),
-                                     (long long)frame);
+                                     (long long)frame, editor.textCursor().position(),
+                                     editor.textCursor().anchor());
                     }
             });
         QTimer::singleShot(ms, &app, &QCoreApplication::quit);
