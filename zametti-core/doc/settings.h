@@ -136,7 +136,7 @@ struct ZDocStyle {
     // увидеть его негде, а размер на такой глубине уже ничего не сообщает.
     // Шестой оставлен вровень с пятым: мельче уже нечитаемо, а разница между
     // H5 и H6 в тексте и так не различается.
-    ZM_SETTING_PLAIN(HeadingSteps, headingStep, HeadingStep, 3, 2, 1, 0, -1, -1)
+    ZM_SETTING_PLAIN(HeadingSteps, headingStep, HeadingStep, 2, 1, 0, 0, -1, -1)
     // Эмодзи приходят из запасного шрифта и рядом с моноширинным текстом
     // смотрятся мелко. Ступень отсчитывается ОТ ОКРУЖАЮЩЕГО текста: эмодзи
     // внутри заголовка обязан ехать вместе с заголовком.
@@ -181,7 +181,7 @@ public:
     // чтобы они не начинались с ним вровень. У списка сдвигается весь блок
     // вместе с маркером, вложенность отсчитывается уже от него; у кода — вместе
     // с подложкой (внутреннего поля у блока в Qt нет, только внешнее).
-    ZM_SETTING(qreal, listIndent, ListIndent, 0.5, 0.0, 20.0)
+    ZM_SETTING(qreal, listIndent, ListIndent, 0.25, 0.0, 20.0)
     // У блока кода отступов два, и это не придирка. codeIndent отодвигает от
     // абзаца САМУ ПЛАШКУ, codePadLeft — код внутри неё. Второй нужен ради
     // скруглённых углов: прижатый к левому краю код упирался бы в закругление,
@@ -245,7 +245,7 @@ public:
     // отвечает на вопрос «что я сейчас держу», находки — на «где встречается
     // то, что я ищу», и в окне они попадаются рядом: текущая находка ещё и
     // выделена. Одним цветом их было не различить.
-    ZM_SETTING_PLAIN(QColor, searchHighlight, SearchHighlight, 0xe3, 0xda, 0xc1)
+    ZM_SETTING_PLAIN(QColor, searchHighlight, SearchHighlight, 0xcb, 0xab, 0xff)
     // Разность версий в истории. Появилось — зелёным, исчезло — красным;
     // изменённая строка показывается парой «− старая / + новая» теми же двумя
     // цветами (сессия 7). Оранжевым (diffChanged) рисуется ПОЛОСА ТЕКУЩЕГО
@@ -346,7 +346,7 @@ public:
     ZM_SETTING_PLAIN(QColor, checkboxUncheckedColor, CheckboxUncheckedColor, 0xac, 0xac, 0xac)   // только рамка, без заливки
     ZM_SETTING_PLAIN(QColor, checkboxTickColor, CheckboxTickColor, 0xff, 0xff, 0xff)
     ZM_SETTING(qreal, checkboxPenWidth, CheckboxPenWidth, 1.4, 0.2, 10.0)
-    ZM_SETTING(qreal, checkboxCornerRadius, CheckboxCornerRadius, 2.5, 0.0, 20.0)
+    ZM_SETTING(qreal, checkboxCornerRadius, CheckboxCornerRadius, 5, 0.0, 20.0)
     // Оптическая поправка положения. При нуле рамка точно совпадает с чернилами
     // букв — от хвоста "y" до верхушки "i", — но читается чуть низкой: у
     // сплошного прямоугольника масса распределена равномерно, а у строчных букв
@@ -359,14 +359,14 @@ public:
     // их верха, чтобы поправка выше оставалась поправкой, а не второй ручкой
     // того же. Единственная ручка размера рамки; в config.json —
     // layout.checkboxScale.
-    ZM_SETTING(qreal, checkboxScale, CheckboxScale, 1.0, 0.3, 3.0)
+    ZM_SETTING(qreal, checkboxScale, CheckboxScale, 1.4, 0.3, 3.0)
     // Наименьший просвет между рамками СОСЕДНИХ задач, долей от стороны рамки.
     // Строка задачи растёт только когда рамка с этим просветом перестаёт
     // влезать в обычную строку списка (listLineHeightFactor); пока влезает —
     // ритм списка прежний. Ноль — рамки могут сомкнуться. «Прямо совсем
     // чуть-чуть» (владелец, 05.09.2026) — десятая доля. В config.json —
     // layout.checkboxLineGap.
-    ZM_SETTING(qreal, checkboxLineGap, CheckboxLineGap, 0.1, 0.0, 2.0)
+    ZM_SETTING(qreal, checkboxLineGap, CheckboxLineGap, 0.2, 0.0, 2.0)
     // Кегль шрифтовых вариантов. К нарисованному отношения не имеет.
     ZM_SETTING(qreal, checkboxGlyphScale, CheckboxGlyphScale, 1.8, 0.2, 5.0)
     // Зазор между рамкой и текстом задачи, в ширинах буквы "A".
