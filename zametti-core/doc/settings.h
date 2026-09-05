@@ -360,6 +360,13 @@ public:
     // того же. Единственная ручка размера рамки; в config.json —
     // layout.checkboxScale.
     ZM_SETTING(qreal, checkboxScale, CheckboxScale, 1.0, 0.3, 3.0)
+    // Наименьший просвет между рамками СОСЕДНИХ задач, долей от стороны рамки.
+    // Строка задачи растёт только когда рамка с этим просветом перестаёт
+    // влезать в обычную строку списка (listLineHeightFactor); пока влезает —
+    // ритм списка прежний. Ноль — рамки могут сомкнуться. «Прямо совсем
+    // чуть-чуть» (владелец, 05.09.2026) — десятая доля. В config.json —
+    // layout.checkboxLineGap.
+    ZM_SETTING(qreal, checkboxLineGap, CheckboxLineGap, 0.1, 0.0, 2.0)
     // Кегль шрифтовых вариантов. К нарисованному отношения не имеет.
     ZM_SETTING(qreal, checkboxGlyphScale, CheckboxGlyphScale, 1.8, 0.2, 5.0)
     // Зазор между рамкой и текстом задачи, в ширинах буквы "A".

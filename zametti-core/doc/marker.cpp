@@ -252,15 +252,19 @@ BulletShape bulletShapeFor(int level, const ZDocStyle& look) {
 qreal listLineHeightFactorFor(Marker marker, const QFont& base, const ZDocStyle& look) {
     const qreal factor = look.listLineHeightFactor();
     if (!drawnCheckbox(MarkerStyle{marker, false}, look)) return factor;
-    // Рост рамки сверх чернил — целиком в высоту строки, чтобы просвет между
-    // рамками соседних задач остался тем же, что при масштабе 1.0. Qt кладёт
-    // добавку пропорциональной высоты ПОД строку, а рамка растёт вокруг
-    // середины чернил: половина роста уходит вниз в свою добавку, половина
-    // вверх — в добавку строки выше. Рамка мельче чернил строку не ужимает.
+    // Строка растёт ТОЛЬКО когда рамка с наименьшим просветом (checkboxLineGap,
+    // долей от стороны) перестаёт влезать в обычную строку списка; пока
+    // влезает — ритм списка прежний, и задачи стоят так же плотно, как
+    // буллеты. Первая редакция (05.09) добавляла к строке весь рост рамки,
+    // сохраняя просвет масштаба 1.0, — на 1.4 это выглядело пустотой между
+    // пунктами (снимок владельца .testdata/zametti_task_list.png). Просвет
+    // между соседними рамками равен шагу строк минус сторона, где бы Qt ни
+    // клала добавку высоты: строки соседей одинаковы.
     const qreal natural = QFontMetricsF(base).height();
     if (natural <= 0.0) return factor;
-    const qreal growth = checkboxSide(base, look) - metricsOf(base).checkboxSide;
-    return factor + qMax(0.0, growth) / natural;
+    const qreal side = checkboxSide(base, look);
+    const qreal wanted = side * (1.0 + look.checkboxLineGap());
+    return qMax(factor, wanted / natural);
 }
 
 qreal markerColumn(MarkerStyle style, int ordinal, int level, const QFont& base,

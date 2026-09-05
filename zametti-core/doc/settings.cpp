@@ -187,6 +187,9 @@ const std::vector<Key>& keys() {
         ZM_KEY_REAL("layout", "checkboxScale",
                     "side of a task checkbox against the text ink height (1.0 = as tall as 'iy')",
                     style(), checkboxScale, CheckboxScale),
+        ZM_KEY_REAL("layout", "checkboxLineGap",
+                    "least air between checkboxes of adjacent tasks, as a share of the box side",
+                    style(), checkboxLineGap, CheckboxLineGap),
 
         // --- ПРАВКА --------------------------------------------------------
         ZM_KEY_INT("editor", "autosaveDelayMs", "pause in typing after which the note is written",
