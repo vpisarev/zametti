@@ -122,9 +122,9 @@ static int ztRunRule() {
         state.cloudConfigured = true;
         state.documentation = true;
         // The reading mode too (brief 18): the documentation has a page of its own.
-        expectDark("на документации гаснут пять кнопок", darkOf(state),
+        expectDark("на документации гаснут шесть кнопок", darkOf(state),
                    {Button::InsertImages, Button::History, Button::Lock, Button::Reading,
-                    Button::MarkdownEdit});
+                    Button::Toc, Button::MarkdownEdit});
         ZT_EQ("и причина говорит про документацию", "documentation is read-only",
               s(zametti::toolbarPromiseFor(Button::MarkdownEdit, state)));
     }
@@ -265,9 +265,9 @@ static int ztRunWiring() {
     if (!docFiles.isEmpty()) {
         docs.showFile(docFiles.first(), QStringLiteral("info:probe"));
         QCoreApplication::processEvents();
-        expectDark("на документации гаснут пять", darkOnBar(bar),
+        expectDark("на документации гаснут шесть", darkOnBar(bar),
                    {Button::InsertImages, Button::History, Button::Lock, Button::Reading,
-                    Button::MarkdownEdit});
+                    Button::Toc, Button::MarkdownEdit});
         ZT_EQ("и причина про документацию", "documentation is read-only",
               s(bar.promiseFor(Button::History)));
 

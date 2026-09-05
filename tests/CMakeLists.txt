@@ -133,6 +133,7 @@ add_executable(zametti-tests
 
     # --- окно ---
     zbook_view_test.cpp
+    toc_list_test.cpp
     history_search_test.cpp
     history_view_test.cpp
     history_write_test.cpp
