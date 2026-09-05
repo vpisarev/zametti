@@ -1,25 +1,28 @@
-/* Ресурсы Windows. Путь подставляет CMake при настройке: windres ищет файлы
-   относительно СВОЕГО текущего каталога, а он у сборки не тот, где лежит .rc, —
-   относительное имя здесь молча не находилось бы. */
+/* Windows resources. The paths are substituted by CMake at configure time:
+   windres looks for files relative to ITS OWN current directory, which in the
+   build is not the one holding the .rc, so a relative name here would silently
+   fail to be found. */
 #include <windows.h>
 
-/* ЗНАЧОК САМОГО .exe. setWindowIcon() красит заголовок окна и панель задач на
-   исполнении, а проводник, рабочий стол и диалог «Открыть с помощью» берут
-   значок совсем не оттуда — из ресурса RT_GROUP_ICON внутри файла. Без него
-   программа безлика ровно там, где человек её впервые и видит.
+/* THE ICON OF THE .exe ITSELF. setWindowIcon() paints the window title and the
+   taskbar at run time, but Explorer, the desktop and the "Open with" dialog
+   take the icon from somewhere else entirely: the RT_GROUP_ICON resource inside
+   the file. Without it the program is faceless exactly where a person first
+   sees it.
 
-   Имя ресурса — самое первое по порядку сортировки, и это не украшение:
-   проводник показывает НАИМЕНЬШИЙ по имени значок группы, а не первый по
-   тексту .rc. «AAA» гарантирует, что при появлении вторых значков (документа,
-   например) программа не поменяет лицо молча. */
+   The resource name is the very first in sort order, and that is not
+   decoration: Explorer shows the icon group with the SMALLEST name, not the
+   first one in .rc text order. "AAA" guarantees that when further icons appear
+   (a document icon, for example) the program will not change its face
+   silently. */
 AAA_ZAMETTI_ICON ICON "@ZAMETTI_WIN_ICO@"
 
-/* Манифест — см. рядом zametti.manifest, причина написана там. */
+/* Manifest: see zametti.manifest next to this file; the reason is written there. */
 1 RT_MANIFEST "@ZAMETTI_WIN_MANIFEST@"
 
-/* ВЕРСИЯ .exe — та же, что объявлена один раз в project(... VERSION) корневого
-   CMakeLists.txt: её показывает проводник в свойствах файла. Четвёртое число
-   у Windows обязательное, у нас его нет — ноль. */
+/* VERSION of the .exe: the same one declared once in project(... VERSION) of
+   the root CMakeLists.txt; Explorer shows it in the file properties. Windows
+   requires a fourth number and we have none, so it is zero. */
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION    @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
  PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0

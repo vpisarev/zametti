@@ -16,9 +16,9 @@ index ca1f0af..d877ec2 100644
  static constexpr int ceTitlebarHeight = 38;
  static constexpr int ceWindowBorderWidth = 1;
  
-+// zametti: разбор описания шрифта в стиле Pango, каким его отдаёт GNOME:
-+// "Семейство [Начертание] Размер", например "Adwaita Sans Bold 11" или
-+// "Cantarell 11". Возвращает false, не тронув шрифт, если строку не понял.
++// zametti: parse a Pango-style font description as GNOME reports it:
++// "Family [Style] Size", e.g. "Adwaita Sans Bold 11" or "Cantarell 11".
++// Returns false, leaving the font untouched, if the string was not understood.
 +static bool zametti_applyFontDescription(QFont *font, const QString &description)
 +{
 +    if (!font || description.isEmpty())
@@ -106,14 +106,14 @@ index ca1f0af..d877ec2 100644
 -                        m_font->setBold(true);
 -                    }
 -                }
-+                // zametti: рабочий стол отдаёт ПОЛНОЕ описание шрифта, например
-+                // "Adwaita Sans Bold 11". Прежде отсюда бралось одно слово "bold", а
-+                // семейство и размер оставались запасными — Cantarell 10, — и заголовок
-+                // выходил мельче гномовского. Берём всё.
++                // zametti: the desktop reports the FULL font description, e.g.
++                // "Adwaita Sans Bold 11". Previously only the word "bold" was taken
++                // from it, while family and size stayed at the fallback, Cantarell 10,
++                // and the title came out smaller than GNOME's. Take all of it.
 +                //
-+                // Ключ называется titlebar-uses-SYSTEM-font; прежнее имя
-+                // titlebar-uses-desktop-font в схеме GNOME отсутствует, и отсутствующий
-+                // ключ всегда давал false.
++                // The key is named titlebar-uses-SYSTEM-font; the former name
++                // titlebar-uses-desktop-font is absent from the GNOME schema, and a
++                // missing key always yielded false.
 +                const QVariantMap wmPreferences = settings.value("org.gnome.desktop.wm.preferences"_L1);
 +                m_zamettiTitlebarFont = wmPreferences.value("titlebar-font"_L1).toString();
 +                m_zamettiUsesSystemFont = wmPreferences.value("titlebar-uses-system-font"_L1).toBool();
@@ -129,8 +129,8 @@ index ca1f0af..d877ec2 100644
  
 +void QWaylandAdwaitaDecoration::zamettiUpdateTitlebarFont()
 +{
-+    // При titlebar-uses-system-font заголовок рисуется шрифтом интерфейса,
-+    // иначе — тем, что назван в titlebar-font.
++    // With titlebar-uses-system-font the title is drawn with the interface
++    // font, otherwise with the one named in titlebar-font.
 +    const QString description = (m_zamettiUsesSystemFont && !m_zamettiSystemFont.isEmpty())
 +            ? m_zamettiSystemFont
 +            : m_zamettiTitlebarFont;
@@ -138,20 +138,20 @@ index ca1f0af..d877ec2 100644
 +    if (!zametti_applyFontDescription(m_font.get(), description))
 +        return;
 +
-+    // Заголовки GNOME полужирные даже когда шрифт взят из интерфейса: жирность
-+    // объявлена отдельно, в titlebar-font.
++    // GNOME titles are bold even when the font comes from the interface: the
++    // boldness is declared separately, in titlebar-font.
 +    if (m_zamettiTitlebarFont.contains("bold"_L1, Qt::CaseInsensitive))
 +        m_font->setBold(true);
 +
-+    // Раскладку статического текста готовим ТЕМ ЖЕ шрифтом, которым будем
-+    // рисовать. У upstream prepare() зовётся без аргументов, то есть шрифтом
-+    // приложения, и размер, по которому текст центрируется в заголовке,
-+    // берётся от чужих метрик.
++    // Prepare the static text layout with THE SAME font we will draw with.
++    // Upstream calls prepare() without arguments, i.e. with the application
++    // font, so the size used to center the text in the title bar came from
++    // foreign metrics.
 +    m_windowTitle.prepare(QTransform(), *m_font);
 +
-+    // Печатаем и то, что ПРОСИЛИ, и то, что получилось: если названного
-+    // семейства в системе нет, fontconfig молча подставит другое, и заголовок
-+    // окажется другого размера при том же числе пунктов.
++    // Log both what was ASKED FOR and what came out: if the named family is
++    // not on the system, fontconfig silently substitutes another, and the title
++    // ends up a different size at the same point count.
 +    {
 +        const QFontInfo resolved(*m_font);
 +        const QScreen *screen = QGuiApplication::primaryScreen();
@@ -193,9 +193,9 @@ index 34874e0..885d171 100644
      // Makes a call to xdg-desktop-portal (Settings) to load initial configuration
      void loadConfiguration();
      // Updates color scheme from light to dark and vice-versa
-+    // zametti: шрифт заголовка считается из трёх настроек рабочего стола, а
-+    // портал присылает изменения ПО ОДНОМУ КЛЮЧУ за раз — поэтому входы
-+    // держим у себя и пересчитываем шрифт целиком при любой перемене.
++    // zametti: the title bar font is computed from three desktop settings, and
++    // the portal delivers changes ONE KEY AT A TIME, so we keep the inputs
++    // ourselves and recompute the font in full on any change.
 +    void zamettiUpdateTitlebarFont();
 +    QString m_zamettiSystemFont;      // org.gnome.desktop.interface font-name
 +    QString m_zamettiTitlebarFont;    // …wm.preferences titlebar-font

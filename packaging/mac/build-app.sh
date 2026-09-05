@@ -1,34 +1,35 @@
 #!/bin/bash
 #
-# Переносимая сборка zametti под macOS от cmake до dmg — ПО ОДНОМУ dmg НА
-# АРХИТЕКТУРУ (решение владельца, 04.09.2026): intel-маков осталось немного, а
-# универсальный бинарь носил бы каждому пользователю 30 МБ чужого кода.
+# Portable zametti build for macOS from cmake to dmg — ONE dmg PER ARCHITECTURE
+# (owner's decision, 04.09.2026): few intel macs are left, and a universal
+# binary would carry 30 MB of someone else's code to every user.
 #
-#   bash packaging/mac/build-qt.sh          # однажды, это часы
-#   bash packaging/mac/build-app.sh [arm|intel|all]   # программа; умолчание arm
+#   bash packaging/mac/build-qt.sh          # once; takes hours
+#   bash packaging/mac/build-app.sh [arm|intel|all]   # the program; default arm
 #
-# Что получается (раскладка build-portable/ — слово владельца: сборки по
-# подпапкам архитектур, результат — в корне):
+# What comes out (the build-portable/ layout is the owner's word: builds in
+# per-architecture subfolders, results in the root):
 #
-#   build-portable/<арх>/            cmake-дерево половины
-#   build-portable/<арх>/Zametti.app программа этой архитектуры, подпись ad-hoc
-#   build-portable/Zametti-<версия>-arm.dmg
-#   build-portable/Zametti-<версия>-intel.dmg
+#   build-portable/<arch>/            cmake tree of that half
+#   build-portable/<arch>/Zametti.app the program for that architecture, ad-hoc signed
+#   build-portable/Zametti-<version>-arm.dmg
+#   build-portable/Zametti-<version>-intel.dmg
 #
-# Версия — из project(... VERSION) корневого CMakeLists.txt: cmake при
-# настройке пишет её в generated/version.txt и порождает generated/Info.plist
-# из packaging/mac/Info.plist.in. Второго числа версии в скрипте нет.
+# The version comes from project(... VERSION) in the root CMakeLists.txt: at
+# configure time cmake writes it to generated/version.txt and generates
+# generated/Info.plist from packaging/mac/Info.plist.in. There is no second
+# version number in this script.
 #
-# Внутри бинаря — статический Qt из $ZDEPS/<арх> и всё вендоренное добро
-# (libjxl, libheif, libsodium, zstd, blake3, microtex…); снаружи остаются
-# ТОЛЬКО системные рамки, которые есть на любом маке по построению и
-# вкладывать которые нельзя. Символы стрипаются (решение владельца,
-# 04.09.2026): таблица символов у arm64-ломтя весила ~7 МБ из 35.
+# Inside the binary: the static Qt from $ZDEPS/<arch> and all the vendored
+# goods (libjxl, libheif, libsodium, zstd, blake3, microtex…); outside remain
+# ONLY the system frameworks, which exist on every mac by construction and
+# must not be bundled. Symbols are stripped (owner's decision, 04.09.2026):
+# the symbol table of the arm64 slice weighed ~7 MB out of 35.
 #
-# Подпись — ad-hoc (codesign -s -): без неё арм-маки бинарь вообще не запустят.
-# Предупреждение Gatekeeper на ЧУЖОМ маке она не снимает — это снимают только
-# Developer ID и нотаризация, отдельная работа (docs/zametti-build-macos.md,
-# «Долги»).
+# Signing is ad-hoc (codesign -s -): without it arm macs will not launch the
+# binary at all. It does NOT remove the Gatekeeper warning on SOMEONE ELSE'S
+# mac — only Developer ID plus notarization do, which is separate work
+# (docs/zametti-build-macos.md, the "Долги" (debts) section).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,8 +50,8 @@ case "${1:-arm}" in
     all)   ARCHS="arm64 x86_64" ;;
     *)     usage ;;
 esac
-# Имя половины в имени dmg — человеческое, а не машинное: «arm» и «intel»
-# понятны тому, кто выбирает файл для скачивания; «arm64» и «x86_64» — нет.
+# The half's name in the dmg name is human, not machine: "arm" and "intel"
+# make sense to someone picking a file to download; "arm64" and "x86_64" do not.
 tag_of() {
     case "$1" in
         arm64)  echo arm ;;
@@ -62,9 +63,9 @@ UNI="$ROOT/build-portable"
 mkdir -p "$UNI"
 APP_VERSION=""
 
-# ── Иконка: .icns собирается на месте из resources/zametti_alt_1024x1024.png ──
-# Один раз на запуск, обеим половинам одна и та же. Бинарный icns в
-# репозитории не живёт. 1024 — это и есть 512@2x.
+# ── Icon: the .icns is built on the spot from resources/zametti_alt_1024x1024.png ──
+# Once per run, the same one for both halves. No binary icns lives in the
+# repository. 1024 is exactly 512@2x.
 ICNS="$UNI/zametti.icns"
 make_icns() {
     local iconset="$UNI/zametti.iconset"
@@ -81,32 +82,33 @@ make_icns() {
     rm -rf "$iconset"
 }
 
-# ── 1. Сборка одной половины ─────────────────────────────────────────────────
-# Одна архитектура на configure и одна сборка за раз — почему, написано в
-# zenv.sh (SIMD вендоренных библиотек) и в CLAUDE.md (память машины — 32 ГБ).
+# ── 1. Building one half ─────────────────────────────────────────────────────
+# One architecture per configure and one build at a time — the reasons are in
+# zenv.sh (SIMD of the vendored libraries) and CLAUDE.md (the machine has 32 GB).
 build_arch() {
     local arch="$1"
     local prefix="$ZDEPS/$arch"
     local out="$UNI/$arch"
     [ -x "$prefix/bin/qt-cmake" ] || {
-        echo "нет $prefix/bin/qt-cmake — сперва соберите Qt:" >&2
+        echo "no $prefix/bin/qt-cmake — build Qt first:" >&2
         echo "        ZARCHS=$arch bash packaging/mac/build-qt.sh" >&2
         exit 1
     }
     echo "=== zametti [$arch] → $out ==="
     local extra=()
     if [ "$arch" != "$ZHOSTARCH" ]; then
-        # На чужой архитектуре cmake оставил бы в CMAKE_SYSTEM_PROCESSOR арх
-        # машины, и libgav1/libsodium/highway/libjxl выбрали бы не тот SIMD
-        # (см. zenv.sh). Задаём только процессор, БЕЗ CMAKE_SYSTEM_NAME: имя
-        # включило бы полный кросс-режим cmake со своими требованиями.
+        # On the foreign architecture cmake would leave the host arch in
+        # CMAKE_SYSTEM_PROCESSOR, and libgav1/libsodium/highway/libjxl would
+        # pick the wrong SIMD (see zenv.sh). We set only the processor, WITHOUT
+        # CMAKE_SYSTEM_NAME: the name would switch on cmake's full cross mode
+        # with its own demands.
         extra+=("-DCMAKE_SYSTEM_PROCESSOR=$arch")
-        # Кросс-собранный Qt записал в свой toolchain-файл требование
-        # QT_HOST_PATH — родного Qt с инструментами сборки (см. build-qt.sh).
+        # The cross-built Qt wrote into its toolchain file a demand for
+        # QT_HOST_PATH — the native Qt with the build tools (see build-qt.sh).
         extra+=("-DQT_HOST_PATH=$ZDEPS/$ZHOSTARCH")
     fi
-    # ${extra[@]+...} вместо голого "${extra[@]}": системный bash на маке —
-    # 3.2, где пустой массив под set -u считается необъявленной переменной.
+    # ${extra[@]+...} instead of a bare "${extra[@]}": the system bash on the
+    # mac is 3.2, where an empty array under set -u counts as an unset variable.
     "$prefix/bin/qt-cmake" -S "$ROOT" -B "$out" \
         -DCMAKE_BUILD_TYPE=Release \
         -DWITH_STATIC_QT=ON \
@@ -115,61 +117,61 @@ build_arch() {
         ${extra[@]+"${extra[@]}"}
     cmake --build "$out" -j8 --target zametti
 
-    # Версия — от cmake, одна на обе половины.
+    # The version comes from cmake, one for both halves.
     local version
     version="$(cat "$out/generated/version.txt")"
-    [ -n "$version" ] || { echo "cmake не записал версию в $out/generated/version.txt" >&2; exit 1; }
+    [ -n "$version" ] || { echo "cmake did not write the version to $out/generated/version.txt" >&2; exit 1; }
     if [ -n "$APP_VERSION" ] && [ "$APP_VERSION" != "$version" ]; then
-        echo "половины разошлись версиями: $APP_VERSION и $version" >&2
+        echo "the halves disagree on the version: $APP_VERSION and $version" >&2
         exit 1
     fi
     APP_VERSION="$version"
 
-    # ── Стрип и приёмка ломтя ────────────────────────────────────────────────
+    # ── Strip and acceptance of the slice ────────────────────────────────────
     local bin="$out/app/zametti"
     local before after
     before="$(stat -f %z "$bin")"
     strip "$bin"
     after="$(stat -f %z "$bin")"
-    echo "  стрип: $((before / 1048576)) МБ → $((after / 1048576)) МБ"
+    echo "  strip: $((before / 1048576)) MB → $((after / 1048576)) MB"
 
-    echo "=== приёмка [$arch]: $bin ==="
+    echo "=== acceptance [$arch]: $bin ==="
     lipo -info "$bin"
     local minos
     minos="$(otool -l "$bin" | awk '/LC_BUILD_VERSION/{v=1} v && /minos/{print $2; exit}')"
     if [ "$minos" != "$ZMACOS_MIN" ]; then
-        echo "ломоть $arch: пол $minos вместо $ZMACOS_MIN" >&2
+        echo "slice $arch: floor $minos instead of $ZMACOS_MIN" >&2
         exit 1
     fi
-    echo "  пол $minos — верно"
-    # Чужих динамических библиотек снаружи быть не должно: только системные
-    # рамки. Заголовок «путь:» стоит в колонке 0, строки библиотек начинаются
-    # с табуляции; отбираем только вторые.
+    echo "  floor $minos — correct"
+    # No foreign dynamic libraries may remain outside: only system frameworks.
+    # The "path:" header sits in column 0, library lines start with a tab; we
+    # keep only the latter.
     local foreign
     foreign="$(otool -L "$bin" | grep $'^\t' | grep -v -E '/usr/lib/|/System/Library/' || true)"
     if [ -n "$foreign" ]; then
-        echo "снаружи остались чужие библиотеки:" >&2
+        echo "foreign libraries remain outside:" >&2
         echo "$foreign" >&2
         exit 1
     fi
-    echo "  чужих библиотек снаружи нет"
-    # Дымовой запуск: x86_64 бежит под Rosetta. --help, --version и
-    # --dump-config работают без дисплея (--dump-config сам поднимает
-    # offscreen QGuiApplication). Стрипованный бинарь обязан запускаться —
-    # это и проверяем.
-    echo "  дымовой запуск [$arch]:"
+    echo "  no foreign libraries outside"
+    # Smoke run: x86_64 runs under Rosetta. --help, --version and --dump-config
+    # work without a display (--dump-config brings up an offscreen
+    # QGuiApplication itself). The stripped binary must launch — that is what
+    # we check.
+    echo "  smoke run [$arch]:"
     arch "-$arch" "$bin" --help > /dev/null
     local said
     said="$(arch "-$arch" "$bin" --version)"
     if [ "$said" != "zametti $APP_VERSION" ]; then
-        echo "--version сказал «$said», а cmake — «$APP_VERSION»" >&2
+        echo "--version said \"$said\", cmake said \"$APP_VERSION\"" >&2
         exit 1
     fi
     arch "-$arch" "$bin" --noconfig --dump-config > /dev/null
-    echo "    --help, --version ($said) и --noconfig --dump-config отработали"
+    echo "    --help, --version ($said) and --noconfig --dump-config passed"
 }
 
-# ── 2. Zametti.app и dmg одной половины ──────────────────────────────────────
+# ── 2. Zametti.app and dmg of one half ───────────────────────────────────────
 package_arch() {
     local arch="$1"
     local out="$UNI/$arch"
@@ -182,7 +184,7 @@ package_arch() {
 
     codesign --force --sign - "$app"
     codesign --verify --strict --deep "$app"
-    echo "=== $app подписан (ad-hoc) и проверен ==="
+    echo "=== $app signed (ad-hoc) and verified ==="
 
     local stage="$out/dmg-staging"
     rm -rf "$stage"
@@ -191,16 +193,15 @@ package_arch() {
     ln -s /Applications "$stage/Applications"
     local dmg="$UNI/$APP_NAME-$APP_VERSION-$(tag_of "$arch").dmg"
     rm -f "$dmg" "$out/raw.dmg"
-    # НЕ hdiutil create -srcfolder: тот по дороге МОНТИРУЕТ образ в /Volumes, а
-    # монтирование может быть запрещено (песочница агентов, CI). makehybrid
-    # строит файловую систему напрямую, convert сжимает в UDZO — оба без
-    # монтирования.
+    # NOT hdiutil create -srcfolder: it MOUNTS the image in /Volumes along the
+    # way, and mounting may be forbidden (agent sandbox, CI). makehybrid builds
+    # the file system directly, convert compresses to UDZO — neither mounts.
     hdiutil makehybrid -hfs -hfs-volume-name "$APP_NAME" -o "$out/raw.dmg" "$stage" > /dev/null
     hdiutil convert "$out/raw.dmg" -format UDZO -o "$dmg" > /dev/null
     rm -f "$out/raw.dmg"
     rm -rf "$stage"
     hdiutil verify "$dmg" > /dev/null
-    echo "=== $dmg собран и проверен ==="
+    echo "=== $dmg built and verified ==="
     RESULTS+=("$dmg")
 }
 
@@ -213,10 +214,10 @@ done
 rm -f "$ICNS"
 
 echo
-echo "=== что получилось (версия $APP_VERSION) ==="
+echo "=== results (version $APP_VERSION) ==="
 for dmg in "${RESULTS[@]}"; do
     ls -lh "$dmg" | awk '{print " ", $9, "—", $5}'
 done
 for arch in $ARCHS; do
-    echo "  $UNI/$arch/$APP_NAME.app — рядом, не удалён"
+    echo "  $UNI/$arch/$APP_NAME.app — kept alongside, not deleted"
 done

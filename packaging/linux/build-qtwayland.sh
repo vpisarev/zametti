@@ -1,43 +1,45 @@
 #!/bin/bash
 #
-# Сборка модуля qtwayland против уже собранного статического Qt в $ZPREFIX.
+# Build the qtwayland module against the static Qt already installed in $ZPREFIX.
 #
 #   git -C $ZBUILD clone --depth 1 --branch v6.10.3 https://code.qt.io/qt/qtwayland.git
 #   packaging/linux/build-qtwayland.sh
 #
-# ЗАЧЕМ ОН ВООБЩЕ НУЖЕН, ЕСЛИ WAYLAND И ТАК РАБОТАЕТ. В Qt 6.10 wayland-КЛИЕНТ
-# переехал в qtbase, и без этого модуля программа под Wayland уже живёт. Но в
-# qtwayland остался decoration-плагин `adwaita` — гномовский заголовок окна.
+# WHY IT IS NEEDED AT ALL WHEN WAYLAND ALREADY WORKS. In Qt 6.10 the wayland
+# CLIENT moved into qtbase, so the program already runs under Wayland without
+# this module. What stays in qtwayland is the `adwaita` decoration plugin:
+# the GNOME window title bar.
 #
-# Под Wayland заголовок рисует не оконный менеджер, а сама программа, и Qt
-# выбирает чем: под GNOME она ищет плагин с ключом `adwaita`/`gnome` и, НЕ
-# НАЙДЯ, берёт первый попавшийся — то есть свой запасной `bradient` с
-# серо-синим градиентом (qtbase, qwaylandwindow.cpp, createDecoration).
-# Проверено замером: под XDG_CURRENT_DESKTOP=ubuntu:GNOME окно просит
-# геометрию (10, 10, 1152, 820) — это adwaita с её тенями, — а под KDE и с
-# пустым значением (0, 0, 1156, 813), то есть bradient.
+# Under Wayland the title bar is drawn by the program itself, not by the window
+# manager, and Qt picks how: under GNOME it looks for a plugin keyed
+# `adwaita`/`gnome` and, NOT FINDING one, takes the first available, i.e. its
+# own fallback `bradient` with a grey-blue gradient (qtbase, qwaylandwindow.cpp,
+# createDecoration). Measured: under XDG_CURRENT_DESKTOP=ubuntu:GNOME the
+# window requests geometry (10, 10, 1152, 820), which is adwaita with its
+# shadows; under KDE and with an empty value it requests (0, 0, 1156, 813),
+# i.e. bradient.
 #
-# Новых динамических зависимостей плагин не приносит НИ ОДНОЙ: он просит
-# Qt::DBus, Qt::Svg и Wayland::Client, а libdbus-1 и Qt6Svg в программе уже
-# есть. Список NEEDED после его добавления совпал посимвольно.
+# The plugin brings NOT A SINGLE new dynamic dependency: it asks for Qt::DBus,
+# Qt::Svg and Wayland::Client, and libdbus-1 and Qt6Svg are already in the
+# program. The NEEDED list after adding it matched character for character.
 #
-# ПАТЧ ПРО ШРИФТ ЗАГОЛОВКА — packaging/linux/patches/. Плагин берёт шрифт у
-# платформенной темы (`theme->font(QPlatformTheme::TitleBarFont)`), а
-# QGnomeTheme отдаёт для него nullptr — правильный шрифт умеет только
-# QGtk3Theme, а gtk3 мы нарочно не тянем (это +12 динамических зависимостей).
-# Срабатывает запасной `QFont("Cantarell", 10)`, и заголовок выходит мельче
-# гномовского: GNOME просит `Adwaita Sans Bold 11`. Причём плагин ЭТУ СТРОКУ
-# У ПОРТАЛА УЖЕ ЗАПРАШИВАЕТ и использует из неё одно слово «bold». Патч берёт
-# из неё всё. Проверено в свежих версиях: в 6.11.2 и в dev обе беды на месте
-# слово в слово, обновление Qt не помогло бы.
+# THE TITLE BAR FONT PATCH lives in packaging/linux/patches/. The plugin takes
+# its font from the platform theme (`theme->font(QPlatformTheme::TitleBarFont)`),
+# and QGnomeTheme returns nullptr for it; only QGtk3Theme knows the right font,
+# and we deliberately do not pull in gtk3 (that is +12 dynamic dependencies).
+# The fallback `QFont("Cantarell", 10)` kicks in and the title comes out smaller
+# than GNOME's: GNOME asks for `Adwaita Sans Bold 11`. Yet the plugin ALREADY
+# REQUESTS THAT STRING FROM THE PORTAL and uses exactly one word of it, "bold".
+# The patch takes all of it. Checked against newer versions: 6.11.2 and dev
+# carry both problems word for word, so upgrading Qt would not help.
 #
-# СКАНЕР — ИЗ SYSROOT, А НЕ С ХОСТА. wayland-scanner хоста (1.24) порождает
-# код, зовущий wl_proxy_marshal_flags, а в sysroot Ubuntu 20.04 libwayland
-# 1.18, где такого символа нет. Тот же ключ, что у qtbase.
+# SCANNER FROM THE SYSROOT, NOT FROM THE HOST. The host wayland-scanner (1.24)
+# generates code calling wl_proxy_marshal_flags, while the Ubuntu 20.04 sysroot
+# has libwayland 1.18, which lacks that symbol. Same switch as for qtbase.
 set -e
 
-# ОКРУЖЕНИЕ БЕРЁМ САМИ — звать `source zenv.sh` перед скриптом не нужно
-# (заданное снаружи он не трогает: ZSYS=/иное/место работает как раньше).
+# WE SET UP THE ENVIRONMENT OURSELVES: no need to `source zenv.sh` before this
+# script (values set outside are left alone: ZSYS=/other/place works as before).
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/zenv.sh"
 
@@ -45,18 +47,18 @@ SRC="$ZBUILD/qtwayland"
 BUILD="$ZBUILD/qtwayland-build"
 PATCHES="$(cd "$(dirname "${BASH_SOURCE[0]}")/patches" && pwd)"
 
-[ -d "$SRC" ] || { echo "нет дерева qtwayland в $SRC" >&2; exit 1; }
-[ -x "$ZPREFIX/bin/qt-cmake" ] || { echo "нет $ZPREFIX/bin/qt-cmake — сперва соберите qtbase" >&2; exit 1; }
+[ -d "$SRC" ] || { echo "no qtwayland tree at $SRC" >&2; exit 1; }
+[ -x "$ZPREFIX/bin/qt-cmake" ] || { echo "no $ZPREFIX/bin/qt-cmake — build qtbase first" >&2; exit 1; }
 
-# Патч накладывается ровно один раз и молча пропускается, если уже лежит.
+# The patch is applied exactly once and silently skipped if already present.
 cd "$SRC"
 for patch in "$PATCHES"/qtwayland-*.patch; do
     [ -e "$patch" ] || continue
     if git apply --reverse --check "$patch" 2>/dev/null; then
-        echo "уже наложен: $(basename "$patch")"
+        echo "already applied: $(basename "$patch")"
     else
         git apply "$patch"
-        echo "наложен: $(basename "$patch")"
+        echo "applied: $(basename "$patch")"
     fi
 done
 
@@ -69,10 +71,11 @@ cd "$BUILD"
     -DQT_BUILD_TESTS=OFF \
     -DWaylandScanner_EXECUTABLE="$ZSYS/usr/bin/wayland-scanner"
 
-# Сводка обязана сказать «GNOME-like client-side decorations ... yes»: без
-# Qt::DBus или Qt::Svg условие фичи не выполняется, и плагин молча не соберётся.
+# The summary must say "GNOME-like client-side decorations ... yes": without
+# Qt::DBus or Qt::Svg the feature condition fails and the plugin silently is
+# not built.
 grep -q "GNOME-like client-side decorations ... yes" config.summary || {
-    echo "qtwayland настроен БЕЗ плагина adwaita — проверьте, что в $ZPREFIX есть Qt6 DBus и Svg" >&2
+    echo "qtwayland configured WITHOUT the adwaita plugin — check that $ZPREFIX has Qt6 DBus and Svg" >&2
     exit 1
 }
 
@@ -80,5 +83,5 @@ cmake --build . -j8
 cmake --install .
 
 test -f "$ZPREFIX/plugins/wayland-decoration-client/libadwaita.a" || {
-    echo "libadwaita.a не установилась" >&2; exit 1; }
-echo "qtwayland: готово, adwaita в $ZPREFIX/plugins/wayland-decoration-client/"
+    echo "libadwaita.a was not installed" >&2; exit 1; }
+echo "qtwayland: done, adwaita in $ZPREFIX/plugins/wayland-decoration-client/"

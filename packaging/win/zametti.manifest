@@ -1,30 +1,32 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!--
-  Манифест Windows. Он здесь ради ОДНОЙ строки — activeCodePage.
+  Windows manifest. It exists for ONE line: activeCodePage.
 
-  У Windows есть «узкая» половина API (файлы, консоль, чужие библиотеки с
-  char*), и по умолчанию она читает байты в ANSI-кодировке системы — у русской
-  машины это CP1251, у западной CP1252. Наши строки везде UTF-8. Значит любой
-  переход через узкую половину — QString::toLocal8Bit(), TIFFOpen, printf с
-  русским текстом — молча терял кириллицу, превращая её в вопросительные знаки.
+  Windows has a "narrow" half of its API (files, console, third-party libraries
+  taking char*), and by default it reads bytes in the system ANSI code page:
+  CP1251 on a Russian machine, CP1252 on a Western one. Our strings are UTF-8
+  everywhere. So any crossing of the narrow half (QString::toLocal8Bit(),
+  TIFFOpen, printf with Russian text) silently lost Cyrillic, turning it into
+  question marks.
 
-  Поймано на деле: обвязка наборов передаёт каталог вывода через
-  toLocal8Bit()/fromLocal8Bit(), и путь ".../наборы/zoom" на той стороне
-  становился ".../??????/zoom". Снимки писались в него же, набор их не находил,
-  и одиннадцать наборов краснели не по своей вине.
+  Caught in practice: the test-suite harness passes the output directory
+  through toLocal8Bit()/fromLocal8Bit(), and a path with a six-letter Cyrillic
+  directory name (".../<tests dir>/zoom") came out as ".../??????/zoom" on the
+  other side. Snapshots were written into that same directory, the suite could
+  not find them, and eleven suites went red through no fault of their own.
 
-  Начиная с Windows 10 1903 программа может объявить, что её ANSI-кодировка —
-  UTF-8. Тогда узкая половина перестаёт быть узкой: GetACP() отвечает 65001, и
-  все переходы становятся беспотерьными разом. Проверено: под wine GetACP() без
-  манифеста 1252, с манифестом 65001.
+  Starting with Windows 10 1903 a program may declare that its ANSI code page
+  is UTF-8. Then the narrow half stops being narrow: GetACP() returns 65001,
+  and every crossing becomes lossless at once. Verified: under wine GetACP() is
+  1252 without the manifest and 65001 with it.
 
-  На Windows старее 1903 строка просто игнорируется — не отказ, а возврат к
-  прежнему поведению. Поэтому места, где путь идёт в файловую систему, всё
-  равно пользуются широкими вызовами (writeNewFile, TIFFOpenW): манифест —
-  верхний слой защиты, а не единственный.
+  On Windows older than 1903 the line is simply ignored: not a failure, a
+  fallback to the previous behaviour. That is why the places where a path goes
+  to the file system still use the wide calls (writeNewFile, TIFFOpenW): the
+  manifest is the top layer of protection, not the only one.
 
-  Осознанно НЕ объявляем dpiAware/dpiAwareness: осведомлённость о плотности
-  точек Qt 6 выставляет сама, программно, и объявленное здесь с ней спорило бы.
+  dpiAware/dpiAwareness are deliberately NOT declared: Qt 6 sets DPI awareness
+  itself, programmatically, and anything declared here would conflict with it.
 -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity type="win32" name="org.zametti.zametti" version="1.0.0.0"/>

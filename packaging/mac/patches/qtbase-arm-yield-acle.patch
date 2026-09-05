@@ -8,15 +8,15 @@ index 66156487..79492eaf 100644
  
 +// ZAMETTI PATCH (mac, arm64, AppleClang 21 / Xcode 26).
 +//
-+// Ниже стоит `#if __has_builtin(__yield)` и вызов __yield() без объявления.
-+// Прежние clang давали его встроенным молча; AppleClang 21 считает __yield
-+// БИБЛИОТЕЧНОЙ функцией — __has_builtin по-прежнему true, но объявления в
-+// области видимости нет, и вылезает -Werror,-Wimplicit-function-declaration.
-+// Сборка Qt падает на 186-м файле из 1865, ещё на bootstrap.
++// Below sits `#if __has_builtin(__yield)` and a call to __yield() without a
++// declaration. Earlier clangs provided it as a builtin silently; AppleClang 21
++// treats __yield as a LIBRARY function — __has_builtin is still true, but no
++// declaration is in scope, and -Werror,-Wimplicit-function-declaration fires.
++// The Qt build dies on file 186 of 1865, still in bootstrap.
 +//
-+// Объявление живёт в <arm_acle.h> (ARM C Language Extensions) — компилятор сам
-+// это и подсказывает в note. Включаем его там, где он есть, и ничего больше:
-+// глушить предупреждение значило бы оставить вызов без объявления.
++// The declaration lives in <arm_acle.h> (ARM C Language Extensions) — the
++// compiler itself hints at this in a note. We include it where it exists and
++// nothing more: silencing the warning would leave the call undeclared.
 +#if defined(Q_PROCESSOR_ARM) && defined(__has_include)
 +#  if __has_include(<arm_acle.h>)
 +#    include <arm_acle.h>

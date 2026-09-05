@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Настройка статической Qt 6.10.3 под Windows x86-64 (mingw-w64), кросс с Linux.
-# Только НАСТРАИВАЕТ — собирать и ставить отдельно, чтобы код возврата сборки
-# читался у сборки, а не у конвейера (на этом уже наступали, см. рецепт Linux).
+# Configure static Qt 6.10.3 for Windows x86-64 (mingw-w64), cross-built from Linux.
+# It only CONFIGURES -- build and install separately, so that the exit code is
+# read from the build itself and not from a pipeline (we have already been
+# bitten by this, see the Linux recipe).
 #
 #   source packaging/win/zenv.sh
 #   bash packaging/win/qtbase-configure.sh
@@ -16,22 +17,24 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="${QTBASE_SRC:-$ZWBUILD/qtbase}"
 BUILD="${QTBASE_WIN_BUILD:-$ZWBUILD/qtbase-win}"
 
-[ -d "$SRC" ] || { echo "нет исходников qtbase в $SRC" >&2; exit 1; }
+[ -d "$SRC" ] || { echo "no qtbase sources in $SRC" >&2; exit 1; }
 
 mkdir -p "$BUILD"
 cd "$BUILD"
 
-# Читается так же, как список под Linux, только «system-» здесь нет ни одного:
-# на целевой машине нашего добра нет вовсе, а Windows своего zlib/png/freetype
-# не даёт. Поэтому всё, что можно, — «qt-» (своя копия внутри), а всё, что
-# тянет мир, — «no-».
+# Reads the same way as the Linux list, except that there is not a single
+# "system-" here: the target machine has none of our stuff at all, and Windows
+# ships no zlib/png/freetype of its own. So everything that can be is "qt-"
+# (own copy inside), and everything that would pull in the outside world is
+# "no-".
 #
-# -schannel вместо -openssl: TLS даёт сама Windows, и хранилище доверенных
-# корней у неё своё, живое и обновляемое. Это ровно та причина, по которой под
-# Linux мы, наоборот, слинковали OpenSSL и оставили --openssldir=/etc/ssl —
-# цель одна: доверять корням ЦЕЛЕВОЙ машины, а не своим.
+# -schannel instead of -openssl: TLS is provided by Windows itself, and its
+# trusted-root store is its own, live and updated. This is exactly the reason
+# we did the opposite on Linux -- linked OpenSSL and kept --openssldir=/etc/ssl:
+# the goal is the same, trust the roots of the TARGET machine, not our own.
 #
-# -no-dbus: под Windows шины нет; на Linux он нужен был только плагину adwaita.
+# -no-dbus: there is no bus on Windows; on Linux it was needed only by the
+# adwaita plugin.
 "$SRC/configure" \
     -prefix "$ZWPREFIX" \
     -static -release \

@@ -1,25 +1,26 @@
-# Toolchain переносимой сборки под Linux: всё собирается против sysroot
-# Ubuntu 20.04 (glibc 2.31), а не против системы, на которой мы сидим.
+# Toolchain for the portable Linux build: everything is built against the
+# Ubuntu 20.04 sysroot (glibc 2.31), not against the system we are sitting on.
 #
 #   cmake -S . -B build-portable -DCMAKE_BUILD_TYPE=Release \
 #         -DCMAKE_TOOLCHAIN_FILE=packaging/linux/toolchains/linux-zsys.cmake \
 #         -DWITH_STATIC_QT=ON
 #   cmake --build build-portable -j8
 #
-# БОЛЬШЕ НИЧЕГО НЕ НУЖНО: ни окружения, ни zenv.sh. Он нужен, только когда
-# собирают САМИ ЗАВИСИМОСТИ (Qt, OpenSSL, помощники xcb) — см.
+# NOTHING ELSE IS NEEDED: no environment, no zenv.sh. That one is needed only
+# when building THE DEPENDENCIES THEMSELVES (Qt, OpenSSL, xcb helpers); see
 # docs/zametti-build-linux.md.
 #
-# Этим же файлом собраны Qt и OpenSSL, лежащие в ${ZDEPS_ROOT}. Так и задумано:
-# разошедшиеся ключи у Qt и у программы — это бинарь, который собрался, но не
-# запускается, и разбираться в таком потом дороже всего.
+# The Qt and OpenSSL in ${ZDEPS_ROOT} were built with this same file. By
+# design: diverging switches between Qt and the program give a binary that
+# builds but does not run, and that is the most expensive thing to debug
+# afterwards.
 
-# ГДЕ ЛЕЖИТ SYSROOT И СОБРАННЫЕ ЗАВИСИМОСТИ. Три источника по убыванию силы:
-# -DZSYS_ROOT= в командной строке, переменная окружения (ZSYS/ZPREFIX),
-# привычное место в ~/work. ОТВЕТ КЛАДЁТСЯ В КЭШ, и это не удобство: `make`
-# сам зовёт cmake заново на всякой правке CMakeLists, а окружения у него уже
-# нет — и сборка падала на ровном месте с «Не задан ZSYS», хотя каталог сборки
-# был настроен и работал.
+# WHERE THE SYSROOT AND THE BUILT DEPENDENCIES LIVE. Three sources, strongest
+# first: -DZSYS_ROOT= on the command line, environment variables (ZSYS/ZPREFIX),
+# the usual place in ~/work. THE ANSWER GOES INTO THE CACHE, and that is not a
+# convenience: `make` re-runs cmake by itself on every CMakeLists edit, with no
+# environment left, and the build used to fail out of nowhere with "ZSYS not
+# set" although the build directory was configured and working.
 if(NOT DEFINED ZSYS_ROOT)
     if(DEFINED ENV{ZSYS})
         set(ZSYS_ROOT "$ENV{ZSYS}")
@@ -34,113 +35,118 @@ if(NOT DEFINED ZDEPS_ROOT)
         set(ZDEPS_ROOT "$ENV{HOME}/work/zdeps")
     endif()
 endif()
-set(ZSYS_ROOT "${ZSYS_ROOT}" CACHE PATH "sysroot Ubuntu 20.04, против которого собирается всё")
-set(ZDEPS_ROOT "${ZDEPS_ROOT}" CACHE PATH "куда сложены собранные Qt, OpenSSL и помощники xcb")
-# Пробные сборки (try_compile) заводят свой кэш и читают этот файл заново —
-# без этой строки они брали бы умолчание, а не то, что настроили здесь.
+set(ZSYS_ROOT "${ZSYS_ROOT}" CACHE PATH "Ubuntu 20.04 sysroot everything is built against")
+set(ZDEPS_ROOT "${ZDEPS_ROOT}" CACHE PATH "where the built Qt, OpenSSL and xcb helpers are installed")
+# Trial builds (try_compile) create their own cache and re-read this file;
+# without this line they would take the default rather than what was
+# configured here.
 list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES ZSYS_ROOT ZDEPS_ROOT)
 
 if(NOT IS_DIRECTORY "${ZSYS_ROOT}/usr/include")
     message(FATAL_ERROR
-        "ZSYS_ROOT=${ZSYS_ROOT} не похож на sysroot: нет usr/include.\n"
-        "  Соберите его по docs/zametti-build-linux.md или укажите свой:\n"
-        "  cmake -DZSYS_ROOT=/путь/к/sysroot ...")
+        "ZSYS_ROOT=${ZSYS_ROOT} does not look like a sysroot: no usr/include.\n"
+        "  Build one per docs/zametti-build-linux.md or point to your own:\n"
+        "  cmake -DZSYS_ROOT=/path/to/sysroot ...")
 endif()
 if(NOT EXISTS "${ZSYS_ROOT}/bin/gcc")
     message(FATAL_ERROR
-        "нет ${ZSYS_ROOT}/bin/gcc — обёртки компилятора не поставлены.\n"
+        "no ${ZSYS_ROOT}/bin/gcc — compiler wrappers are not installed.\n"
         "  bash packaging/linux/fix-sysroot.sh")
 endif()
 
-# Qt и OpenSSL ищутся ЗДЕСЬ ЖЕ: -DCMAKE_PREFIX_PATH в командной строке больше
-# не нужен. Заданный снаружи остаётся — свой путь всегда сильнее нашего.
+# Qt and OpenSSL are looked up RIGHT HERE: -DCMAKE_PREFIX_PATH on the command
+# line is no longer needed. One given from outside stays: a user's own path
+# always beats ours.
 list(APPEND CMAKE_PREFIX_PATH "${ZDEPS_ROOT}")
 
-# PKG-CONFIG СМОТРИТ ТОЛЬКО В SYSROOT, и задаётся это ЗДЕСЬ, а не в окружении.
-# Через pkg-config Qt ищет xkbcommon-x11 и половину X11; без этих двух строк
-# он спрашивал систему, на которой мы сидим, — и либо не находил (тогда
-# настройка падала «Qt6::XcbQpaPrivate not found»), либо находил ЧУЖОЕ, и
-# переносимость утекала молча. LIBDIR, а не PATH: PATH только добавляет пути к
-# системным, а нам надо системные отрезать. usr/share/pkgconfig обязателен —
-# там лежит wayland-protocols.pc.
+# PKG-CONFIG LOOKS ONLY IN THE SYSROOT, and that is set HERE, not in the
+# environment. Qt finds xkbcommon-x11 and half of X11 through pkg-config;
+# without these two lines it asked the system we sit on, and either did not
+# find them (configure failed with "Qt6::XcbQpaPrivate not found") or found
+# FOREIGN ones, and portability leaked silently. LIBDIR, not PATH: PATH only
+# adds paths to the system ones, and we need the system ones cut off.
+# usr/share/pkgconfig is mandatory: that is where wayland-protocols.pc lives.
 set(ENV{PKG_CONFIG_SYSROOT_DIR} "${ZSYS_ROOT}")
 set(ENV{PKG_CONFIG_LIBDIR}
     "${ZSYS_ROOT}/usr/lib/x86_64-linux-gnu/pkgconfig:${ZSYS_ROOT}/usr/share/pkgconfig")
 unset(ENV{PKG_CONFIG_PATH})
 
-# CMAKE_SYSTEM_NAME НЕ ЗАДАЁМ НАРОЧНО. Архитектура та же, сборка остаётся
-# «родной», и Qt не требует QT_HOST_PATH с отдельным хостовым Qt. Объявить
-# кросс-сборку значило бы завести себе вторую сборку Qt на пустом месте.
+# CMAKE_SYSTEM_NAME IS DELIBERATELY NOT SET. Same architecture, the build stays
+# "native", and Qt does not demand QT_HOST_PATH with a separate host Qt.
+# Declaring a cross build would mean setting up a second Qt build for nothing.
 
 set(CMAKE_SYSROOT "${ZSYS_ROOT}")
 set(CMAKE_C_COMPILER "${ZSYS_ROOT}/bin/gcc")
 set(CMAKE_CXX_COMPILER "${ZSYS_ROOT}/bin/g++")
 
-# ГЛАВНОЕ. Без этого find_library() спокойно берёт /usr/lib/x86_64-linux-gnu
-# ХОСТА, сборка проходит, а переносимость утекает молча — ровно так же, как
-# она утекала через абсолютные симлинки внутри самого sysroot.
+# THE KEY PART. Without this find_library() happily takes the HOST's
+# /usr/lib/x86_64-linux-gnu, the build passes, and portability leaks silently,
+# exactly as it leaked through absolute symlinks inside the sysroot itself.
 set(CMAKE_FIND_ROOT_PATH "${ZSYS_ROOT}" "${ZDEPS_ROOT}")
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
-# А программы (perl, python, ninja, wayland-scanner, moc) нужны ХОСТОВЫЕ: они
-# исполняются здесь и сейчас, а не на целевой машине.
+# Programs (perl, python, ninja, wayland-scanner, moc), however, must be the
+# HOST's: they run here and now, not on the target machine.
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 
-# ОБЯЗАТЕЛЬНЫ, а не желательны: libstdc++ у gcc-15 требует GLIBCXX_3.4.32,
-# которого нет даже в той Ubuntu 20.04, откуда снят sysroot. Без этих ключей
-# собранное не запускается на целевой системе — замерено.
-# -s — стрип символов при компоновке (решение владельца, 04.09.2026):
-# переносимый бинарь — для пользователей, а не для отладчика, и таблица
-# символов статической сборки с Qt внутри весит мегабайты. Только у
-# исполняемых файлов: разделяемых у переносимой сборки нет.
+# MANDATORY, not optional: libstdc++ of gcc-15 requires GLIBCXX_3.4.32, which
+# is absent even in the Ubuntu 20.04 the sysroot was taken from. Without these
+# switches the result does not run on the target system (measured).
+# -s strips symbols at link time (owner's decision, 2026-09-04): the portable
+# binary is for users, not for a debugger, and the symbol table of a static
+# build with Qt inside weighs megabytes. Executables only: the portable build
+# has no shared libraries.
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-static-libstdc++ -static-libgcc -s")
 set(CMAKE_SHARED_LINKER_FLAGS_INIT "-static-libstdc++ -static-libgcc")
 set(CMAKE_MODULE_LINKER_FLAGS_INIT "-static-libstdc++ -static-libgcc")
 
-# СЕМЕЙСТВО xcb-util И SM/ICE — СТАТИЧЕСКИ.
+# THE xcb-util FAMILY AND SM/ICE: STATIC.
 #
-# Шесть библиотек, которые тянет xcb-плагин Qt (xcb-cursor, xcb-icccm,
-# xcb-image, xcb-keysyms, xcb-render-util, xcb-util), лежат в пакетах
-# priority=EXTRA — самый низкий: в базовую установку они не входят никогда и
-# оказываются на машине, только если их притянул кто-то другой. libxcb-cursor0
-# — та самая, из-за которой Qt 6.5+ падает с «could not load the Qt platform
-# plugin xcb»; это самая частая жалоба на развёртывание Qt-программ.
+# The six libraries pulled in by Qt's xcb plugin (xcb-cursor, xcb-icccm,
+# xcb-image, xcb-keysyms, xcb-render-util, xcb-util) live in packages with
+# priority=EXTRA, the lowest: they are never part of a base install and appear
+# on a machine only if something else pulled them in. libxcb-cursor0 is the one
+# that makes Qt 6.5+ fail with "could not load the Qt platform plugin xcb";
+# it is the most common complaint about deploying Qt programs.
 #
-# Все шесть есть в sysroot архивами, и они тонкие обёртки над libxcb, так что
-# вшить их дешевле, чем объяснять человеку, какие шесть пакетов доставить.
+# All six are in the sysroot as archives, and they are thin wrappers over
+# libxcb, so linking them in is cheaper than explaining to a person which six
+# packages to install.
 #
-# libSM и libICE (сессия X11) ЗДЕСЬ НЕТ НАРОЧНО, хотя архивы их лежат рядом и
-# соблазн был. Статическая libICE.a требует arc4random_buf из libbsd, а libbsd
-# архивом в sysroot не поставляется вовсе — вшив ICE, мы обменяли бы две
-# библиотеки priority=optional на одну такую же плюс возню. Обе остаются
-# динамическими: на любом рабочем столе с X11 они есть.
+# libSM and libICE (X11 session) are DELIBERATELY NOT HERE, although their
+# archives lie right next door and it was tempting. Static libICE.a requires
+# arc4random_buf from libbsd, and libbsd is not shipped in the sysroot as an
+# archive at all; linking ICE in would trade two priority=optional libraries
+# for one of the same kind plus hassle. Both stay dynamic: every desktop with
+# X11 has them.
 #
-# ЗАДАВАТЬ НАДО ЗДЕСЬ, А НЕ ТОЛЬКО ПРИ СБОРКЕ Qt. Модуль FindXCB.cmake
-# устанавливается ВМЕСТЕ с Qt и переискивает библиотеки заново у каждого
-# потребителя — то есть решает кэш нашей сборки, а не кэш сборки Qt. Первая
-# попытка задала их только у Qt, и из тридцати семи зависимостей ушла ровно
-# одна.
-# ВСЕ ШЕСТЬ БЕРУТСЯ ИЗ $ZPREFIX, а не из sysroot, и это решение с двумя
-# замеренными причинами.
+# MUST BE SET HERE, NOT ONLY WHEN BUILDING Qt. The FindXCB.cmake module is
+# installed TOGETHER with Qt and looks the libraries up afresh for every
+# consumer, so it is our build's cache that decides, not the cache of the Qt
+# build. The first attempt set them only for Qt, and exactly one of
+# thirty-seven dependencies went away.
+# ALL SIX COME FROM $ZPREFIX, not from the sysroot, and that is a decision with
+# two measured reasons.
 #
-# Первая: Ubuntu собирает libxcb-image.a и libxcb-util.a БЕЗ -fPIC, и в
-# PIE-программу их не вложить вовсе.
+# First: Ubuntu builds libxcb-image.a and libxcb-util.a WITHOUT -fPIC, and
+# they cannot go into a PIE program at all.
 #
-# Вторая важнее и касается только курсора, но решает за всех. У libxcb-cursor
-# в код вшит список каталогов с темами, и focal'ьный отстал: в нём нет
-# ~/.local/share/icons, куда GNOME и KDE кладут пользовательские темы сегодня.
-# Вшив его, мы получили бы программу, молча не видящую тему курсора. Остальные
-# пять — чистые счётные помощники (ни одного зашитого пути, публичный API не
-# менялся с 20.04), и берутся из upstream просто за компанию, одним правилом.
+# Second, more important, concerns only the cursor but decides for all.
+# libxcb-cursor has the theme directory list baked into the code, and the
+# focal one is behind: it lacks ~/.local/share/icons, where GNOME and KDE put
+# user themes today. Linking it in would give a program that silently fails to
+# see the cursor theme. The other five are pure computational helpers (no
+# baked-in paths, public API unchanged since 20.04) and are taken from upstream
+# simply along with it, by one rule.
 #
-# Собирает их packaging/linux/build-xcb-static.sh; там же объяснено, почему у
-# курсора обязателен --with-cursorpath.
+# packaging/linux/build-xcb-static.sh builds them; it also explains why
+# --with-cursorpath is mandatory for the cursor.
 set(zsys_own_lib "${ZDEPS_ROOT}/lib")
 
-# Пары перечислены АРГУМЕНТАМИ foreach, а не через переменную-список: CMake
-# разворачивает ';' внутри элементов при `IN LISTS`, и пары рассыпаются в
-# плоский список (наступил на это здесь же).
+# The pairs are listed as foreach ARGUMENTS, not via a list variable: CMake
+# expands ';' inside elements with `IN LISTS`, and the pairs collapse into a
+# flat list (stepped on that right here).
 foreach(pair "XCB_CURSOR_LIBRARY;${zsys_own_lib}/libxcb-cursor.a"
              "XCB_ICCCM_LIBRARY;${zsys_own_lib}/libxcb-icccm.a"
              "XCB_KEYSYMS_LIBRARY;${zsys_own_lib}/libxcb-keysyms.a"
@@ -152,52 +158,54 @@ foreach(pair "XCB_CURSOR_LIBRARY;${zsys_own_lib}/libxcb-cursor.a"
     list(GET pair 0 zsys_var)
     list(GET pair 1 zsys_path)
     if(EXISTS "${zsys_path}")
-        set(${zsys_var} "${zsys_path}" CACHE FILEPATH "вшито статически" FORCE)
+        set(${zsys_var} "${zsys_path}" CACHE FILEPATH "linked in statically" FORCE)
     else()
         message(WARNING
-            "нет ${zsys_path} — ${zsys_var} останется динамической.\n"
-            "  Соберите: packaging/linux/build-xcb-static.sh")
+            "no ${zsys_path} — ${zsys_var} will stay dynamic.\n"
+            "  Build it: packaging/linux/build-xcb-static.sh")
     endif()
 endforeach()
 
-# ПЯТНАДЦАТЬ НЕОБЯЗАТЕЛЬНЫХ РАСШИРЕНИЙ XCB — МОЛЧА.
+# FIFTEEN OPTIONAL XCB EXTENSIONS: QUIET.
 #
-# Статическая Qt переискивает свои зависимости у КАЖДОГО потребителя, и среди
-# прочего зовёт `find_package(XCB 1.11)` БЕЗ списка компонент. По уговору ECM
-# это значит «пробуй все, какие знаешь», и модуль честно печатает пятнадцать
-# строк «Could NOT find XCB_COMPOSITE…» — про расширения, которых Qt у нас не
-# просит вовсе (нужные ей тринадцать перечислены поимённо и находятся все).
+# Static Qt looks its dependencies up afresh for EVERY consumer and, among
+# other things, calls `find_package(XCB 1.11)` WITHOUT a component list. By
+# ECM convention that means "try every one you know", and the module dutifully
+# prints fifteen lines of "Could NOT find XCB_COMPOSITE..." about extensions Qt
+# does not ask us for at all (the thirteen it needs are listed by name and are
+# all found).
 #
-# Половины из них в природе больше нет (XEVIE и XPRINT выброшены из X.Org
-# годы назад), у остальных в sysroot лежит только .so.0 без заголовков —
-# доложить их некуда. То есть строки эти вечные, ни на что не влияют и лишь
-# заставляют человека сомневаться, собралось ли. Гасим их поимённо: FPHSA
-# молчит, если у пакета взведён <ИМЯ>_FIND_QUIETLY, а имена здесь — не
-# настоящие пакеты, а как ECM зовёт свою проверку компоненты.
+# Half of them no longer exist (XEVIE and XPRINT were dropped from X.Org years
+# ago); for the rest the sysroot holds only .so.0 without headers, so there is
+# nowhere to report them to. These lines are thus permanent, affect nothing
+# and only make a person doubt whether the build succeeded. Silenced by name:
+# FPHSA is quiet when the package has <NAME>_FIND_QUIETLY set, and the names
+# here are not real packages but what ECM calls its component check.
 #
-# ЧТО НУЖНО — НЕ ГАСИМ: если пропадёт хоть одна из тринадцати нужных (CURSOR,
+# WHAT IS NEEDED IS NOT SILENCED: if any of the thirteen required ones (CURSOR,
 # ICCCM, IMAGE, KEYSYMS, RANDR, RENDER, RENDERUTIL, SHAPE, SHM, SYNC, UTIL,
-# XFIXES, XKB), настройка так же громко упадёт.
+# XFIXES, XKB) goes missing, configure fails just as loudly.
 foreach(zsys_xcb_extra COMPOSITE DAMAGE DPMS DRI2 DRI3 GLX PRESENT RECORD RES
                        SCREENSAVER XEVIE XF86DRI XINERAMA XINPUT XPRINT XTEST XV XVMC)
     set(XCB_${zsys_xcb_extra}_FIND_QUIETLY TRUE)
 endforeach()
 
-# OpenMP — СТАТИЧЕСКОЙ libgomp. Иначе готовая программа требует libgomp.so.1
-# (пакет libgomp1, priority=optional): на десктопе он обычно есть, но «обычно»
-# — не то слово, которое хочется слышать про программу, раздаваемую одним
-# файлом. Своё добро мы вшиваем, а OpenMP здесь именно своё: им распараллелены
-# ресемплер и перевод цвета в zametti-core.
+# OpenMP WITH STATIC libgomp. Otherwise the finished program requires
+# libgomp.so.1 (package libgomp1, priority=optional): usually present on a
+# desktop, but "usually" is not the word one wants to hear about a program
+# shipped as a single file. We link in what is ours, and OpenMP here is ours:
+# the resampler and the color conversion in zametti-core are parallelized
+# with it.
 #
-# Путь спрашиваем у компилятора, а не пишем: он зависит от версии gcc, и
-# вписанный руками разъедется на первом же обновлении sysroot.
+# The path is asked from the compiler, not written down: it depends on the gcc
+# version, and a hand-written one would drift on the first sysroot update.
 execute_process(COMMAND "${ZSYS_ROOT}/bin/gcc" -print-file-name=libgomp.a
                 OUTPUT_VARIABLE zsys_libgomp
                 OUTPUT_STRIP_TRAILING_WHITESPACE
                 ERROR_QUIET)
 if(zsys_libgomp AND EXISTS "${zsys_libgomp}")
-    set(OpenMP_gomp_LIBRARY "${zsys_libgomp}" CACHE FILEPATH "статическая libgomp" FORCE)
+    set(OpenMP_gomp_LIBRARY "${zsys_libgomp}" CACHE FILEPATH "static libgomp" FORCE)
 endif()
 
-# Статические библиотеки уедут внутрь PIE-программы.
+# The static libraries end up inside a PIE program.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

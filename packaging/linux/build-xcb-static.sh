@@ -1,54 +1,54 @@
 #!/bin/bash
 #
-# Сборка помощников xcb статическими архивами с -fPIC в $ZPREFIX.
+# Build the xcb helper libraries as static archives with -fPIC into $ZPREFIX.
 #
 #   packaging/linux/build-xcb-static.sh
 #
-# ЗАЧЕМ. Шесть библиотек, которые тянет xcb-плагин Qt, лежат в пакетах
-# priority=EXTRA — самый низкий приоритет: в базовую установку они не входят
-# никогда. libxcb-cursor0 из них — самая частая жалоба на Qt 6.5+ вообще
-# («could not load the Qt platform plugin xcb»). Вшив их, мы снимаем шесть
-# пакетов из требований к установке.
+# WHY. The six libraries pulled in by Qt's xcb plugin live in packages with
+# priority=EXTRA, the lowest priority there is: they are never part of a base
+# install. One of them, libxcb-cursor0, is the single most common complaint
+# about Qt 6.5+ ("could not load the Qt platform plugin xcb"). Linking them in
+# removes six packages from the install requirements.
 #
-# ПОЧЕМУ ИЗ UPSTREAM, А НЕ АРХИВЫ ИЗ SYSROOT. Две причины, обе замеренные.
+# WHY FROM UPSTREAM AND NOT THE ARCHIVES IN THE SYSROOT. Two reasons, both
+# measured.
 #
-# Первая: Ubuntu собирает libxcb-image.a и libxcb-util.a БЕЗ -fPIC, и в
-# PIE-программу их не вложить вовсе («relocation R_X86_64_32S ... can not be
-# used when making a PIE object»).
+# First: Ubuntu builds libxcb-image.a and libxcb-util.a WITHOUT -fPIC, so they
+# cannot go into a PIE program at all ("relocation R_X86_64_32S ... can not be
+# used when making a PIE object").
 #
-# Вторая важнее. У libxcb-cursor встроен список каталогов, где искать темы
-# курсоров, и он ИЗМЕНИЛСЯ:
+# Second, and more important. libxcb-cursor has a built-in list of directories
+# to search for cursor themes, and that list CHANGED:
 #
 #   focal:  ~/.icons:/usr/share/icons:/usr/share/pixmaps:/usr/X11R6/lib/X11/icons
-#   ныне:   ~/.local/share/icons:~/.icons:/usr/share/icons:/usr/share/pixmaps
+#   now:    ~/.local/share/icons:~/.icons:/usr/share/icons:/usr/share/pixmaps
 #
-# Появился ~/.local/share/icons — ровно то место, куда GNOME и KDE кладут
-# пользовательские темы сегодня. Вшив focal'ьную копию, мы получили бы
-# программу, которая молча не видит тему курсора пользователя. Остальные пять
-# — чистые счётные помощники: ни одного зашитого пути, публичный API не
-# менялся, так что для них версия безразлична, и они берутся из upstream за
-# компанию.
+# ~/.local/share/icons appeared, which is exactly where GNOME and KDE put user
+# themes today. Linking in the focal copy would give a program that silently
+# fails to see the user's cursor theme. The other five are pure computational
+# helpers: no baked-in paths, public API unchanged, so their version does not
+# matter and they are taken from upstream along with it.
 
-# ТРЕБОВАНИЯ К МАШИНЕ СБОРКИ (не к целевой): m4. Два пакета из шести —
-# xcb-util-wm и xcb-util-cursor — генерируют им часть исходников, и без него
-# их configure падает на пятом шаге сообщением, из которого причина не видна.
-# Поэтому проверяем здесь и говорим прямо.
+# BUILD MACHINE REQUIREMENTS (not target): m4. Two of the six packages,
+# xcb-util-wm and xcb-util-cursor, generate part of their sources with it, and
+# without it their configure fails at step five with a message that does not
+# show the cause. So we check here and say it plainly.
 
 set -e
-# ОКРУЖЕНИЕ БЕРЁМ САМИ — звать `source zenv.sh` перед скриптом не нужно
-# (заданное снаружи он не трогает: ZSYS=/иное/место работает как раньше).
+# WE SET UP THE ENVIRONMENT OURSELVES: no need to `source zenv.sh` before this
+# script (values set outside are left alone: ZSYS=/other/place works as before).
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/zenv.sh"
-[ -n "$ZBUILD" ] || { echo "нет ZBUILD" >&2; exit 1; }
+[ -n "$ZBUILD" ] || { echo "ZBUILD is not set" >&2; exit 1; }
 command -v m4 >/dev/null || {
-    echo "нет m4 — xcb-util-wm и xcb-util-cursor генерируют им исходники." >&2
+    echo "m4 not found — xcb-util-wm and xcb-util-cursor generate sources with it." >&2
     echo "  sudo apt install m4" >&2
     exit 1
 }
 
 mkdir -p "$ZBUILD/xcb" && cd "$ZBUILD/xcb"
 
-# Порядок важен: каждый следующий может зависеть от предыдущих.
+# Order matters: each package may depend on the previous ones.
 packages="xcb-util-0.4.1 xcb-util-image-0.4.1 xcb-util-keysyms-0.4.1
           xcb-util-renderutil-0.3.10 xcb-util-wm-0.4.2 xcb-util-cursor-0.1.6"
 
@@ -61,21 +61,21 @@ for p in $packages; do
     fi
     cd "$p"
 
-    # Свои же, уже собранные, ищутся явными флагами, а не через PKG_CONFIG_PATH:
-    # PKG_CONFIG_SYSROOT_DIR из zenv.sh приписал бы к путям $ZPREFIX ещё и
-    # sysroot, и получилась бы чепуха вроде $ZSYS$ZPREFIX/include.
+    # Our own, already built, libraries are found via explicit flags, not via
+    # PKG_CONFIG_PATH: PKG_CONFIG_SYSROOT_DIR from zenv.sh would prepend the
+    # sysroot to the $ZPREFIX paths, yielding nonsense like $ZSYS$ZPREFIX/include.
     own_cflags="-I$ZPREFIX/include"
 
-    # --with-cursorpath ОБЯЗАТЕЛЕН, и вот почему. По умолчанию xcb-util-cursor
-    # вшивает в код путь поиска тем курсоров, СОБРАННЫЙ ИЗ ${datadir}, то есть
-    # из нашего --prefix. Без этого ключа в библиотеку попадало
+    # --with-cursorpath IS MANDATORY, and here is why. By default xcb-util-cursor
+    # bakes into the code a cursor theme search path BUILT FROM ${datadir}, i.e.
+    # from our --prefix. Without this switch the library ended up with
     #
     #   ~/.local/share/icons:~/.icons:$ZPREFIX/share/icons:$ZPREFIX/share/pixmaps
     #
-    # — программа искала бы системные курсоры в каталоге сборки, которого на
-    # чужой машине нет вовсе. Замечено только тем, что после сборки посмотрели
-    # `strings` готового архива; сборка при этом проходит молча и успешно.
-    # Задаём путь целевой системы, а не свой.
+    # so the program would look for system cursors in the build directory, which
+    # does not exist on another machine at all. Noticed only by running `strings`
+    # on the finished archive after the build; the build itself passes silently
+    # and successfully. We set the target system's path, not our own.
     cursorpath='~/.local/share/icons:~/.icons:/usr/share/icons:/usr/share/pixmaps'
 
     ./configure --prefix="$ZPREFIX" --enable-static --disable-shared --with-pic \
@@ -84,18 +84,18 @@ for p in $packages; do
         XCB_UTIL_CFLAGS="$own_cflags" XCB_UTIL_LIBS="-L$ZPREFIX/lib -lxcb-util" \
         XCB_IMAGE_CFLAGS="$own_cflags" XCB_IMAGE_LIBS="-L$ZPREFIX/lib -lxcb-image" \
         XCB_RENDERUTIL_CFLAGS="$own_cflags" XCB_RENDERUTIL_LIBS="-L$ZPREFIX/lib -lxcb-render-util" \
-        > configure.log 2>&1 || { echo "  configure ПРОВАЛИЛСЯ"; tail -20 configure.log; exit 1; }
-    make -j"${ZJOBS:-4}" > build.log 2>&1 || { echo "  сборка ПРОВАЛИЛАСЬ"; tail -20 build.log; exit 1; }
+        > configure.log 2>&1 || { echo "  configure FAILED"; tail -20 configure.log; exit 1; }
+    make -j"${ZJOBS:-4}" > build.log 2>&1 || { echo "  build FAILED"; tail -20 build.log; exit 1; }
     make install > install.log 2>&1
     cd ..
-    echo "  готово"
+    echo "  done"
 done
 
 echo
-echo "=== проверка: собранное должно быть PIC, иначе в PIE не вложить ==="
+echo "=== check: the result must be PIC, otherwise it cannot go into a PIE ==="
 for a in "$ZPREFIX"/lib/libxcb-{util,image,keysyms,icccm,render-util,cursor}.a; do
-    [ -f "$a" ] || { echo "  НЕТ $a"; exit 1; }
+    [ -f "$a" ] || { echo "  MISSING $a"; exit 1; }
     n=$(readelf -r "$a" 2>/dev/null | grep -cE 'R_X86_64_(32|32S)\b' || true)
-    [ "$n" -eq 0 ] || { echo "  $(basename "$a"): НЕ PIC ($n релокаций)"; exit 1; }
+    [ "$n" -eq 0 ] || { echo "  $(basename "$a"): NOT PIC ($n relocations)"; exit 1; }
     echo "  $(basename "$a"): PIC"
 done

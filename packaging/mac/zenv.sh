@@ -1,64 +1,66 @@
-# Общее окружение переносимой сборки zametti под macOS. Подключать так:
+# Shared environment for the portable zametti build on macOS. Use it like this:
 #
 #   source packaging/mac/zenv.sh
 #
-# Скриптов здесь ровно три (решение владельца): zenv.sh (этот файл),
-# build-qt.sh (статический Qt: qtbase + qtsvg) и build-app.sh (сама программа
-# от cmake до Zametti.app и dmg). Оба сборочных подключают zenv.sh через
-# source: Qt и программа собираются ОДНИМИ И ТЕМИ ЖЕ ключами — разошедшиеся
-# флаги у Qt и у программы это классический способ получить бинарь, который
-# собрался, но не запускается.
+# There are exactly three scripts here (owner's decision): zenv.sh (this file),
+# build-qt.sh (static Qt: qtbase + qtsvg) and build-app.sh (the program itself,
+# from cmake to Zametti.app and dmg). Both build scripts source zenv.sh: Qt and
+# the program are built with THE SAME flags — Qt and the program drifting apart
+# in their flags is the classic way to get a binary that builds but does not
+# start.
 #
-# ЧЕМ МАК ОТЛИЧАЕТСЯ ОТ ЛИНУКСА, И ПОЧЕМУ ЗДЕСЬ НЕТ SYSROOT. На линуксе
-# переносимость упирается в glibc, и её приходится брать из sysroot старой
-# Ubuntu. На маке роль «пола» играет ДРУГОЕ: SDK и версия системы, названная
-# ключом -mmacosx-version-min. Совместимость назад macOS обеспечивает сама, а
-# системные рамки (AppKit, Metal, ImageIO) есть на любой машине по построению —
-# их вкладывать внутрь не нужно и нельзя.
+# HOW THE MAC DIFFERS FROM LINUX, AND WHY THERE IS NO SYSROOT HERE. On Linux
+# portability hinges on glibc, which has to come from the sysroot of an old
+# Ubuntu. On the mac the "floor" is something ELSE: the SDK and the system
+# version named by -mmacosx-version-min. macOS provides backward compatibility
+# itself, and the system frameworks (AppKit, Metal, ImageIO) exist on every
+# machine by construction — bundling them is neither needed nor allowed.
 #
-# Пути можно задать снаружи: ZDEPS=/иное source packaging/mac/zenv.sh
+# Paths can be overridden from outside: ZDEPS=/other source packaging/mac/zenv.sh
 #
-# УСТРОЙСТВО КАТАЛОГОВ — слово владельца (30.08.2026): напрямую в ~/ai/work
-# ничего не пишем; зависимости живут в ~/ai/work/zdeps с подпапками по
-# архитектурам (префиксы Qt), их исходники и сборка — в zdeps/build;
-# эксперименты — в ~/ai/work/zametti-playground.
+# DIRECTORY LAYOUT — the owner's word (30.08.2026): nothing is written directly
+# into ~/ai/work; dependencies live in ~/ai/work/zdeps with per-architecture
+# subfolders (Qt prefixes), their sources and build trees in zdeps/build;
+# experiments go to ~/ai/work/zametti-playground.
 
-export ZDEPS="${ZDEPS:-$HOME/ai/work/zdeps}" # префиксы Qt: $ZDEPS/<арх>
-export ZBUILD="${ZBUILD:-$ZDEPS/build}"      # исходники и сборка Qt (сносится безболезненно)
+export ZDEPS="${ZDEPS:-$HOME/ai/work/zdeps}" # Qt prefixes: $ZDEPS/<arch>
+export ZBUILD="${ZBUILD:-$ZDEPS/build}"      # Qt sources and build trees (safe to wipe)
 
-# ПОЛ СИСТЕМЫ. Всё, что старше, программу не запустит; всё, что новее, — да.
-# 13.0 (Ventura) — минимум, который объявляет сам Qt 6.10 (qtbase/.cmake.conf,
-# QT_SUPPORTED_MIN_MACOS_VERSION "13"). Ниже Qt собирается МОЛЧА — пол он не
-# проверяет, только SDK и Xcode, — но работу на живой macOS 12 никто не
-# обещает и проверить её не на чем; обещать больше, чем обещает Qt, нечестно
-# (развилка разобрана с владельцем 30.08.2026).
+# SYSTEM FLOOR. Anything older will not run the program; anything newer will.
+# 13.0 (Ventura) is the minimum Qt 6.10 itself declares (qtbase/.cmake.conf,
+# QT_SUPPORTED_MIN_MACOS_VERSION "13"). Below that Qt builds SILENTLY — it does
+# not check the floor, only the SDK and Xcode — but nobody promises it works
+# on a live macOS 12, and there is nothing to test it on; promising more than
+# Qt promises would be dishonest (the fork was settled with the owner,
+# 30.08.2026).
 export ZMACOS_MIN="${ZMACOS_MIN:-13.0}"
 
-# АРХИТЕКТУРЫ — СПИСОК ТОГО, ЧТО СТРОИМ; НА ОДИН CONFIGURE — РОВНО ОДНА.
+# ARCHITECTURES — THE LIST OF WHAT WE BUILD; EXACTLY ONE PER CONFIGURE.
 #
-# Соблазн отдать cmake'у CMAKE_OSX_ARCHITECTURES='arm64;x86_64' и получить
-# универсальный бинарь одним проходом велик, и он ЛОЖНЫЙ. Четыре вендоренные
-# библиотеки выбирают SIMD ДО сборки, по CMAKE_SYSTEM_PROCESSOR: libgav1,
-# libsodium, highway и libjxl. У этой переменной ОДНО значение, а универсальная
-# сборка компилирует обе половины одним проходом — значит на маке Apple Silicon
-# все четыре выбрали бы ARM-путь и для x86_64 тоже.
+# The temptation to hand cmake CMAKE_OSX_ARCHITECTURES='arm64;x86_64' and get
+# a universal binary in one pass is strong, and it is FALSE. Four vendored
+# libraries pick their SIMD BEFORE the build, from CMAKE_SYSTEM_PROCESSOR:
+# libgav1, libsodium, highway and libjxl. That variable has ONE value, while a
+# universal build compiles both halves in one pass — so on an Apple Silicon
+# mac all four would pick the ARM path for x86_64 as well.
 #
-# Чем это кончается, записано в 3rdparty/libgav1/CMakeLists.txt рукой
-# владельца: файл без своего ключа «компилируется в ничто — молча, без единого
-# предупреждения, и библиотека просто оказывается медленнее». То есть
-# универсальный бинарь собрался бы и работал, а половина его была бы тихо
-# ухудшена. Такой ключ хуже, чем его отсутствие.
+# How that ends is recorded in 3rdparty/libgav1/CMakeLists.txt in the owner's
+# own words: a file that does not get its own flag compiles to nothing —
+# silently, without a single warning — and the library just turns out slower.
+# So a universal binary would build and run, with half of it quietly degraded.
+# Such a flag is worse than no flag at all.
 #
-# Поэтому оба сборочных скрипта идут циклом for arch in $ZARCHS, и каждый
-# проход — СВОЙ configure со своим правильным CMAKE_SYSTEM_PROCESSOR и своими
-# ключами SIMD; универсальный бинарь склеивает lipo в build-app.sh. Сузить
-# список до одной архитектуры (итерация, починка одной половины) можно
-# снаружи: ZARCHS=arm64 bash packaging/mac/build-app.sh
+# Hence both build scripts loop `for arch in $ZARCHS`, and every pass is ITS
+# OWN configure with its own correct CMAKE_SYSTEM_PROCESSOR and its own SIMD
+# flags; the universal binary is glued by lipo in build-app.sh. The list can
+# be narrowed to one architecture from outside (iterating, fixing one half):
+# ZARCHS=arm64 bash packaging/mac/build-app.sh
 export ZARCHS="${ZARCHS:-arm64 x86_64}"
 
-# Родная архитектура машины. На чужой (у нас — x86_64 на Apple Silicon)
-# build-app.sh задаёт CMAKE_SYSTEM_PROCESSOR явно, иначе cmake оставит в ней
-# арх машины и SIMD-выбор выше поедет; сборка при этом идёт под Rosetta.
+# The machine's native architecture. On the foreign one (for us: x86_64 on
+# Apple Silicon) build-app.sh sets CMAKE_SYSTEM_PROCESSOR explicitly, otherwise
+# cmake leaves the host arch in it and the SIMD selection above goes wrong;
+# the build itself runs under Rosetta.
 export ZHOSTARCH="$(uname -m)"
 
 echo "zenv(mac): deps=$ZDEPS/<arch> build=$ZBUILD min=$ZMACOS_MIN archs=[$ZARCHS] host=$ZHOSTARCH"

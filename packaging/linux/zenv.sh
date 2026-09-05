@@ -1,41 +1,42 @@
-# Общее окружение переносимых сборок zametti под Linux. Подключать так:
+# Common environment for portable zametti builds on Linux. Use as:
 #
 #   source packaging/linux/zenv.sh
 #
-# Смысл: все чужие библиотеки и сама программа собираются ОДНИМИ И ТЕМИ ЖЕ
-# ключами против sysroot Ubuntu 20.04. Разошедшиеся флаги у Qt и у программы —
-# это классический способ получить бинарь, который собрался, но не запускается.
+# The point: all third-party libraries and the program itself are built with
+# THE SAME switches against the Ubuntu 20.04 sysroot. Diverging flags between
+# Qt and the program are the classic way to get a binary that builds but does
+# not run.
 #
-# Пути можно задать снаружи (`ZSYS=/иное/место source packaging/linux/zenv.sh`);
-# без этого берутся привычные. Раньше файл лежал в самом sysroot
-# (`~/work/zsys/bin/zenv.sh`) и переезжал вместе с ним; теперь он в
-# репозитории — чтобы рецепт из docs/zametti-build-linux.md воспроизводился на
-# новой машине целиком, а не наполовину.
+# Paths may be set from outside (`ZSYS=/other/place source packaging/linux/zenv.sh`);
+# otherwise the usual ones are used. The file used to live inside the sysroot
+# itself (`~/work/zsys/bin/zenv.sh`) and moved along with it; now it is in the
+# repository so that the recipe in docs/zametti-build-linux.md reproduces on a
+# new machine fully, not halfway.
 
-export ZSYS="${ZSYS:-$HOME/work/zsys}"        # sysroot (заменяется распаковкой тарбола)
-export ZPREFIX="${ZPREFIX:-$HOME/work/zdeps}" # куда кладём собранное (тарболом НЕ затирается)
-export ZBUILD="${ZBUILD:-$HOME/work/zbuild}"  # где собираем
+export ZSYS="${ZSYS:-$HOME/work/zsys}"        # sysroot (replaced by unpacking the tarball)
+export ZPREFIX="${ZPREFIX:-$HOME/work/zdeps}" # where built results go (NOT overwritten by the tarball)
+export ZBUILD="${ZBUILD:-$HOME/work/zbuild}"  # where we build
 
-# Обёртки, а не сам gcc-15: они дописывают --sysroot и LD_LIBRARY_PATH к
-# focal'ьным hostlibs. Их исходник — packaging/linux/sysroot-bin/, а в
-# $ZSYS/bin их кладёт packaging/linux/fix-sysroot.sh.
+# The wrappers, not gcc-15 itself: they append --sysroot and LD_LIBRARY_PATH
+# for the focal hostlibs. Their source is packaging/linux/sysroot-bin/, and
+# packaging/linux/fix-sysroot.sh puts them into $ZSYS/bin.
 export CC="$ZSYS/bin/gcc"
 export CXX="$ZSYS/bin/g++"
 
-# pkg-config смотрит ТОЛЬКО в sysroot: LIBDIR (а не PATH) отрезает системные
-# каталоги хоста, иначе нашлись бы .pc от свежей Ubuntu. usr/share/pkgconfig
-# обязателен — там лежит wayland-protocols.pc.
+# pkg-config looks ONLY in the sysroot: LIBDIR (not PATH) cuts off the host's
+# system directories, otherwise .pc files from a recent Ubuntu would be found.
+# usr/share/pkgconfig is mandatory: that is where wayland-protocols.pc lives.
 export PKG_CONFIG_SYSROOT_DIR="$ZSYS"
 export PKG_CONFIG_LIBDIR="$ZSYS/usr/lib/x86_64-linux-gnu/pkgconfig:$ZSYS/usr/share/pkgconfig"
 
-# -fPIC обязателен: статические библиотеки уедут внутрь PIE-программы.
+# -fPIC is mandatory: the static libraries end up inside a PIE program.
 export ZCFLAGS="-O2 -fPIC"
-# Обязательны, а не желательны: libstdc++ у gcc-15 требует GLIBCXX_3.4.32,
-# которого нет даже в той Ubuntu 20.04, откуда снят sysroot.
+# Mandatory, not optional: libstdc++ of gcc-15 requires GLIBCXX_3.4.32, which
+# is absent even in the Ubuntu 20.04 the sysroot was taken from.
 export ZLDFLAGS="-static-libstdc++ -static-libgcc"
 
 if [ ! -x "$CC" ]; then
-    echo "zenv: нет $CC — сперва подготовьте sysroot:" >&2
+    echo "zenv: $CC not found — prepare the sysroot first:" >&2
     echo "        bash packaging/linux/fix-sysroot.sh" >&2
 fi
 echo "zenv: sysroot=$ZSYS prefix=$ZPREFIX cc=$(basename "$CC")"
