@@ -10,8 +10,11 @@
 #include "document_builder.h"
 #include "pieces.h"
 #include "settings.h"
+#include "znote.h"
 #include "test_util.h"
 
+#include <QTextBlockFormat>
+#include <QTextCursor>
 #include <QTextDocument>
 
 #include <memory>
@@ -58,9 +61,57 @@ void checkOwnStyle() {
     ZT_TRUE("и он же отдаётся указателем", note.stylePtr() == own);
 }
 
+// --- THE READING LOOK BY ROLE (brief 18) --------------------------------------
+// A note with role: book is built with settings().readingStyle(): the red line,
+// justified paragraphs, centred headings, the collapsed empty line, the reading
+// line height. An ordinary note is built with the editor's style and shows none
+// of it. Take the role away — the book turns into an ordinary note (the check
+// that catches a removed chooser in ZNote::load).
+void checkReadingLookByRole() {
+    const std::string body = "# Title\n\nFirst paragraph.\n\nSecond paragraph.\n\n## Chapter\n\nText.\n";
+    zametti::ZNote book;
+    const std::string header = "<!-- zametti\nrole: book\n-->\n\n";
+    book.load(header + body);
+    zametti::ZNote plain;
+    plain.load(body);
+
+    const zametti::ZDocStyle& reading = book.doc().style();
+    const zametti::ZDocStyle& ordinary = plain.doc().style();
+    const auto expected = zametti::settings().readingStyle();
+    ZT_EQ("книга собрана шрифтом чтения", s(expected->fontFamily()), s(reading.fontFamily()));
+    ZT_TRUE("и с интерлиньяжем чтения",
+            qFuzzyCompare(reading.lineHeightFactor(), zametti::settings().reading().lineHeightFactor()));
+    ZT_TRUE("обычная заметка — стиль настроек",
+            ordinary.fontFamily() == zametti::settings().style().fontFamily() &&
+                plain.doc().stylePtr() == nullptr);
+    ZT_TRUE("у стиля чтения есть красная строка", reading.firstLineIndent() > 0.0);
+    ZT_TRUE("у стиля редактора её нет", qFuzzyIsNull(ordinary.firstLineIndent()));
+
+    // Baked into the block formats, not just remembered by the style.
+    const auto fmt = [](zametti::ZNote& note, int block) {
+        return note.doc().caretAtBlock(block).blockFormat();
+    };
+    // blocks: 0 title, 1 empty, 2 first paragraph, 3 empty, 4 second, 5 empty, 6 heading, 7 empty, 8 text
+    const QTextBlockFormat para = fmt(book, 2);
+    ZT_TRUE("абзац книги — с красной строкой", para.textIndent() > 0.0);
+    ZT_TRUE("абзац книги — по ширине", para.alignment() == Qt::AlignJustify);
+    ZT_TRUE("заголовок книги — по центру", fmt(book, 6).alignment() == Qt::AlignHCenter);
+    const QTextBlockFormat gap = fmt(book, 3);
+    ZT_TRUE("пустая строка книги схлопнута до пикселя",
+            gap.lineHeightType() == QTextBlockFormat::FixedHeight && gap.lineHeight() <= 1.0);
+    const QTextBlockFormat plainPara = fmt(plain, 2);
+    ZT_TRUE("абзац обычной заметки — без красной строки", qFuzzyIsNull(plainPara.textIndent()));
+    ZT_TRUE("и не по ширине", plainPara.alignment() != Qt::AlignJustify);
+    ZT_TRUE("пустая строка обычной заметки — обычной высоты",
+            fmt(plain, 3).lineHeightType() != QTextBlockFormat::FixedHeight);
+    // The file is untouched by the look: both round-trip to the same body.
+    ZT_EQ("облик не меняет файл книги", header + body, book.toMarkdown());
+}
+
 }  // namespace
 
 TEST(DocStyle, All) {
     checkOwnStyle();
+    checkReadingLookByRole();
     EXPECT_EQ(0, zt::freshFailures());
 }
