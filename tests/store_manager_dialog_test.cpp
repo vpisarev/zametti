@@ -33,6 +33,7 @@
 #include <QTest>
 #include <QThread>
 
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
@@ -492,6 +493,58 @@ void checkFactLinesNotClipped() {
         QDir(shotDir()).filePath(QStringLiteral("store-manager-низкое-окно.png")));
 }
 
+// СТРОКА ПУТИ — ОБЫЧНАЯ СТРОКА ФОРМЫ (жалоба владельца 05.09.2026): кнопка
+// «…» той же высоты, что Check и Reset cloud, а подпись Folder стоит
+// относительно своего поля так же, как подпись Server относительно своего.
+// Пиксели не сравниваем — сравниваем строку с эталонной строкой той же формы:
+// стиль (маковский, Fusion) волен класть подпись и поле как хочет, но одинаково.
+void checkFolderRowAligned() {
+    zt::MiniStore home;
+    const QString root = home.root() + QStringLiteral("/склад");
+    QDir().mkpath(root);
+    QString err;
+    ZT_TRUE("хранилище завелось", ZStorage(root).init(&err));
+    ZStorageManager stores(nullptr, kTiny);
+    ZStorage::Config entry;
+    entry.root = root;
+    stores.remember(entry);
+    auto secrets = std::make_shared<FakeSecrets>();
+    TestDialog dialog(nullptr, stores, secrets);
+    dialog.show();
+    QTest::qWait(60);
+
+    auto* check = dialog.findChild<QPushButton*>(QStringLiteral("check"));
+    ZT_TRUE(("«…» той же высоты, что Check: " +
+             std::to_string(dialog.browseButton_->height()) + " vs " +
+             std::to_string(check->height()))
+                .c_str(),
+            dialog.browseButton_->height() == check->height());
+
+    // Подписи формы — по тексту; «Folder» есть в обеих секциях, локальная выше.
+    QLabel* folderLabel = nullptr;
+    QLabel* serverLabel = nullptr;
+    for (QLabel* label : dialog.findChildren<QLabel*>()) {
+        if (label->text() == QStringLiteral("Folder") &&
+            (folderLabel == nullptr || label->y() < folderLabel->y()))
+            folderLabel = label;
+        if (label->text() == QStringLiteral("Server (WebDAV)")) serverLabel = label;
+    }
+    ZT_TRUE("подписи найдены", folderLabel != nullptr && serverLabel != nullptr);
+    if (folderLabel == nullptr || serverLabel == nullptr) return;
+    auto* folder = dialog.findChild<QLineEdit*>(QStringLiteral("folder"));
+    auto* server = dialog.findChild<QLineEdit*>(QStringLiteral("server"));
+    const auto centerY = [&dialog](QWidget* w) {
+        return w->mapTo(&dialog, w->rect().center()).y();
+    };
+    const int folderOffset = centerY(folderLabel) - centerY(folder);
+    const int serverOffset = centerY(serverLabel) - centerY(server);
+    ZT_TRUE(("подпись Folder стоит к полю как подпись Server: " +
+             std::to_string(folderOffset) + " vs " + std::to_string(serverOffset))
+                .c_str(),
+            std::abs(folderOffset - serverOffset) <= 1);
+    dialog.grab().save(QDir(shotDir()).filePath(QStringLiteral("store-manager-строка-пути.png")));
+}
+
 void checkEyeToggles() {
     // Глаз пароля: заглушка из связки наполняется НАСТОЯЩИМ паролем по явному
     // жесту; набранное показывается как есть, без чтения связки; отказ связки
@@ -553,6 +606,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkSealFreshCloudAndChangePassword();
     checkEyeToggles();
     checkFactLinesNotClipped();
+    checkFolderRowAligned();
     return zt::report("store_manager_dialog");
 }
 
