@@ -532,9 +532,14 @@ QByteArray jsonValueText(const QJsonValue& value) {
 }  // namespace
 
 QByteArray configTemplate() {
-    // ВСЁ ТЕЛО — КОММЕНТАРИЕМ, снаружи пустой объект. Так файл и остаётся
-    // действующим (отклонений нет), и служит меню: раскомментировал строку —
-    // получил отклонение.
+    // ЛИСТЬЯ — КОММЕНТАРИЕМ, СЕКЦИИ — ЖИВЫЕ. Каждая секция, включая вложенные
+    // группы темы, стоит раскрытой пустой скобкой, а закомментированы только
+    // сами значения. Так файл остаётся действующим (пустые секции — не
+    // отклонения) и служит меню: раскомментировал строку — получил отклонение,
+    // и НИЧЕГО вокруг неё трогать не надо. Прежде комментарием было всё тело,
+    // и ради одного значения приходилось раскрывать ещё и его секцию — легко
+    // ошибиться скобкой (просьба владельца, 05.09.2026). Висячую запятую перед
+    // закрывающей скобкой загрузчик прощает, на этом всё и держится.
     //
     // У каждого ключа своя подпись из реестра. Прежде шаблон был просто
     // закомментированным дампом умолчаний: двести имён без единого слова о
@@ -543,9 +548,10 @@ QByteArray configTemplate() {
         "// zametti configuration.\n"
         "//\n"
         "// Everything the program lets you change is listed here with its default\n"
-        "// value, and everything is commented out: the effective config is the list\n"
+        "// value, and every value is commented out: the effective config is the list\n"
         "// of DEVIATIONS from the defaults, not a copy of them. Uncomment a line\n"
-        "// (remove the leading \"//\") to make that value yours.\n"
+        "// (remove the leading \"//\") to make that value yours; the sections are\n"
+        "// already open, so nothing else needs to change.\n"
         "//\n"
         "// Only \"//\" comments to the end of line are understood, and they are not\n"
         "// stripped inside quotes, so \"https://\" is fine. A trailing comma before\n"
@@ -560,9 +566,9 @@ QByteArray configTemplate() {
     for (const ZSettings::Key& key : ZSettings::registry()) {
         const QString mine = QString::fromLatin1(key.section);
         if (mine != section) {
-            if (!section.isEmpty()) out += "//     },\n//\n";
+            if (!section.isEmpty()) out += "    },\n\n";
             section = mine;
-            out += "//     \"" + section.toUtf8() + "\": {\n";
+            out += "    \"" + section.toUtf8() + "\": {\n";
         }
         out += "//         \"" + QByteArray(key.name) + "\": " +
                jsonValueText(key.get(ZSettings{})) + ",";
@@ -570,14 +576,14 @@ QByteArray configTemplate() {
             out += "   // " + QByteArray(key.note);
         out += "\n";
     }
-    if (!section.isEmpty()) out += "//     },\n//\n";
+    if (!section.isEmpty()) out += "    },\n\n";
 
     // ТЕМА — В ТОМ ЖЕ ФАЙЛЕ И ТЕМ ЖЕ СПОСОБОМ. Ролей четыре десятка, и каждая
     // здесь названа со своим цветом светлой темы: иначе про них знал бы только
     // тот, кто читал исходники. Своя тема — либо переопределения прямо здесь,
     // либо файл themes/<имя>.json и "extends" на него.
     out +=
-        "//     \"theme\": {\n"
+        "    \"theme\": {\n"
         "//         \"extends\": \"light\",   // a built-in theme, or themes/<name>.json "
         "next to this file\n";
     QString group;
@@ -585,9 +591,9 @@ QByteArray configTemplate() {
         const int dot = int(role.name.indexOf(QLatin1Char('.')));
         const QString mine = dot < 0 ? QString() : role.name.left(dot);
         if (mine != group) {
-            if (!group.isEmpty()) out += "//         },\n";
+            if (!group.isEmpty()) out += "        },\n";
             group = mine;
-            if (!group.isEmpty()) out += "//         \"" + group.toUtf8() + "\": {\n";
+            if (!group.isEmpty()) out += "        \"" + group.toUtf8() + "\": {\n";
         }
         const QByteArray pad = group.isEmpty() ? "//         " : "//             ";
         const QString leaf = dot < 0 ? role.name : role.name.mid(dot + 1);
@@ -597,8 +603,8 @@ QByteArray configTemplate() {
         out += pad + "\"" + leaf.toUtf8() + "\": \"" + text.toUtf8() + "\",   // " +
                role.note.toUtf8() + "\n";
     }
-    if (!group.isEmpty()) out += "//         },\n";
-    out += "//     },\n";
+    if (!group.isEmpty()) out += "        },\n";
+    out += "    },\n";
 
     out += "}\n";
     return out;
