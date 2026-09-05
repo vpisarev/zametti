@@ -710,6 +710,11 @@ struct ZSettings {
         // программ (просьба владельца, 05.09.2026). На каждой системе
         // сработает своё; подсказки кнопок панели поиска берут список отсюда.
         ZM_SETTING_PLAIN(QString, findNextKey, FindNextKey, QStringLiteral("F3; Ctrl+G"))
+        // ЗАМЕНА. Ctrl+H — привычка Windows и Linux; на маке это Cmd+H,
+        // «спрятать программу», и до окна оно не доходит. Второе — Ctrl+Alt+F,
+        // на маке Cmd+Option+F: «Find and Replace» в Xcode, VS Code и Sublime
+        // (выбор 05.09.2026 по просьбе владельца подобрать замену Cmd+H).
+        ZM_SETTING_PLAIN(QString, replaceKey, ReplaceKey, QStringLiteral("Ctrl+H; Ctrl+Alt+F"))
         ZM_SETTING_PLAIN(QString, findPreviousKey, FindPreviousKey,
                          QStringLiteral("Shift+F3; Ctrl+Shift+G"))
         ZM_SETTING_PLAIN(QString, makeCommentKey, MakeCommentKey, QStringLiteral("Ctrl+Shift+C"))

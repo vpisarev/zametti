@@ -168,7 +168,7 @@ Here is the list of keyboard shortcuts that are supported (mac users: read `Cmd+
 | Ctrl+Alt+- | make the interface smaller |
 | Ctrl+Alt+0 | reset the interface size |
 | Ctrl+F | start search in the current note |
-| Ctrl+H | replace one text with another in the current note |
+| Ctrl+H/Ctrl+Alt+F | replace one text with another in the current note (on a Mac: Cmd+Option+F, since Cmd+H hides the app) |
 | Ctrl+Shift+F | start search over all notes |
 | F3/Ctrl+G | find next |
 | F4/Ctrl+] | find the next difference in the history diff view (Shift+F4/Ctrl+[ — the previous one) |

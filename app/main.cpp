@@ -2478,7 +2478,11 @@ int main(int argc, char** argv) {
         findBar.open(mode, preset);
     };
     shortcut(QKeySequence::Find, [&] { openFind(zametti::FindBar::Mode::InNote); });
-    shortcut(QKeySequence::Replace, [&] { openFind(zametti::FindBar::Mode::Replace); });
+    // Замена — сочетания из настроек (shortcuts.replace): Ctrl+H и Ctrl+Alt+F,
+    // на маке Cmd+H системой занято, работает Cmd+Option+F.
+    for (const QKeySequence& keys :
+         zametti::keySequencesOf(zametti::settings().editor().replaceKey()))
+        shortcut(keys, [&] { openFind(zametti::FindBar::Mode::Replace); });
     // Поиск по всем заметкам: и кнопкой тулбара, и сочетанием — одним кодом.
     const auto openStoreFind = [&] {
         if (!model.isStore()) return;
