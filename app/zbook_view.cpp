@@ -234,16 +234,16 @@ void ZBookView::announce() {
     const QTextBlock top = doc->findBlockByNumber(anchor_.block);
     const int chars = std::max(1, doc->characterCount() - 1);
     const int percent = top.isValid() ? int(100.0 * top.position() / chars) : 0;
-    // THE CHAPTER IS THE ONE THE FIRST WORDS BELONG TO. A page often begins
-    // with the collapsed blank line BEFORE a chapter's title; asked from that
-    // block, the chapter above would be the previous one (owner's finding on
-    // Paustovsky's stories). So the first block with text on the page names
-    // the chapter — three blocks at most, a blank line never comes alone.
-    int named = anchor_.block;
-    for (QTextBlock b = top; b.isValid() && b.blockNumber() < anchor_.block + 3; b = b.next()) {
-        named = b.blockNumber();
-        if (!b.text().trimmed().isEmpty()) break;
-    }
+    // THE CHAPTER IS THE LAST ONE THAT BEGAN BEFORE THE TOP OF THE RIGHT PAGE
+    // (owner's rule, 05.09.2026): a story starting anywhere on the left page
+    // — at its top, after the collapsed blank line, or halfway down — is the
+    // story being read. With one page the boundary is the page's bottom. So
+    // the block just before the next page's start names the chapter; a block
+    // cut by the boundary began on this side of it and counts.
+    int named = doc->blockCount() - 1;
+    PageStart boundary;
+    if (table_.startOf(first_ + 1, &boundary))
+        named = boundary.line > 0 ? boundary.block : std::max(anchor_.block, boundary.block - 1);
     emit positionChanged(note_->doc().headingAbove(named), first_ + 1, table_.count(),
                          std::clamp(percent, 0, 100));
 }
