@@ -807,7 +807,19 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
     rootFormat.setLeftMargin(style.sideMargin() * ctx.charUnit);
     rootFormat.setRightMargin(style.sideMargin() * ctx.charUnit);
     rootFormat.setTopMargin(style.verticalMargin() * ctx.lineUnit);
-    rootFormat.setBottomMargin(style.verticalMargin() * ctx.lineUnit);
+    // THE PAGE BOTTOM CARRIES THE CODE STRIP'S RESERVE. Qt's layout drops the
+    // bottom margin of the LAST block of a frame entirely (measured with a
+    // probe, 05.09.2026: a 29 px bottom margin on the last block changed the
+    // document height by nothing), and the strip with the language name and
+    // the copy button lives exactly in that margin. A note ending with a code
+    // block therefore painted its strip INTO the page margin, and once the
+    // strip grew taller than the margin there was no air left under the block
+    // at all (owner's screenshot). The reserve cannot depend on what the last
+    // block is: every write to the root frame's format is an undo step and a
+    // full relayout, so it is set once, here, for every note — a note ending
+    // with a paragraph gets this much extra air at the bottom, which is the
+    // price of keeping the reserve static.
+    rootFormat.setBottomMargin(style.verticalMargin() * ctx.lineUnit + ctx.plate.strip);
     target.rootFrame()->setFrameFormat(rootFormat);
 
     QTextCursor cursor(&target);
