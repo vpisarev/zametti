@@ -1794,6 +1794,7 @@ static bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor) {
         case Kind::Heading:
         case Kind::Quote:
         case Kind::ListItem:
+        case Kind::Footnote:
             break;
         case Kind::Code:
         case Kind::VSpace:
@@ -2219,6 +2220,12 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
                 // Комментарий не расползается: новая строка под ним — обычный
                 // текст, а многострочный комментарий делается Shift+Enter.
                 next.setProperty(KindProperty, int(Kind::Paragraph));
+                break;
+            case Kind::Footnote:
+                // A footnote does not spread either: Enter under it starts
+                // plain text, a second line of the note is Shift+Enter.
+                next.setProperty(KindProperty, int(Kind::Paragraph));
+                next.clearProperty(InfoProperty);
                 break;
             case Kind::Paragraph:
             case Kind::Code:
@@ -2710,6 +2717,7 @@ static qreal ownLeftMargin(const QTextBlock& block, const CodePlate& plate, qrea
         case Kind::ListItem:
         case Kind::Divider:
         case Kind::Html:
+        case Kind::Footnote:
             break;
     }
     return 0;

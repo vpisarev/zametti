@@ -127,6 +127,9 @@ struct ZDocStyle {
     // Код: ступень относительно текста; 0 — вровень. Гарнитура у кода своя, и
     // при одном кегле он может выглядеть чуть иначе — это принято.
     ZM_SETTING(int, codeStep, CodeStep, 0, -20, 20)
+    // The step of a footnote definition's body (`[^id]: …`, brief 18): one
+    // step under the text, like a caption — a note, not the text itself.
+    ZM_SETTING(int, footnoteStep, FootnoteStep, -1, -20, 20)
     // Заголовки 1..6. Вся лестница целиком, сверху вниз: 2.0, 1.5, 1.2, 1.0,
     // 0.8, 0.8. Убавлена на ступень против прежней (решение владельца): H1 в
     // 2.4 раза крупнее текста смотрелся вывеской, а не заголовком.

@@ -200,12 +200,24 @@ void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep,
         if (s.math()) bits |= SpanMath;
         if (s.mathOpen()) bits |= SpanMathOpen;
         if (s.comment()) bits |= SpanComment;
+        if (s.sup()) bits |= SpanSup;
+        if (s.sub()) bits |= SpanSub;
+        if (s.footnote()) bits |= SpanFootnote;
 
         QTextCharFormat fmt;
         if (bits != 0) fmt.setProperty(SpanStyleProperty, bits);
         if (s.bold()) fmt.setFontWeight(QFont::Bold);
         if (s.italic()) fmt.setFontItalic(true);
         if (s.strike()) fmt.setFontStrikeOut(true);
+        if (s.sup()) fmt.setVerticalAlignment(QTextCharFormat::AlignSuperScript);
+        if (s.sub()) fmt.setVerticalAlignment(QTextCharFormat::AlignSubScript);
+        if (s.footnote()) {
+            // The id as a small superscript in the link colour: it is a
+            // reference, and the reading view opens the note on a click.
+            fmt.setVerticalAlignment(QTextCharFormat::AlignSuperScript);
+            fmt.setForeground(style.linkColor());
+            fmt.setProperty(FootnoteIdProperty, b.text.mid(from, to - from));
+        }
         if (s.code()) {
             fmt.setBackground(style.codeBackground());
             setFontStep(fmt, codeStepIn(lineStep, style));
@@ -472,13 +484,45 @@ const Piece& withNamedBareImages(const Piece& piece, Piece& storage) {
     return storage;
 }
 
+// A FOOTNOTE REFERENCE SHOWS ITS ID, NOT ITS SYNTAX: the run `[^id]` shrinks
+// to `id` in the text, the id itself goes to the format as FootnoteIdProperty
+// (applySpans reads it back from the text of the run). Same shifting rules as
+// the formula objects above; the file gets `[^id]` back from gatherLine.
+const Piece& withFootnoteLabels(const Piece& piece, Piece& storage) {
+    bool any = false;
+    for (const Run& run : piece.runs)
+        if (run.footnote()) { any = true; break; }
+    if (!any) return piece;
+    for (size_t i = 1; i < piece.runs.size(); ++i)
+        if (piece.runs[i].start < piece.runs[i - 1].end) return piece;
+    storage = piece;
+    for (size_t i = storage.runs.size(); i-- > 0;) {
+        Run& run = storage.runs[i];
+        if (!run.footnote()) continue;
+        const QStringView written = storage.view(run);
+        if (written.size() < 4 || !written.startsWith(u"[^") || !written.endsWith(u']')) continue;
+        const int32_t at = run.start;
+        const int32_t removed = 3;
+        storage.text.remove(run.end - 1, 1);
+        storage.text.remove(at, 2);
+        run.end -= removed;
+        for (size_t k = i + 1; k < storage.runs.size(); ++k) {
+            storage.runs[k].start -= removed;
+            storage.runs[k].end -= removed;
+        }
+    }
+    return storage;
+}
+
 void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& ctx,
                const Piece& piece, bool documentStart, bool& reuse, bool& prevVSpace) {
     Piece named;
     const Piece& withImages = withNamedBareImages(piece, named);
     Piece mathed;
     QStringList mathSources;
-    const Piece& b = withInlineMathObjects(withImages, mathed, mathSources);
+    const Piece& withMath = withInlineMathObjects(withImages, mathed, mathSources);
+    Piece labelled;
+    const Piece& b = withFootnoteLabels(withMath, labelled);
     const ZDocStyle& style = *ctx.style;
     const bool first = documentStart && reuse;
     const bool raw = b.raw;
@@ -607,6 +651,18 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // — структура. Рисуется тем же серым, что и дословные
                 // куски, но правится как обычный текст.
                 charFmt.setForeground(style.rawColor());
+                break;
+
+            case Kind::Footnote:
+                // A footnote definition: the body in the caption step, the
+                // id painted by the view in the left margin (paintMarker), the
+                // margin reserved here the way a list reserves its marker
+                // column. The id rides in InfoProperty like a code language.
+                blockFmt.setLeftMargin(style.quoteIndent() * ctx.charUnit);
+                blockFmt.setProperty(InfoProperty, b.info);
+                lineStep = style.footnoteStep();
+                setFontStep(charFmt, lineStep);
+                charFmt.setForeground(style.quoteColor());
                 break;
         }
         if (b.kind != Kind::Code) text = toQt(b.text, breaks);

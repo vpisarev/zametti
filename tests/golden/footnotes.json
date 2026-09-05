@@ -1,0 +1,21 @@
+[
+  {"kind": "heading", "headingLevel": 1, "text": "Footnotes"},
+  {"kind": "vspace", "text": ""},
+  {"kind": "paragraph", "text": "Text with a note[^1] and another[^n2]; two side by side[^1][^n2], one in italics[^3], and one in code [^4] stays code.", "inlines": [{"offset": 16, "length": 4, "footnote": true}, {"offset": 32, "length": 5, "footnote": true}, {"offset": 55, "length": 4, "footnote": true}, {"offset": 59, "length": 5, "footnote": true}, {"offset": 73, "length": 7, "italic": true}, {"offset": 80, "length": 4, "footnote": true}, {"offset": 97, "length": 9, "code": true}]},
+  {"kind": "vspace", "text": ""},
+  {"kind": "paragraph", "text": "A reference inside a link [^5] is plain text, and an escaped [^6] one too.", "inlines": [{"offset": 19, "length": 11, "href": "http://example.org"}]},
+  {"kind": "vspace", "text": ""},
+  {"kind": "quote", "text": "A quote may carry a reference[^1] as well.", "inlines": [{"offset": 29, "length": 4, "footnote": true}]},
+  {"kind": "vspace", "text": ""},
+  {"kind": "list-item", "marker": "bullet", "level": 0, "text": "an item with a reference[^n2]", "inlines": [{"offset": 24, "length": 5, "footnote": true}]},
+  {"kind": "vspace", "text": ""},
+  {"kind": "footnote", "info": "1", "text": "Ibid."},
+  {"kind": "vspace", "text": ""},
+  {"kind": "footnote", "info": "n2", "text": "Two words here\nand a second line with italics and a link.", "inlines": [{"offset": 38, "length": 7, "italic": true}, {"offset": 52, "length": 4, "href": "http://example.org"}]},
+  {"kind": "vspace", "text": ""},
+  {"kind": "footnote", "info": "3", "text": "http://example.org", "inlines": [{"offset": 0, "length": 18, "href": "http://example.org"}]},
+  {"kind": "vspace", "text": ""},
+  {"kind": "footnote", "info": "4", "text": ""},
+  {"kind": "vspace", "text": ""},
+  {"kind": "footnote", "info": "7", "text": "an orphan definition is kept too"}
+]

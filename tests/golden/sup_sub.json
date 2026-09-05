@@ -1,0 +1,11 @@
+[
+  {"kind": "heading", "headingLevel": 1, "text": "Superscript and subscript"},
+  {"kind": "vspace", "text": ""},
+  {"kind": "paragraph", "text": "Water is H2O and the area is x2; a note1 without a footnote.", "inlines": [{"offset": 10, "length": 1, "sub": true}, {"offset": 30, "length": 1, "sup": true}, {"offset": 39, "length": 1, "sup": true}]},
+  {"kind": "vspace", "text": ""},
+  {"kind": "paragraph", "text": "Inside boldup and italicdown, and a link2.", "inlines": [{"offset": 7, "length": 4, "bold": true}, {"offset": 11, "length": 2, "bold": true, "sup": true}, {"offset": 18, "length": 6, "italic": true}, {"offset": 24, "length": 4, "italic": true, "sub": true}, {"offset": 34, "length": 6, "href": "http://example.org"}, {"offset": 40, "length": 1, "sup": true, "href": "http://example.org"}]},
+  {"kind": "vspace", "text": ""},
+  {"raw": "A lone <sup>tag without its pair stays text, as does an empty <sup></sup> pair.\n"},
+  {"kind": "vspace", "text": ""},
+  {"kind": "paragraph", "text": "Code keeps <sup>x</sup> as it is.", "inlines": [{"offset": 11, "length": 12, "code": true}]}
+]

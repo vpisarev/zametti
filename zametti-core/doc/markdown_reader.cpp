@@ -56,12 +56,12 @@ struct DraftRun {
     DraftRange text;
     DraftRange href;
     DraftRange title;
-    uint8_t flags = 0;
+    uint16_t flags = 0;
 
     bool code() const { return (flags & InlineCode) != 0; }
     bool image() const { return (flags & InlineImage) != 0; }
     bool math() const { return (flags & InlineMath) != 0; }
-    void set(uint8_t bit, bool on) { flags = uint8_t(on ? (flags | bit) : (flags & ~bit)); }
+    void set(uint16_t bit, bool on) { flags = uint16_t(on ? (flags | bit) : (flags & ~bit)); }
 };
 
 // Блок в координатах черновика.
@@ -178,7 +178,7 @@ constexpr size_t kNoOffset = static_cast<size_t>(-1);
 QStringView qview(QStringView text) { return text; }
 
 struct Style {
-    uint8_t flags = 0;   // InlineBold | InlineItalic | ... | InlineImage
+    uint16_t flags = 0;   // InlineBold | InlineItalic | ... | InlineImage
     DraftRange href;
     DraftRange title;
 
@@ -281,7 +281,21 @@ struct Ctx {
     // нумерованного списка (правило 2).
     QString pendingPrefix;
     size_t pendingPrefixOff = kNoOffset;
+
+    // FOOTNOTE REFERENCES `[^id]` found by the pre-pass (maskFootnotes), as
+    // source ranges [start, end), sorted. In the copy md4c reads they are
+    // masked to letters, so md4c hands them over as plain text; onText cuts
+    // them out of that text into runs of their own by these ranges.
+    std::vector<std::pair<size_t, size_t>> footnoteRefs;
+    // FOOTNOTE DEFINITIONS: the source offset of the `[` of every unescaped
+    // `[^id]:` at a line start. In the text of the block that `[` becomes
+    // kFootnoteDefMark, and liftFootnotes recognises definitions by the mark
+    // — not by the shape of the text: `\[^2]: …` with an escaped bracket is
+    // the same text and is NOT a definition (the owner's math note has one).
+    std::vector<size_t> footnoteDefs;
 };
+
+constexpr char16_t kFootnoteDefMark = u'\uE000';
 
 // Знак препинания ASCII — тот самый набор, перед которым в CommonMark косая
 // является экранированием, а не буквой.
@@ -448,7 +462,8 @@ void openItemLeafIfNeeded(Ctx& c) {
 // два строчных комментария подряд склеиваются в один — это давнее поведение, и
 // менять его здесь нельзя.
 void mergeAdjacentSpans(Ctx& c) {
-    constexpr uint8_t kStyleMask = InlineBold | InlineItalic | InlineStrike | InlineCode;
+    constexpr uint16_t kStyleMask =
+        InlineBold | InlineItalic | InlineStrike | InlineCode | InlineSup | InlineSub;
     std::vector<DraftRun>& all = c.draft.runs;
     const size_t from = size_t(c.spanStart);
     size_t write = from;
@@ -463,7 +478,9 @@ void mergeAdjacentSpans(Ctx& c) {
             DraftRun& p = all[write - 1];
             // Картинку не сливаем ни с чем и ни с чем не сливаем: два снимка
             // подряд с одним адресом склеились бы в один, и второй пропал бы.
-            if (!p.image() && !s.image() && p.text.end == s.text.start &&
+            // A footnote reference is atomic the same way: `[^1][^2]` are two.
+            if (!p.image() && !s.image() && (p.flags & InlineFootnote) == 0 &&
+                (s.flags & InlineFootnote) == 0 && p.text.end == s.text.start &&
                 (p.flags & kStyleMask) == (s.flags & kStyleMask) &&
                 c.draft.view(p.href) == c.draft.view(s.href)) {
                 p.text.end = s.text.end;
@@ -1346,6 +1363,103 @@ void keepDecorativeIndent(Ctx& c, const MD_CHAR* text) {
         if (start == at) start = at + size_t(decorative);
 }
 
+// PLAIN TEXT WITH FOOTNOTE REFERENCES CUT OUT. The pre-pass masked every
+// `[^id]` to letters, so md4c hands the reference over inside an ordinary text
+// run; here the run is split by the remembered ranges: the text before goes
+// on under the current style, the reference becomes a run of its own
+// (InlineFootnote, text as written), the text after continues. Returns false
+// when there is nothing to cut — the caller appends the text as usual.
+//
+// Inside a link or an image caption a reference is left as plain text: a run
+// without the href in the middle of a link would split the link in two.
+bool appendWithFootnoteRefs(Ctx& c, size_t off, size_t size) {
+    if (c.footnoteRefs.empty() && c.footnoteDefs.empty()) return false;
+    const size_t end = off + size;
+    auto ref = std::lower_bound(c.footnoteRefs.begin(), c.footnoteRefs.end(), off,
+                                [](const std::pair<size_t, size_t>& r, size_t p) {
+                                    return r.second <= p;
+                                });
+    auto def = std::lower_bound(c.footnoteDefs.begin(), c.footnoteDefs.end(), off);
+    const bool anyRef = ref != c.footnoteRefs.end() && ref->first < end;
+    const bool anyDef = def != c.footnoteDefs.end() && *def < end;
+    if (!anyRef && !anyDef) return false;
+    const Style& st = c.styles.back();
+    const bool refsAllowed = st.href.empty() && (st.flags & InlineImage) == 0;
+
+    constexpr size_t kNone = static_cast<size_t>(-1);
+    size_t pos = off;
+    for (;;) {
+        const size_t nextRef =
+            ref != c.footnoteRefs.end() && ref->first < end ? ref->first : kNone;
+        const size_t nextDef = def != c.footnoteDefs.end() && *def < end ? *def : kNone;
+        if (nextRef == kNone && nextDef == kNone) break;
+        if (nextDef < nextRef) {
+            // The `[` of a definition: the mark instead of the bracket.
+            if (nextDef >= pos) {
+                c.text.append(QStringView(c.buf + pos, qsizetype(nextDef - pos)));
+                c.text.push_back(QChar(kFootnoteDefMark));
+                pos = nextDef + 1;
+            }
+            ++def;
+            continue;
+        }
+        // A reference cut by md4c's own run boundary cannot happen — it is
+        // masked as one word — but a half would corrupt the text: skip it.
+        if (refsAllowed && ref->first >= pos && ref->second <= end) {
+            c.text.append(QStringView(c.buf + pos, qsizetype(ref->first - pos)));
+            flushRun(c);
+            DraftRun s;
+            s.text = {int32_t(c.text.size()), int32_t(c.text.size() + (ref->second - ref->first))};
+            s.flags = InlineFootnote;
+            c.text.append(QStringView(c.buf + ref->first, qsizetype(ref->second - ref->first)));
+            c.draft.runs.push_back(s);
+            c.runStart = c.text.size();
+            pos = ref->second;
+        }
+        ++ref;
+    }
+    c.text.append(QStringView(c.buf + pos, qsizetype(end - pos)));
+    return true;
+}
+
+// `<sup>`, `<sub>`, `</sup>`, `</sub>` as inline HTML in a paragraph: the
+// opening tag pushes a style, the closing pops it. Returns false for any
+// other tag. Malformed pairs demote the block — bytes stay whole.
+bool supSubTag(Ctx& c, QStringView tag) {
+    uint16_t bit = 0;
+    bool closing = false;
+    if (tag.compare(u"<sup>", Qt::CaseInsensitive) == 0) bit = InlineSup;
+    else if (tag.compare(u"<sub>", Qt::CaseInsensitive) == 0) bit = InlineSub;
+    else if (tag.compare(u"</sup>", Qt::CaseInsensitive) == 0) { bit = InlineSup; closing = true; }
+    else if (tag.compare(u"</sub>", Qt::CaseInsensitive) == 0) { bit = InlineSub; closing = true; }
+    if (bit == 0) return false;
+
+    if (!closing) {
+        Style st = c.styles.back();
+        if ((st.flags & InlineImage) != 0 || (st.flags & bit) != 0) {
+            demote(c);
+            return true;
+        }
+        flushRun(c);
+        st.flags |= bit;
+        c.styles.push_back(st);
+        c.styleStart.push_back(c.text.size());
+        return true;
+    }
+    // The closing tag must close the innermost open style, and close
+    // something: `<sup></sup>` marks nothing and would vanish on writing.
+    if (c.styles.size() < 2 || (c.styles.back().flags & bit) == 0 ||
+        (c.styles[c.styles.size() - 2].flags & bit) != 0 ||
+        size_t(c.text.size()) == c.styleStart.back()) {
+        demote(c);
+        return true;
+    }
+    flushRun(c);
+    c.styles.pop_back();
+    c.styleStart.pop_back();
+    return true;
+}
+
 int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) {
     Ctx& c = *static_cast<Ctx*>(userdata);
     if (type == MD_TEXT_NORMAL || type == MD_TEXT_ENTITY || type == MD_TEXT_CODE)
@@ -1392,10 +1506,13 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
             // Из ИСХОДНИКА: указатель может смотреть в замаскированную копию, а
             // маска — не то, что владелец написал. Сущности (`&amp;`) приходят
             // отдельной строкой вне буфера, их берём как есть.
-            if (text >= c.md && text < c.md + c.len)
-                c.text.append(QStringView(c.buf + (text - c.md), qsizetype(size)));
-            else
+            if (text >= c.md && text < c.md + c.len) {
+                const size_t off = static_cast<size_t>(text - c.md);
+                if (type == MD_TEXT_NORMAL && appendWithFootnoteRefs(c, off, size)) break;
+                c.text.append(QStringView(c.buf + off, qsizetype(size)));
+            } else {
                 c.text.append(QStringView(text, qsizetype(size)));
+            }
             break;
         case MD_TEXT_SOFTBR:
             // Содержимое setext-заголовка может занимать несколько строк, а ATX
@@ -1433,6 +1550,11 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
                 c.text.append(QStringView(text, qsizetype(size)));
                 break;
             }
+            // `<sup>`/`<sub>` and their closing tags (brief 18): a style like
+            // bold, opened and closed by a tag pair. Anything else about them
+            // — a tag without its pair, an empty pair, a tag inside an image
+            // caption — is not expressible flat and stays verbatim.
+            if (c.inLeaf && supSubTag(c, QStringView(text, qsizetype(size)))) break;
             // Строчный комментарий в абзаце: приходит одним куском. Всё прочее
             // — дословно, как раньше.
             if (c.inLeaf && size >= 7 && QStringView(text, 4) == u"<!--" &&
@@ -2005,6 +2127,221 @@ void liftMath(Ctx& c) {
     }
 }
 
+// --- FOOTNOTES (brief 18) ---------------------------------------------------
+//
+// md4c knows nothing of footnotes, and worse, it knows link reference
+// definitions: `[^1]: Ibid.` is one to it — swallowed whole, and every `[^1]`
+// in the text becomes a link with the href "Ibid.". So the reader handles
+// them itself, in two halves:
+//
+//   * BEFORE md4c a pre-pass walks the source outside fenced code, finds
+//     definitions (`[^id]:` at the start of a line, up to three spaces of
+//     indent) and references (`[^id]` anywhere else), and masks them in the
+//     copy md4c reads — the same trick as maskDisplayMath: the copy has the
+//     length of the source, offsets stay shared, and the TEXT is always taken
+//     from the source. A definition loses only its `[` (it is a paragraph to
+//     md4c now), a reference is masked to letters (one plain word);
+//   * AFTER md4c the paragraphs that begin with `[^id]:` become Footnote
+//     blocks (liftFootnotes), and the references were cut into runs of their
+//     own as the text arrived (appendWithFootnoteRefs).
+//
+// The id: `[A-Za-z0-9_-]+`. Anything else is not a footnote and stays text.
+
+bool footnoteIdChar(char16_t ch) {
+    return (ch >= u'0' && ch <= u'9') || (ch >= u'a' && ch <= u'z') || (ch >= u'A' && ch <= u'Z') ||
+           ch == u'_' || ch == u'-';
+}
+
+// The offset right after `[^id]` starting at `at`, or 0 if none starts there.
+size_t footnoteLabelEnd(const char16_t* buf, size_t len, size_t at) {
+    if (at + 3 >= len || buf[at] != u'[' || buf[at + 1] != u'^') return 0;
+    size_t j = at + 2;
+    while (j < len && footnoteIdChar(buf[j])) ++j;
+    if (j == at + 2 || j >= len || buf[j] != u']') return 0;
+    return j + 1;
+}
+
+// Masks definitions and references in `masked` (created from the source on
+// the first hit; empty means nothing was found) and collects the reference
+// ranges, sorted by construction.
+void maskFootnotes(QStringView source, QString& masked,
+                   std::vector<std::pair<size_t, size_t>>& refs, std::vector<size_t>& defs) {
+    const char16_t* buf = source.utf16();
+    const size_t len = size_t(source.size());
+    std::vector<std::pair<size_t, size_t>> fenced;
+    bool fencedKnown = false;
+    size_t fenceIdx = 0;
+    size_t lineStart = 0;
+    for (size_t i = 0; i < len; ++i) {
+        const char16_t ch = buf[i];
+        if (ch == u'\n') { lineStart = i + 1; continue; }
+        if (ch == u'\\') { ++i; continue; }   // an escaped `[` opens nothing
+        if (ch != u'[') continue;
+        const size_t end = footnoteLabelEnd(buf, len, i);
+        if (end == 0) continue;
+        if (!fencedKnown) {
+            fenced = fencedRegions(source);
+            fencedKnown = true;
+        }
+        while (fenceIdx < fenced.size() && fenced[fenceIdx].second <= i) ++fenceIdx;
+        if (fenceIdx < fenced.size() && i >= fenced[fenceIdx].first) continue;   // inside code
+
+        if (masked.isEmpty()) masked = source.toString();
+        // A definition: at the start of its line (up to three spaces of
+        // indent), the label followed by a colon.
+        bool atLineStart = i - lineStart <= 3;
+        for (size_t k = lineStart; atLineStart && k < i; ++k) atLineStart = buf[k] == u' ';
+        if (atLineStart && end < len && buf[end] == u':') {
+            masked[qsizetype(i)] = u'x';
+            defs.push_back(i);
+            i = end;
+            continue;
+        }
+        // `[^1](url)` is a LINK whose text is "^1" (the owner's math note has
+        // one), `[^1][ref]` a reference link: md4c keeps them, we stay away.
+        // `[^1][^2]`, two references side by side, is not a link.
+        if (end < len && (buf[end] == u'(' ||
+                          (buf[end] == u'[' && footnoteLabelEnd(buf, len, end) == 0))) {
+            i = end - 1;
+            continue;
+        }
+        // Masked to PUNCTUATION, not letters: `_it_[^1]_al_` must keep its
+        // italics, and a letter after the closing `_` would make it an
+        // intraword underscore that closes nothing. The apostrophe means
+        // nothing to md4c anywhere.
+        for (size_t k = i; k < end; ++k) masked[qsizetype(k)] = u'\'';
+        refs.emplace_back(i, end);
+        i = end - 1;
+    }
+}
+
+// Where the body of a definition starts on its first line: after the marked
+// `[^id]:` and at most one space; -1 if the line is not a definition. `id`
+// gets the id. Only a line that begins with the mark counts — the mark is
+// what the pre-pass put in place of an UNESCAPED `[` at a line start.
+qsizetype footnoteBodyStart(QStringView line, QString& id) {
+    if (line.size() < 5 || line[0] != QChar(kFootnoteDefMark) || line[1] != u'^') return -1;
+    qsizetype j = 2;
+    while (j < line.size() && footnoteIdChar(line[j].unicode())) ++j;
+    if (j == 2 || j + 1 >= line.size() || line[j] != u']' || line[j + 1] != u':') return -1;
+    id = line.mid(2, j - 2).toString();
+    qsizetype at = j + 2;
+    if (at < line.size() && line[at] == u' ') ++at;
+    return at;
+}
+
+// A mark that did not become a definition (the line continued a list item,
+// say) goes back to being the bracket it stood for.
+void unmarkFootnoteDefs(Piece& block) {
+    if (block.text.contains(QChar(kFootnoteDefMark)))
+        block.text.replace(QChar(kFootnoteDefMark), QLatin1Char('['));
+}
+
+// A paragraph outside any list whose lines begin with `[^id]:` becomes one
+// Footnote block per definition, with a VSpace between them and after any
+// leading plain text — exactly what the canonical file has there (two
+// definitions in a row would read as one paragraph, see wouldMerge). The
+// continuation lines lose up to four spaces of indent: that is how the
+// writer indents them, and keepDecorativeIndent brought them back as text.
+// Runs are re-addressed through the same cut map as the text.
+void liftFootnotes(std::vector<Piece>& blocks, bool anyDefs) {
+    if (!anyDefs) return;
+    std::vector<Piece> out;
+    out.reserve(blocks.size());
+    for (Piece& block : blocks) {
+        if (block.raw || block.kind != Kind::Paragraph || block.level >= 0 ||
+            !block.text.contains(QChar(kFootnoteDefMark))) {
+            if (!block.raw) unmarkFootnoteDefs(block);
+            out.push_back(std::move(block));
+            continue;
+        }
+        // Lines, and which of them open a definition.
+        const QString& text = block.text;
+        std::vector<qsizetype> lineStarts{0};
+        for (qsizetype i = 0; i < text.size(); ++i)
+            if (text[i] == u'\n') lineStarts.push_back(i + 1);
+        std::vector<size_t> defLines;
+        QString id;
+        for (size_t l = 0; l < lineStarts.size(); ++l) {
+            const qsizetype from = lineStarts[l];
+            const qsizetype to = l + 1 < lineStarts.size() ? lineStarts[l + 1] - 1 : text.size();
+            if (footnoteBodyStart(QStringView(text).mid(from, to - from), id) >= 0)
+                defLines.push_back(l);
+        }
+        if (defLines.empty()) {
+            unmarkFootnoteDefs(block);
+            out.push_back(std::move(block));
+            continue;
+        }
+        // The text before the first definition stays a paragraph.
+        auto cutPiece = [&](qsizetype from, qsizetype to, Kind kind, const QString& noteId,
+                            qsizetype bodyStart) {
+            Piece piece;
+            piece.kind = kind;
+            piece.info = noteId;
+            // keep[i] — the new offset of old offset i, or -1 if cut.
+            std::vector<qsizetype> map(size_t(to - from) + 1, -1);
+            QString body;
+            qsizetype i = from + (kind == Kind::Footnote ? bodyStart : 0);
+            bool lineHead = false;
+            for (; i < to; ++i) {
+                if (lineHead) {
+                    // Up to four spaces of continuation indent are structure.
+                    int eaten = 0;
+                    while (i < to && eaten < 4 && text[i] == u' ') { ++i; ++eaten; }
+                    lineHead = false;
+                    if (i >= to) break;
+                }
+                map[size_t(i - from)] = body.size();
+                body += text[i];
+                if (text[i] == u'\n' && kind == Kind::Footnote) lineHead = true;
+            }
+            map[size_t(to - from)] = body.size();
+            for (const Run& run : block.runs) {
+                if (run.end <= from || run.start >= to) continue;
+                Run moved = run;
+                // Clip to the piece, then to the kept characters.
+                qsizetype s = qMax<qsizetype>(run.start, from);
+                qsizetype e = qMin<qsizetype>(run.end, to);
+                while (s < e && map[size_t(s - from)] < 0) ++s;
+                while (e > s && map[size_t(e - 1 - from)] < 0) --e;
+                if (s >= e) continue;
+                moved.start = int32_t(map[size_t(s - from)]);
+                moved.end = int32_t(map[size_t(e - 1 - from)] + 1);
+                piece.runs.push_back(std::move(moved));
+            }
+            piece.text = std::move(body);
+            return piece;
+        };
+        auto vspace = [] {
+            Piece v;
+            v.kind = Kind::VSpace;
+            return v;
+        };
+        if (defLines.front() > 0) {
+            Piece head = cutPiece(0, lineStarts[defLines.front()] - 1, Kind::Paragraph, {}, 0);
+            unmarkFootnoteDefs(head);
+            out.push_back(std::move(head));
+            out.push_back(vspace());
+        }
+        for (size_t d = 0; d < defLines.size(); ++d) {
+            const qsizetype from = lineStarts[defLines[d]];
+            const qsizetype to = d + 1 < defLines.size() ? lineStarts[defLines[d + 1]] - 1
+                                                          : text.size();
+            const qsizetype lineEnd = defLines[d] + 1 < lineStarts.size()
+                                          ? lineStarts[defLines[d] + 1] - 1
+                                          : text.size();
+            const qsizetype bodyStart =
+                footnoteBodyStart(QStringView(text).mid(from, lineEnd - from), id);
+            if (d > 0) out.push_back(vspace());
+            Piece note = cutPiece(from, to, Kind::Footnote, id, bodyStart);
+            unmarkFootnoteDefs(note);   // a second mark inside a continuation line
+            out.push_back(std::move(note));
+        }
+    }
+    blocks = std::move(out);
+}
+
 }  // namespace
 
 namespace {
@@ -2026,7 +2363,11 @@ void parsePieces(QStringView markdown, std::vector<Piece>& blocks, NoteHeader& h
     // QTextDocument. Ни одной конверсии на пути разбора.
     const QStringView source = markdown;
     Ctx c;
-    const QString masked = maskDisplayMath(source);
+    QString masked = maskDisplayMath(source);
+    // Footnotes are masked on top of the math mask: both keep the length, and
+    // the source is what every byte of text is read from anyway.
+    maskFootnotes(masked.isEmpty() ? source : QStringView(masked), masked, c.footnoteRefs,
+                  c.footnoteDefs);
     c.buf = source.utf16();
     c.md = masked.isEmpty() ? source.utf16() : QStringView(masked).utf16();
     c.len = size_t(source.size());
@@ -2102,6 +2443,7 @@ void parsePieces(QStringView markdown, std::vector<Piece>& blocks, NoteHeader& h
         }
         blocks.push_back(std::move(piece));
     }
+    liftFootnotes(blocks, !c.footnoteDefs.empty());
     // Кодировка ведущих отступов — та же канонизация, что и на записи (см.
     // settleLeadingSpaces): разбор обязан отдать те же знаки, какие выбрал бы
     // писатель, иначе круг «разбор → запись → разбор» не неподвижен.

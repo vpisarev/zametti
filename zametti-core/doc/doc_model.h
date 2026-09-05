@@ -76,6 +76,14 @@ enum DocProperty {
     // этого правила, и оно железное.
     ObjectSourceProperty,   // QString, дословный исходник — то, что уйдёт в файл
     ObjectAltProperty,      // QString, подпись картинки (текст спана)
+
+    // QString, the id of a footnote reference (SpanFootnote): the text of the
+    // span is the same id, shown as a superscript. Kept as a property as well
+    // so that two references side by side, `[^1][^2]`, stay two fragments —
+    // Qt merges neighbouring fragments of one format, and the text "12" alone
+    // could not be split back. One format per distinct id: a book has
+    // hundreds of them, not millions, and the format collection copes.
+    FootnoteIdProperty,
 };
 
 // Роды объектов. Начинаются с QTextFormat::UserObject: до него номера
@@ -137,6 +145,13 @@ enum SpanStyle {
     // в block_kind.h). Участвует в undo: Ctrl+Z после сворачивания возвращает
     // раскрытую.
     SpanMathOpen = 128,
+    // Superscript / subscript (`<sup>`, `<sub>`): the vertical alignment of
+    // the format follows the bit; the bit is the truth, as with bold.
+    SpanSup = 256,
+    SpanSub = 512,
+    // A footnote reference: the text of the span is the id, the file gets
+    // `[^id]`. Superscript, small, in the link colour. Atomic in the line.
+    SpanFootnote = 1024,
 };
 
 // Здесь стояла kObjectsShown — «временный шаг назад», при котором фото, сетка

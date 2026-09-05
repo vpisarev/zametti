@@ -105,7 +105,7 @@ bool wordChar(QChar c) {
 Piece withStylesOnWholeCodeSpans(Piece block) {
     if (block.raw || block.kind == Kind::Code) return block;
     std::vector<Run>& runs = block.runs;
-    const uint8_t styles = InlineBold | InlineItalic | InlineStrike;
+    const uint16_t styles = InlineBold | InlineItalic | InlineStrike | InlineSup | InlineSub;
     for (size_t i = 0; i < runs.size();) {
         if (!runs[i].code()) {
             ++i;
@@ -113,10 +113,10 @@ Piece withStylesOnWholeCodeSpans(Piece block) {
         }
         size_t j = i + 1;
         while (j < runs.size() && runs[j].code() && runs[j].start == runs[j - 1].end) ++j;
-        uint8_t common = styles;
+        uint16_t common = styles;
         for (size_t k = i; k < j; ++k) common &= runs[k].flags;
         for (size_t k = i; k < j; ++k)
-            runs[k].flags = uint8_t((runs[k].flags & ~styles) | common);
+            runs[k].flags = uint16_t((runs[k].flags & ~styles) | common);
         i = j;
     }
     std::vector<Run> merged;
@@ -146,12 +146,14 @@ Piece withStylesOnWholeCodeSpans(Piece block) {
 Piece withRunsAsPartition(Piece block) {
     const qsizetype size = block.text.size();
     std::vector<Run> objects;
-    std::vector<uint8_t> flags(size_t(size), 0);
+    // Sixteen bits, as InlineFlag: the superscript bit is the ninth, and a
+    // byte here silently dropped it (found on the first `<sup>`, brief 18).
+    std::vector<uint16_t> flags(size_t(size), 0);
     std::vector<int> owner(size_t(size), -1);   // кусок, давший адрес
     const std::vector<Run>& runs = block.runs;
     for (size_t i = 0; i < runs.size(); ++i) {
         const Run& run = runs[i];
-        if (run.image() || run.math() || run.comment()) {
+        if (run.image() || run.math() || run.comment() || run.footnote()) {
             objects.push_back(run);
             continue;
         }
@@ -421,7 +423,7 @@ bool sameRuns(const std::vector<Run>& x, const std::vector<Run>& y) {
 // объект.
 bool runsContain(const std::vector<Run>& whole, const std::vector<Run>& part) {
     for (const Run& want : part) {
-        if (want.image() || want.math() || want.comment()) {
+        if (want.image() || want.math() || want.comment() || want.footnote()) {
             bool found = false;
             for (const Run& have : whole) {
                 if (have.start == want.start && have.end == want.end &&
@@ -1157,7 +1159,8 @@ void settleLeadingSpaces(std::vector<Piece>& blocks) {
                 // съедает отступ содержимого безвозвратно, и он держится
                 // неразрывными, как в старом каноне.
                 const bool plainable = block.kind == Kind::Paragraph ||
-                                       block.kind == Kind::Quote || isList(block.kind);
+                                       block.kind == Kind::Quote || isList(block.kind) ||
+                                       block.kind == Kind::Footnote;
                 const QChar want = markerLine || wouldContinueList || !plainable ||
                                            insideTextlessItem
                                        ? kNbsp

@@ -41,7 +41,7 @@ namespace zametti {
 struct Run {
     int32_t start = 0;
     int32_t end = 0;
-    uint8_t flags = 0;      // биты InlineFlag
+    uint16_t flags = 0;     // биты InlineFlag
     QString href;
     QString title;
 
@@ -53,7 +53,10 @@ struct Run {
     bool comment() const { return (flags & InlineComment) != 0; }
     bool math() const { return (flags & InlineMath) != 0; }
     bool mathOpen() const { return (flags & InlineMathOpen) != 0; }
-    void set(uint8_t bit, bool on) { flags = uint8_t(on ? (flags | bit) : (flags & ~bit)); }
+    bool sup() const { return (flags & InlineSup) != 0; }
+    bool sub() const { return (flags & InlineSub) != 0; }
+    bool footnote() const { return (flags & InlineFootnote) != 0; }
+    void set(uint16_t bit, bool on) { flags = uint16_t(on ? (flags | bit) : (flags & ~bit)); }
     bool empty() const { return end <= start; }
 };
 

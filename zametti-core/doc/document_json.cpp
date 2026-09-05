@@ -34,6 +34,7 @@ const char* kindName(Kind k) {
         case Kind::Divider:       return "divider";
         case Kind::Math:          return "math";
         case Kind::Html:          return "html";
+        case Kind::Footnote:      return "footnote";
     }
     return "?";
 }
@@ -135,7 +136,7 @@ void appendPiece(std::string& out, const Piece& b) {
         out += ", \"level\": ";
         appendInt(out, b.level);
     }
-    if (b.kind == Kind::Code && !b.info.isEmpty()) {
+    if ((b.kind == Kind::Code || b.kind == Kind::Footnote) && !b.info.isEmpty()) {
         out += ", \"info\": ";
         appendJsonString(out, utf8Of(b.info));
     }
@@ -161,6 +162,9 @@ void appendPiece(std::string& out, const Piece& b) {
             if (s.code()) out += ", \"code\": true";
             if (s.image()) out += ", \"image\": true";
             if (s.comment()) out += ", \"comment\": true";
+            if (s.sup()) out += ", \"sup\": true";
+            if (s.sub()) out += ", \"sub\": true";
+            if (s.footnote()) out += ", \"footnote\": true";
             if (!s.href.isEmpty()) {
                 out += ", \"href\": ";
                 appendJsonString(out, utf8Of(s.href));

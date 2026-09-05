@@ -314,8 +314,41 @@ QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point) {
     return QTextBlock();
 }
 
+// THE ID OF A FOOTNOTE DEFINITION stands in the left margin the builder
+// reserved for the block (quoteIndent), right-aligned to the text, in the
+// caption step of the block and the quote colour — a label, not a marker.
+void paintFootnoteLabel(QPainter& painter, const QTextBlock& block, const ZDocStyle& look) {
+    const QTextLayout* layout = block.layout();
+    if (layout == nullptr || layout->lineCount() == 0) return;
+    const QString id = block.blockFormat().stringProperty(InfoProperty);
+    if (id.isEmpty()) return;
+    const QTextLine line = layout->lineAt(0);
+    const QPointF origin = layout->position();
+    const qreal textLeft = origin.x() + blockLeftPad(block);
+    // The block's own font: the first fragment carries the caption step.
+    QFont font = scaleFontOf(block);
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        if (!it.fragment().isValid()) continue;
+        font = it.fragment().charFormat().font().resolve(font);
+        break;
+    }
+    const QFontMetricsF metrics(font);
+    const qreal gap = metrics.horizontalAdvance(QLatin1Char(' '));
+    painter.save();
+    painter.setFont(font);
+    painter.setPen(look.quoteColor());
+    painter.drawText(QPointF(textLeft - gap - metrics.horizontalAdvance(id),
+                             origin.y() + line.y() + line.ascent()),
+                     id);
+    painter.restore();
+}
+
 void paintMarker(QPainter& painter, const QTextBlock& block) {
     const ZDocStyle& look = styleOf(*block.document());
+    if (!isRawBlock(block) && kindOf(block) == Kind::Footnote) {
+        paintFootnoteLabel(painter, block, look);
+        return;
+    }
     if (!isListBlock(block)) return;
     const MarkerStyle style = markerOf(block);
     const Anchor anchor = anchorOf(block, style, look);

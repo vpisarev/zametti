@@ -191,6 +191,15 @@ bool bracketOpensLink(QStringView s, qsizetype i) {
     return false;
 }
 
+// `[^id]` at i, the shape of a footnote reference (id: letters, digits, `_`,
+// `-`; the same rule as the reader's footnoteLabelEnd).
+bool looksLikeFootnoteRef(QStringView s, qsizetype i) {
+    if (i + 3 >= s.size() || s.at(i) != u'[' || s.at(i + 1) != u'^') return false;
+    qsizetype j = i + 2;
+    while (j < s.size() && (isAsciiAlnum(s.at(j)) || s.at(j) == u'_' || s.at(j) == u'-')) ++j;
+    return j > i + 2 && j < s.size() && s.at(j) == u']';
+}
+
 // Просто парная скобка, без разбора того, во что она превратится.
 bool bracketPairAt(QStringView s, qsizetype i) {
     int depth = 0;
@@ -386,8 +395,11 @@ void appendEscaped(TextSink& sink, QStringView text, qsizetype begin, qsizetype 
                 ++i;
                 continue;
             case u'[':
+                // Plain text shaped like a footnote reference, `[^id]`, would
+                // read back as one (the reader masks them before md4c): the
+                // bracket is escaped, as it is for a link.
                 if (bracketOpensLink(text, i) || (markAt(sink, i) & kMarkInLink) != 0 ||
-                    (sink.hasLinkDefs && bracketPairAt(text, i)))
+                    (sink.hasLinkDefs && bracketPairAt(text, i)) || looksLikeFootnoteRef(text, i))
                     sink.out += u'\\';
                 sink.out += u'[';
                 ++i;
@@ -497,7 +509,7 @@ Piece flankableEdges(Piece block) {
     // зачёркивание), поэтому в смежности она участвует, а края её самой не
     // трогаются — их держат скобки ссылки.
     const auto skip = [](const Run& run) {
-        return run.code() || run.image() || run.math() || run.comment();
+        return run.code() || run.image() || run.math() || run.comment() || run.footnote();
     };
     // Класс знака текста: пробел (край блока и перенос строки — тоже пробел),
     // знак препинания, иначе буква.
@@ -507,7 +519,7 @@ Piece flankableEdges(Piece block) {
     const auto isPu = [&](qsizetype i) { return i >= 0 && i < size && isAsciiPunct(text.at(i)); };
     // Внутренний сосед ограничителя начертания bit у куска с начертаниями
     // flags — вложенный ограничитель (пунктуация), если он есть.
-    const auto innerDelim = [&](uint8_t flags, uint8_t bit) {
+    const auto innerDelim = [&](uint16_t flags, uint16_t bit) {
         if (bit == InlineStrike) return (flags & (InlineBold | InlineItalic)) != 0;
         if (bit == InlineBold) return (flags & InlineItalic) != 0;
         return false;
@@ -766,7 +778,9 @@ void appendCodeSpan(QString& out, QStringView content) {
 // выносится наружу одним ограничителем.
 // Порядок — канонический: ~~ снаружи, затем **, затем курсив, затем ссылка.
 // Встроенный код всегда внутри всего: разметки внутри него нет по определению.
-enum Attr { kStrike = 0, kBold = 1, kItalic = 2, kHref = 3, kCode = 4, kAttrCount = 5 };
+// Superscript and subscript sit inside a link and outside code: `[x<sup>2</sup>](u)`.
+enum Attr { kStrike = 0, kBold = 1, kItalic = 2, kHref = 3, kSup = 4, kSub = 5, kCode = 6,
+            kAttrCount = 7 };
 
 struct Segment {
     qsizetype begin = 0;
@@ -781,11 +795,14 @@ bool hasAttr(const Run* s, int a) {
     if (s->image()) return false;
     if (s->comment()) return false;
     if (s->math()) return false;
+    if (s->footnote()) return false;
     switch (a) {
         case kStrike: return s->strike();
         case kBold:   return s->bold();
         case kItalic: return s->italic();
         case kHref:   return !s->href.isEmpty();
+        case kSup:    return s->sup();
+        case kSub:    return s->sub();
         case kCode:   return s->code();
         default:      return false;
     }
@@ -830,6 +847,15 @@ void emitSegments(TextSink& sink, const Piece& b, QStringView text,
         // этапа 16: общий путь текста писал `\\` вместо `\` и `,` вместо
         // `\,`.
         if (segs[i].span != nullptr && segs[i].span->math()) {
+            sink.out += text.mid(segs[i].begin, segs[i].end - segs[i].begin);
+            sink.bol = false;
+            ++i;
+            continue;
+        }
+
+        // A footnote reference: the run holds it as written, `[^id]`, and the
+        // id is letters, digits, `_` and `-` — nothing to escape.
+        if (segs[i].span != nullptr && segs[i].span->footnote()) {
             sink.out += text.mid(segs[i].begin, segs[i].end - segs[i].begin);
             sink.bol = false;
             ++i;
@@ -949,6 +975,8 @@ void emitSegments(TextSink& sink, const Piece& b, QStringView text,
             case kBold:   sink.out += QLatin1String("**"); break;
             case kItalic: sink.out += italic; break;
             case kHref:   sink.out += u'['; break;
+            case kSup:    sink.out += QLatin1String("<sup>"); break;
+            case kSub:    sink.out += QLatin1String("<sub>"); break;
             default: break;
         }
         sink.bol = false;
@@ -964,6 +992,8 @@ void emitSegments(TextSink& sink, const Piece& b, QStringView text,
                 appendHref(sink.out, href);
                 sink.out += u')';
                 break;
+            case kSup:    sink.out += QLatin1String("</sup>"); break;
+            case kSub:    sink.out += QLatin1String("</sub>"); break;
             default: break;
         }
         i = j;
@@ -1033,7 +1063,10 @@ void validate([[maybe_unused]] const Piece& b) {
             b.level == -1) &&
            "this kind takes no level");
     assert((b.kind == Kind::ListItem || !b.checked) && "checked is only meaningful for a task");
-    assert((b.kind == Kind::Code || b.info.isEmpty()) && "info is only meaningful for a code block");
+    assert((b.kind == Kind::Code || b.kind == Kind::Footnote || b.info.isEmpty()) &&
+           "info is only meaningful for a code block or a footnote");
+    assert((b.kind != Kind::Footnote || (!b.info.isEmpty() && b.level == -1)) &&
+           "a footnote has an id and lives outside lists");
     assert(b.level >= -1 && "level shallower than outside a list");
     assert((b.kind != Kind::Html || !b.text.contains(QLatin1String("-->"))) &&
            "comment body cannot contain -->");
@@ -1047,6 +1080,8 @@ void validate([[maybe_unused]] const Piece& b) {
         assert((!s.math() ||
                 ((s.flags & ~InlineMathOpen) == InlineMath && s.href.isEmpty())) &&
                "a formula combines with no other markup");
+        assert((!s.footnote() || (s.flags == InlineFootnote && s.href.isEmpty())) &&
+               "a footnote reference combines with no other markup");
         assert((s.title.isEmpty() || s.image()) && "title is only meaningful for an image");
         assert((!s.image() ||
                 (s.flags & (InlineBold | InlineItalic | InlineStrike | InlineCode)) == 0) &&
@@ -1430,6 +1465,25 @@ void Writer::push(const Piece& b) {
                 break;
             }
 
+            case Kind::Footnote: {
+                // `[^id]: body`; the lines of the body after the first are
+                // indented by four spaces — the reader takes exactly those
+                // back (liftFootnotes). Outside lists by construction.
+                out += QLatin1String("[^");
+                out += b.info;
+                out += QLatin1String("]:");
+                TextSink sink;
+                sink.contIndent = QStringLiteral("    ");
+                sink.hasLinkDefs = hasLinkDefs;
+                appendInlineText(sink, b);
+                if (!sink.out.isEmpty()) {
+                    out += u' ';
+                    out += sink.out;
+                }
+                out += u'\n';
+                break;
+            }
+
             case Kind::Quote: {
                 const qsizetype indent = indentInsideItem(b, contentCol);
                 out += QString(indent, u' ');
@@ -1693,7 +1747,27 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
         run.set(InlineItalic, (style & SpanItalic) != 0);
         run.set(InlineStrike, (style & SpanStrike) != 0);
         run.set(InlineCode, (style & SpanCode) != 0);
+        run.set(InlineSup, (style & SpanSup) != 0);
+        run.set(InlineSub, (style & SpanSub) != 0);
         run.href = href;
+
+        // A FOOTNOTE REFERENCE: the document shows the id, the file gets
+        // `[^id]` — the run is rebuilt as written, the id from the property
+        // (the text of the fragment is the same id, but the property is what
+        // keeps two references apart; see FootnoteIdProperty).
+        if ((style & SpanFootnote) != 0) {
+            const QString id = format.stringProperty(FootnoteIdProperty);
+            piece.text.chop(text.size());
+            run.start = int32_t(piece.text.size());
+            piece.text += QLatin1String("[^");
+            piece.text += id.isEmpty() ? text : id;
+            piece.text += u']';
+            run.end = int32_t(piece.text.size());
+            run.flags = InlineFootnote;
+            run.href.clear();
+            piece.runs.push_back(std::move(run));
+            continue;
+        }
 
         // Подпись картинки плоская по построению: правки могли домешать в
         // формат другие биты — здесь они гасятся, иначе вышло бы то, что файл
@@ -1820,7 +1894,7 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
                 piece.checked = style.checked;
                 piece.listMark = char16_t(format.intProperty(ListMarkProperty));
             }
-            if (piece.kind == Kind::Code)
+            if (piece.kind == Kind::Code || piece.kind == Kind::Footnote)
                 piece.info = format.stringProperty(InfoProperty);
         }
         // Разметку внутри блока кода не читаем: содержимое там буквальное.

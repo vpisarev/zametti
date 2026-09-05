@@ -52,6 +52,14 @@ enum class Kind : uint8_t {
     // пункта): сейчас это только законченный комментарий. Непонятый HTML
     // остаётся дословным куском, как и был.
     Html,
+    // A FOOTNOTE DEFINITION, `[^id]: text` (books, brief 18): the id lives in
+    // `info`, the text is the body; continuation lines of the body are
+    // indented by four spaces in the file and joined with '\n' here. A block
+    // of its own, not a paragraph: md4c swallows a one-word definition as a
+    // link reference definition, so the reader recognises these itself (see
+    // maskFootnotes / liftFootnotes in markdown_reader.cpp). The reference in
+    // the text, `[^id]`, is an inline run (InlineFootnote), not a block.
+    Footnote,
 };
 
 // Вид понятого HTML-блока.
@@ -146,14 +154,20 @@ inline bool wouldMerge(Kind previousKind, bool previousRaw, bool previousClosedC
     // бывает setext-подчёркиванием — замерено для абзаца, пункта, цитаты,
     // заголовка, комментария и второго разделителя. Ровно ради этого канон и
     // выбрал "___", а не "---".
-    if (nextKind != Kind::Paragraph) return false;
+    // A footnote definition is a paragraph as far as md4c is concerned: the
+    // line after it without a blank line is its lazy continuation, and a
+    // definition after a paragraph, a quote or an item continues THEM. Two
+    // definitions in a row would read as one — hence a blank line between.
+    if (nextKind != Kind::Paragraph && nextKind != Kind::Footnote) return false;
     return previousKind == Kind::Paragraph || previousKind == Kind::Quote ||
-           isList(previousKind);
+           previousKind == Kind::Footnote || isList(previousKind);
 }
 
 // Начертание куска строки. Битами, а не полями: признаки перечислены в одном
 // месте, а кусок строки остаётся мелким.
-enum InlineFlag : uint8_t {
+// Sixteen bits since brief 18 (superscript, subscript, footnote): the eight
+// bits below were all taken.
+enum InlineFlag : uint16_t {
     InlineBold    = 1u << 0,
     InlineItalic  = 1u << 1,
     InlineStrike  = 1u << 2,
@@ -171,6 +185,16 @@ enum InlineFlag : uint8_t {
     // её литерально и не наращивает косые, даже если запись случится в
     // раскрытом виде). В файле бита нет: читатель раскрытых не порождает.
     InlineMathOpen = 1u << 7,
+    // Superscript and subscript: `<sup>…</sup>` / `<sub>…</sub>` — the one
+    // form of them GitHub renders; CommonMark has no syntax of its own, and
+    // Pandoc's `^…^`/`~…~` would collide with md4c's tildes. Combine with
+    // bold, italic, strike and a link like any other style.
+    InlineSup     = 1u << 8,
+    InlineSub     = 1u << 9,
+    // A footnote reference, `[^id]`: the text of the run is the reference AS
+    // WRITTEN (brackets, caret, id), the document shows only the id as a
+    // superscript. Atomic: combines with no other markup, like a formula.
+    InlineFootnote = 1u << 10,
 };
 
 }  // namespace zametti
