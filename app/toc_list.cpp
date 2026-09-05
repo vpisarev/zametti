@@ -80,6 +80,23 @@ void TocList::open(std::shared_ptr<ZNote> note, int currentBlock) {
         auto* item = new QListWidgetItem(QStringLiteral("no headings"), list_);
         item->setFlags(Qt::NoItemFlags);
     }
+    // THE BOOKMARKS UNDER THE HEADINGS (brief 18): the note's own marks, by
+    // the paragraph's first words (or the name given); a lost one — grey,
+    // not to be chosen.
+    if (note_ != nullptr && !note_->bookmarks().empty()) {
+        auto* head = new QListWidgetItem(QStringLiteral("— bookmarks —"), list_);
+        head->setFlags(Qt::NoItemFlags);
+        for (const NoteBookmarks::Anchor& a : note_->bookmarks().anchors()) {
+            const QString text = a.entry.name.isEmpty() ? a.entry.snippet : a.entry.name;
+            auto* item = new QListWidgetItem(QStringLiteral("\u2691 ") + text, list_);
+            if (a.lost()) {
+                item->setFlags(Qt::NoItemFlags);
+                item->setText(item->text() + QStringLiteral("  (not found)"));
+            } else {
+                item->setData(Qt::UserRole, a.block());
+            }
+        }
+    }
     place();
     show();
     if (current >= 0) list_->setCurrentRow(current);

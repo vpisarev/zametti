@@ -147,6 +147,14 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     bind(settings().editor().makeCommentKey(),
          [](ZDocument& note, QTextCursor& at) { return note.toggleComment(at); });
 
+    // Bookmarks (brief 18): on the paragraph under the caret.
+    for (const QKeySequence& keys : keySequencesOf(settings().editor().bookmarkKey())) {
+        auto* shortcut = new QShortcut(keys, this);
+        shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(shortcut, &QShortcut::activated, this,
+                [this] { toggleBookmark(textCursor().blockNumber()); });
+    }
+
     autosave_.setSingleShot(true);
     connect(&autosave_, &QTimer::timeout, this, [this] {
         // РАСКРЫТАЯ ТАБЛИЦА ПОД КАРЕТКОЙ — автосохранение ЖДЁТ выхода из правки:
@@ -521,6 +529,12 @@ void NoteEditor::installNote(std::shared_ptr<ZNote> note) {
     pressedAnchor_.clear();
     // Найденное приехало вместе с заметкой (кэш поиска) — показать его.
     if (!note_->search().empty()) showMatchHighlights();
+    // The bookmarks of the note, found again by their text (brief 18): one
+    // walk over the blocks, at every open — the file may have changed on disk.
+    if (storage_ != nullptr)
+        note_->bookmarks().resolve(storage_->bookmarks().forNote(note_->id()), note_->doc());
+    else
+        note_->bookmarks().clear();
 
     // Таймеры перенастраиваются под новую заметку. Отложенный снимок — её
     // свойство и приехал вместе с ней; висящий от прошлой заметки таймер
@@ -1407,6 +1421,9 @@ void NoteEditor::landAfterBuild(int cursor, const ViewAnchor& anchor, bool stats
     // Сборка — не правка: подметать за ней нечего, а область от неё вышла бы
     // во весь документ и утащила бы следующую уборку на полный проход.
     current_.dirty = QTextCursor();
+    // A full rebuild sent every cursor to zero: the bookmarks find their
+    // paragraphs again by text.
+    note_->bookmarks().repair(note_->doc());
 
     QTextCursor place(document());
     place.setPosition(qBound(0, cursor, document()->characterCount() - 1));
@@ -1643,6 +1660,13 @@ void NoteEditor::mouseDoubleClickEvent(QMouseEvent* event) {
     // По рамке — молча: первый щелчок уже переключил задачу, а выделять слово
     // под рамкой человек не собирался.
     if (checkboxUnder(*event).isValid()) return;
+    // IN THE LEFT MARGIN — a bookmark on the paragraph (brief 18): set or
+    // taken off, in any state of the lock; the note's text is not touched.
+    if (const int block = marginBlockAt(event->position()); block >= 0 && storage_ != nullptr) {
+        toggleBookmark(block);
+        event->accept();
+        return;
+    }
 
     // ПО КАРТИНКЕ (решение владельца, 05.09.2026): смотрят снимки чаще, чем
     // правят подписи, — двойной щелчок по СНИМКУ просит полноэкранный
@@ -3326,6 +3350,14 @@ void NoteEditor::save(bool interactive, bool force) {
         // заново — на каждое автосохранение.
         note_->markWritten(outcome.digest, outcome.written);
         watchFile();
+        // THE BOOKMARKS HEAL WITH THE SAVE (brief 18): snippet, heading and
+        // line are rewritten from where each anchor is now; only the changed
+        // records go to the store's file.
+        if (storage_ != nullptr) {
+            for (const ZBookmarks::Entry& entry :
+                 note_->bookmarks().healed(note_->doc(), store::isoNow()))
+                storage_->setBookmark(entry);
+        }
 
         // Файл может прочитаться богаче документа: голую ссылку человек набирает
         // текстом, а разбор делает из неё ссылку. Догоняем — иначе то, что на
@@ -3488,6 +3520,37 @@ bool NoteEditor::caretInOpenObject() const {
     if (kindOf(block) != Kind::Paragraph) return false;
     const BlockFormulaRef ref = blockFormulaRef(block);
     return ref.valid && ref.display;
+}
+
+// --- bookmarks (brief 18) ------------------------------------------------------
+
+bool NoteEditor::blockBookmarked(int block) const {
+    return note_ != nullptr && note_->bookmarks().at(block) != nullptr;
+}
+
+void NoteEditor::toggleBookmark(int block) {
+    if (note_ == nullptr || storage_ == nullptr || !note_->hasPath()) return;
+    if (block < 0 || block >= document()->blockCount()) return;
+    NoteBookmarks& marks = note_->bookmarks();
+    QString error;
+    const QString now = store::isoNow();
+    if (const NoteBookmarks::Anchor* have = marks.at(block)) {
+        const QString id = have->entry.id;
+        if (!storage_->removeBookmark(id, now, &error))
+            std::fprintf(stderr, "bookmark not removed: %s\n", error.toUtf8().constData());
+        marks.drop(id);
+    } else {
+        const ZBookmarks::Entry made = marks.add(note_->doc(), note_->id(), block, now);
+        if (!storage_->setBookmark(made, &error))
+            std::fprintf(stderr, "bookmark not written: %s\n", error.toUtf8().constData());
+    }
+    viewport()->update();
+    emit bookmarksChanged();
+}
+
+int NoteEditor::stepBookmark(int direction, int fromBlock) const {
+    if (note_ == nullptr) return -1;
+    return direction > 0 ? note_->bookmarks().next(fromBlock) : note_->bookmarks().previous(fromBlock);
 }
 
 }  // namespace zametti

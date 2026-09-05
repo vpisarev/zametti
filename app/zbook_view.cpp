@@ -19,6 +19,8 @@ ZBookView::ZBookView(QWidget* parent) : QWidget(parent) {
         connect(page, &BookPage::jumpRequested, this, &ZBookView::jump);
         connect(page, &BookPage::revealRequested, this, &ZBookView::showLine);
         connect(page, &NoteView::zoomStepRequested, this, &ZBookView::zoomStepRequested);
+        connect(page, &BookPage::bookmarkToggleRequested, this, &ZBookView::bookmarkToggleRequested);
+        connect(page, &BookPage::bookmarkStepRequested, this, &ZBookView::bookmarkStepRequested);
         connect(page, &BookPage::activated, this, [this, i] { active_ = i; });
     }
     pages_[1]->hide();
@@ -180,6 +182,13 @@ void ZBookView::showLine(const PageStart& line) {
 
 void ZBookView::showBlock(int block) { showLine(PageStart{block, 0}); }
 
+bool ZBookView::blockOnSpread(int block) {
+    if (note_ == nullptr) return false;
+    int page = table_.pageOf(PageStart{block, 0});
+    if (shown_ == 2) page -= page % 2;
+    return page == first_;
+}
+
 void ZBookView::reclaim() {
     if (note_ == nullptr) return;
     pages_[0]->showNote(note_, /*lead=*/true);
@@ -211,6 +220,10 @@ void ZBookView::applyZoom(qreal zoom) {
 }
 
 qreal ZBookView::zoom() const { return pages_[0]->zoom(); }
+
+void ZBookView::refreshMarks() {
+    for (BookPage* page : pages_) page->viewport()->update();
+}
 
 void ZBookView::clearMatches() {
     for (BookPage* page : pages_) page->clearMatches();

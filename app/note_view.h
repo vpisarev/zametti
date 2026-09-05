@@ -253,6 +253,13 @@ public:
     // Показать блок в золотом сечении окна, поставив на него каретку — так ходит
     // F4 по изменениям.
     void showBlockInGolden(const QTextBlock& block);
+    // The block whose LEFT MARGIN is under the viewport point (a double click
+    // there sets or takes off a bookmark); -1 when the point is on the text
+    // or on nothing.
+    int marginBlockAt(const QPointF& viewportPos) const;
+    // Where the bookmark glyph of the block sits (document coordinates, given
+    // the block's rect): drawn and hit-tested by this one cell.
+    QRectF bookmarkCell(const QTextBlock& block, const QRectF& rect) const;
     QRectF caretRectInDocument() const;
 
     // ЗА ЧТО ДЕРЖИТСЯ ВИД, КОГДА ДОКУМЕНТ ПОД НИМ МЕНЯЕТСЯ: блок у верхней
@@ -462,6 +469,14 @@ protected:
     // and a page of the book keeps the reading width. Only applyContentWidth
     // asks; the baked side margin still comes from the document.
     virtual const ZDocStyle& columnStyle() const { return docStyle(); }
+    // BOOKMARKS IN THE LEFT MARGIN (brief 18). The view that holds the note
+    // says which blocks carry one; the glyph is drawn by paintBlockMargin's
+    // default and hit-tested by the same cell (one function for both).
+    virtual bool blockBookmarked(int block) const {
+        (void)block;
+        return false;
+    }
+    void paintBookmark(QPainter& painter, const QTextBlock& block, const QRectF& rect);
 
     // ХУК ПОЛЯ: зовётся из цикла отрисовки по КАЖДОМУ ВИДИМОМУ блоку, painter
     // уже в координатах документа, rect — прямоугольник блока. По умолчанию

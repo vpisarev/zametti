@@ -1,5 +1,6 @@
 #include "book_page.h"
 
+#include "key_binding.h"
 #include "settings.h"
 
 #include <QAbstractTextDocumentLayout>
@@ -145,10 +146,29 @@ void BookPage::revealInGolden(const QRectF& place) {
     emit revealRequested(lineAt(place.top()));
 }
 
+bool BookPage::blockBookmarked(int block) const {
+    return note_ != nullptr && note_->bookmarks().at(block) != nullptr;
+}
+
+void BookPage::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (const int block = marginBlockAt(event->position()); block >= 0 && note_ != nullptr) {
+        emit bookmarkToggleRequested(block);
+        event->accept();
+        return;
+    }
+    NoteView::mouseDoubleClickEvent(event);
+}
+
 bool BookPage::event(QEvent* event) {
     // The paging keys are ours before the window's shortcuts see them.
     if (event->type() == QEvent::ShortcutOverride) {
         auto* key = static_cast<QKeyEvent*>(event);
+        const ZSettings::Editor& keys = settings().editor();
+        if (keyEventMatches(*key, keys.bookmarkKey()) || keyEventMatches(*key, keys.nextBookmarkKey()) ||
+            keyEventMatches(*key, keys.previousBookmarkKey())) {
+            event->accept();
+            return true;
+        }
         switch (key->key()) {
             case Qt::Key_Space:
             case Qt::Key_Left:
@@ -172,6 +192,25 @@ bool BookPage::event(QEvent* event) {
 }
 
 void BookPage::keyPressEvent(QKeyEvent* event) {
+    {
+        const ZSettings::Editor& keys = settings().editor();
+        if (keyEventMatches(*event, keys.bookmarkKey())) {
+            // The page's first paragraph: the one whose beginning is on it.
+            emit bookmarkToggleRequested(start_.line > 0 ? start_.block + 1 : start_.block);
+            event->accept();
+            return;
+        }
+        if (keyEventMatches(*event, keys.nextBookmarkKey())) {
+            emit bookmarkStepRequested(+1);
+            event->accept();
+            return;
+        }
+        if (keyEventMatches(*event, keys.previousBookmarkKey())) {
+            emit bookmarkStepRequested(-1);
+            event->accept();
+            return;
+        }
+    }
     const Qt::KeyboardModifiers mods = event->modifiers() & ~Qt::KeypadModifier;
     const bool plain = mods == Qt::NoModifier;
     const bool shifted = mods == Qt::ShiftModifier;

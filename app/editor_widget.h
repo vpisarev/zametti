@@ -96,6 +96,13 @@ public:
     // note was built with (a book — with the reading style).
     const ZDocStyle& columnStyle() const override { return settings().style(); }
 
+    // BOOKMARKS (brief 18): set or take off on the block; the store's file is
+    // written at once, the note's anchors follow. The next / previous
+    // bookmarked block from the given one, -1 when none.
+    void toggleBookmark(int block);
+    int stepBookmark(int direction, int fromBlock) const;
+    bool blockBookmarked(int block) const override;
+
     // АРХИВНУЮ ЗАМЕТКУ ПОКАЗЫВАЕТ ВИД, А НЕ РЕДАКТОР. Тело её лежит в файле,
     // как у живой, поэтому и документ у неё обычный; но правится она только
     // после возврата из архива, и показывать её редактором значит обещать
@@ -335,6 +342,8 @@ signals:
     // The lock of the open note changed — put on, taken off, opened until the
     // next note or closed back. The toolbar's lock button follows it.
     void lockChanged();
+    // A bookmark was set or taken off (the reading pages and the ToC repaint).
+    void bookmarksChanged();
     // Ctrl+Z дошёл до дна цепочки отмены: дальше — слепки журнала. Режим
     // истории заводит не редактор, а контроллер (это и защита от случайного
     // глубокого отката: режим объявляет себя сам — баннером и заголовком).

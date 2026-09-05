@@ -63,11 +63,17 @@ signals:
     void activated();
     // A place must come into view (a search hit): the spread shows its page.
     void revealRequested(const PageStart& line);
+    // A bookmark on the block (a double click in the margin, the key on the
+    // page's first paragraph); a step to the next (+1) / previous (-1) one.
+    void bookmarkToggleRequested(int block);
+    void bookmarkStepRequested(int direction);
 
 protected:
     QFont zoomedBaseFont(qreal zoom) const override;
     int pagePadding() const override;
     const ZDocStyle& columnStyle() const override { return *reading_; }
+    bool blockBookmarked(int block) const override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     NoteSearch& searchCache() override;
     const NoteSearch& searchCache() const override;
     void revealInGolden(const QRectF& place) override;

@@ -10,6 +10,19 @@ ReadingController::ReadingController(NoteEditor& editor, ZBookView& view, QObjec
         if (active_) view_.clear();
     });
     connect(&editor_, &NoteEditor::fileChanged, this, [this](const QString&) { refill(); });
+    // BOOKMARKS FROM THE PAGES go through the editor — the owner of the note
+    // and the store; the pages only ask and repaint.
+    connect(&view_, &ZBookView::bookmarkToggleRequested, this,
+            [this](int block) { editor_.toggleBookmark(block); });
+    connect(&view_, &ZBookView::bookmarkStepRequested, this, [this](int direction) {
+        // From the spread's first line; forward, the marks still on this
+        // spread are skipped — "next" means the next one to turn to.
+        int block = editor_.stepBookmark(direction, view_.place().block);
+        while (block >= 0 && direction > 0 && view_.blockOnSpread(block))
+            block = editor_.stepBookmark(direction, block);
+        if (block >= 0) view_.showBlock(block);
+    });
+    connect(&editor_, &NoteEditor::bookmarksChanged, this, [this] { view_.refreshMarks(); });
 }
 
 bool ReadingController::enter() {

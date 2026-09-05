@@ -51,6 +51,8 @@ public:
     // Show the spread that holds the line.
     void showLine(const PageStart& line);
     void showBlock(int block);
+    // Is the block's beginning on the spread shown now.
+    bool blockOnSpread(int block);
     // Index of the left page (0-based) and the count (-1 while being counted).
     int currentPage() const { return first_; }
     int pageCount() const { return pages_.empty() ? -1 : table_.count(); }
@@ -64,6 +66,8 @@ public:
     void applyZoom(qreal zoom);
     qreal zoom() const;
     void clearMatches();
+    // The bookmarks changed: the glyphs in the margins repaint.
+    void refreshMarks();
 
     // Where the left page starts — for the app state.
     PageStart place() const { return anchor_; }
@@ -74,6 +78,8 @@ signals:
     // number (1-based), the count (-1 = not yet known), the percent read.
     void positionChanged(const QString& chapter, int page, int count, int percent);
     void zoomStepRequested(int delta);
+    void bookmarkToggleRequested(int block);
+    void bookmarkStepRequested(int direction);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;

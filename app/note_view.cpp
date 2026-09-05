@@ -2342,7 +2342,40 @@ void NoteView::clearMatches() {
     setObjectHighlights({});
 }
 
-void NoteView::paintBlockMargin(QPainter&, const QTextBlock&, const QRectF&) {}
+void NoteView::paintBlockMargin(QPainter& painter, const QTextBlock& block, const QRectF& rect) {
+    if (blockBookmarked(block.blockNumber())) paintBookmark(painter, block, rect);
+}
+
+QRectF NoteView::bookmarkCell(const QTextBlock& block, const QRectF& rect) const {
+    // The document's own left margin (the builder's side margin) is the
+    // gutter; the glyph sits in it against the block's first line.
+    const qreal gutter = document()->rootFrame()->frameFormat().leftMargin();
+    const qreal line = block.layout() != nullptr && block.layout()->lineCount() > 0
+                           ? block.layout()->lineAt(0).height()
+                           : rect.height();
+    const qreal side = qMin(gutter * 0.8, line);
+    return QRectF(rect.left() - gutter + (gutter - side) / 2.0, rect.top() + (line - side) / 2.0, side,
+                  side);
+}
+
+void NoteView::paintBookmark(QPainter& painter, const QTextBlock& block, const QRectF& rect) {
+    const QRectF cell = bookmarkCell(block, rect);
+    if (cell.width() < 4.0) return;
+    const QPixmap glyph = toolbarIcon(QStringLiteral("bookmark"), int(cell.width()),
+                                      docStyle().bookmarkColor(), devicePixelRatioF());
+    painter.drawPixmap(cell.topLeft(), glyph);
+}
+
+int NoteView::marginBlockAt(const QPointF& viewportPos) const {
+    if (document() == nullptr) return -1;
+    const qreal y = viewportPos.y() + verticalScrollBar()->value();
+    const QTextBlock block = blockAtHeight(y);
+    if (!block.isValid()) return -1;
+    const QRectF rect = document()->documentLayout()->blockBoundingRect(block);
+    if (y < rect.top() || y > rect.bottom()) return -1;
+    const qreal x = viewportPos.x() + horizontalScrollBar()->value();
+    return x < rect.left() ? block.blockNumber() : -1;
+}
 
 void NoteView::paintUnderlay(QPainter&, const QRectF&) {}
 
