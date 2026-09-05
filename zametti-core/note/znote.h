@@ -36,6 +36,7 @@
 #include "text_stats.h"
 #include "caret_spot.h"
 #include "derived.h"
+#include "note_bookmarks.h"
 #include "note_search.h"
 #include "journal.h"
 
@@ -267,6 +268,8 @@ public:
     // The outline of the document as it is now (recounted when the document
     // changed since the last ask).
     const std::vector<ZDocument::OutlineEntry>& outline();
+    NoteBookmarks& bookmarks() { return bookmarks_; }
+    const NoteBookmarks& bookmarks() const { return bookmarks_; }
     bool statsFresh() const { return stats_.freshFor(doc_.revision()); }
     // Считались и не сброшены вслух — даже если с тех пор правили. Нужно
     // тому, кто сообщает «числа устарели» ровно один раз, а не на каждую букву.
@@ -307,6 +310,9 @@ protected:
     QByteArray lastSaved_;
     std::shared_ptr<ZJournal> journal_ = std::make_shared<ZJournal>();
     NoteSearch search_;
+    // The bookmarks of the note while it is open (brief 18): cursors on the
+    // live document, resolved by the editor from the store's file.
+    NoteBookmarks bookmarks_;
     // The table of contents, by revision (brief 18): asked by the ToC list
     // and by the reading mode's status line; one walk when stale.
     Derived<std::vector<ZDocument::OutlineEntry>> outline_;

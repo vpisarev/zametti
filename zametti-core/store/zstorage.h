@@ -34,6 +34,7 @@
 #include "sort_order.h"
 #include "import_limits.h"
 #include "znote.h"
+#include "zbookmarks.h"
 #include "zsystem.h"
 
 #include <QDateTime>
@@ -218,6 +219,16 @@ public:
 
     const QString& root() const { return root_; }
     bool isStore() const { return store_; }
+
+    // --- bookmarks (brief 18) ------------------------------------------
+    // The store's bookmarks, read from bookmarks.json on the first ask (no
+    // file — none, not an error). Changes go through setBookmark /
+    // removeBookmark, which write the file at once: a bookmark is a small
+    // explicit act of the person, and the file is small.
+    const ZBookmarks& bookmarks();
+    bool setBookmark(const ZBookmarks::Entry& entry, QString* error = nullptr);
+    bool removeBookmark(const QString& id, const QString& updatedIso, QString* error = nullptr);
+    QString bookmarksPath() const;
 
     // ЗАВЕСТИ ПУСТОЕ ХРАНИЛИЩЕ в root(): каталог, служебные ".zametti/" и
     // ".rescue/" (побитые файлы редактора; на сервер не синхронизируется),
@@ -807,6 +818,11 @@ protected:
     // setCloud; владение — shared_ptr, как всюду в проекте.
     std::shared_ptr<CloudStore> cloud_;
     std::shared_ptr<BlobCipher> cipher_;
+    // THE BOOKMARKS OF THE STORE (brief 18): <root>/bookmarks.json, read on
+    // the first ask, written whole and atomically on every change. Plain
+    // data, released with the catalogue — nothing to order in the destructor.
+    ZBookmarks bookmarks_;
+    bool bookmarksLoaded_ = false;
 
     // Записать идентичность целиком (атомарно). Зовётся только отсюда.
     bool writeIdentity(const Identity& identity, QString* error);

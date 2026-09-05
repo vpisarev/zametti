@@ -1557,6 +1557,59 @@ bool ZStorage::writeIdentity(const Identity& identity, QString* error) {
     return true;
 }
 
+// --- bookmarks (brief 18) ----------------------------------------------------
+QString ZStorage::bookmarksPath() const {
+    return QDir(root_).filePath(QLatin1String(ZBookmarks::kFile));
+}
+
+const ZBookmarks& ZStorage::bookmarks() {
+    if (bookmarksLoaded_) return bookmarks_;
+    bookmarksLoaded_ = true;
+    bookmarks_ = ZBookmarks{};
+    QFile file(bookmarksPath());
+    if (!file.exists() || !file.open(QIODevice::ReadOnly)) return bookmarks_;
+    const QByteArray bytes = file.readAll();
+    file.close();
+    QString error;
+    ZBookmarks read;
+    if (read.parse(bytes, &error)) {
+        bookmarks_ = std::move(read);
+    } else {
+        // A broken file is not thrown away: nothing is written over it until
+        // the person sets a bookmark, and the log says why the old ones are
+        // not shown.
+        std::fprintf(stderr, "bookmarks: %s\n", error.toUtf8().constData());
+    }
+    return bookmarks_;
+}
+
+bool ZStorage::setBookmark(const ZBookmarks::Entry& entry, QString* error) {
+    (void)bookmarks();
+    bookmarks_.set(entry);
+    QSaveFile file(bookmarksPath());
+    if (!file.open(QIODevice::WriteOnly)) {
+        if (error != nullptr)
+            *error = QStringLiteral("cannot write %1: %2")
+                         .arg(QLatin1String(ZBookmarks::kFile), file.errorString());
+        return false;
+    }
+    file.write(bookmarks_.toBytes());
+    if (!file.commit()) {
+        if (error != nullptr)
+            *error = QStringLiteral("cannot write %1: %2")
+                         .arg(QLatin1String(ZBookmarks::kFile), file.errorString());
+        return false;
+    }
+    return true;
+}
+
+bool ZStorage::removeBookmark(const QString& id, const QString& updatedIso, QString* error) {
+    (void)bookmarks();
+    if (!bookmarks_.remove(id, updatedIso)) return false;
+    const ZBookmarks::Entry* stone = bookmarks_.find(id);
+    return stone != nullptr && setBookmark(*stone, error);
+}
+
 // --- корневая заметка -------------------------------------------------------
 
 bool ZStorage::isRootNote(const QString& id) const {

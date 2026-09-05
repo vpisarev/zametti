@@ -19,6 +19,7 @@ not in the file system.
 ```
 store/
     zametti.json               the store identity: who this store is
+    bookmarks.json             the bookmarks of the store, one file for all notes
     01n6cqevh7bbfr0a.md        a note
     01n6cqevsd7v5edf.md        a note
     01jd7f0kq2m8xab7.webp      an attachment
@@ -38,6 +39,7 @@ Reserved names and their fate under synchronization:
 | name | what it is | synchronized |
 |---|---|---|
 | `zametti.json` | the store identity | **yes**: in the cloud it is the manifest |
+| `bookmarks.json` | the bookmarks (books, brief 18) | not yet: local; the format merges (see below) |
 | `history/` | edit history | **yes**: it is data, not a cache |
 | `.zametti/` | store state | no |
 | `.rescue/` | rescued buffers | no (dot-prefixed, local) |
@@ -97,6 +99,41 @@ store belongs to the notes, not to the program.
 
 Anything else in the root is trouble, and `verify` will say so: a foreign
 directory, a foreign file, a file with a malformed name.
+
+### `bookmarks.json` — the bookmarks
+
+One file for the whole store (a bookmark must not rewrite a multi-megabyte
+book), human-readable JSON:
+
+```
+{
+    "version": 1,
+    "bookmarks": [
+        {
+            "id": "01n9s0h3k2q8xw",          a fresh note-style id
+            "note": "01n9rs2hwgtqe2",        the note
+            "snippet": "Дед Десять процентов пощёлкал линя по",   the paragraph's first 40 characters, whitespace folded
+            "heading": "Золотой линь",       the heading above — a hint
+            "line": 412,                     the source line — a hint
+            "name": "",                      what the person called it, optional
+            "created": "2026-09-05T22:10:00+03:00",
+            "updated": "2026-09-05T22:10:00+03:00",
+            "deleted": false                 a tombstone when true; the record stays
+        }
+    ]
+}
+```
+
+The anchor is the **text** (`snippet`), never the line: text survives edits
+above and below it. On opening a note the snippet is looked up among its
+paragraphs (the candidate nearest to `line` when it occurs more than once); a
+bookmark whose paragraph is gone is *lost* — shown grey, only to be removed.
+On every save of the note `snippet`, `heading` and `line` are rewritten from
+where the bookmark is now, so the anchors heal themselves. Removing a bookmark
+leaves a tombstone (`deleted: true`), and two copies of the file merge by
+`id` with the later `updated` winning — a deletion never comes back to life.
+Keys this build does not know are kept and written back. No file — no
+bookmarks; a broken file is left alone and reported to stderr.
 
 ---
 

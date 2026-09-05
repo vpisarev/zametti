@@ -62,6 +62,8 @@ add_library(zametti-core STATIC
     store/archive.cpp
     store/lost_found.cpp
     store/store_identity.cpp
+    store/zbookmarks.h          store/zbookmarks.cpp
+    note/note_bookmarks.h       note/note_bookmarks.cpp
     store/device_clock.cpp
     store/sync_ops.cpp
     store/sync_ledger.h        store/sync_ledger.cpp

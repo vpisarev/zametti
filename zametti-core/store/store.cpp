@@ -428,6 +428,8 @@ bool ZStorage::verify(Report& report) {
         // Идентичность хранилища — свой файл, а не заметка: имя у него
         // человеческое, и чужим он не считается.
         if (name == QLatin1String(Identity::kFile)) continue;
+        // The bookmarks of the store (brief 18) — ours, by name.
+        if (name == QLatin1String(ZBookmarks::kFile)) continue;
         const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
         const QString stem = dot > 0 ? name.left(dot) : name;
         if (dot <= 0 || !isValidNoteId(toUtf8(stem))) {

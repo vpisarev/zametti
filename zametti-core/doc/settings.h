@@ -725,6 +725,11 @@ struct ZSettings {
         // The table of contents (brief 18): the list of headings at the right
         // edge; a choice or Esc hides it again. Ctrl+N is taken by "New note".
         ZM_SETTING_PLAIN(QString, tocKey, TocKey, QStringLiteral("Ctrl+Shift+O"))
+        // Bookmarks (brief 18): set or take off on the paragraph; walk them
+        // in the reading mode (outside it Ctrl+] / Ctrl+[ walk the history diff).
+        ZM_SETTING_PLAIN(QString, bookmarkKey, BookmarkKey, QStringLiteral("Ctrl+Shift+B"))
+        ZM_SETTING_PLAIN(QString, nextBookmarkKey, NextBookmarkKey, QStringLiteral("Ctrl+]"))
+        ZM_SETTING_PLAIN(QString, previousBookmarkKey, PreviousBookmarkKey, QStringLiteral("Ctrl+["))
         ZM_SETTING_PLAIN(QString, moveUpKey, MoveUpKey, QStringLiteral("Ctrl+Up"))
         ZM_SETTING_PLAIN(QString, moveDownKey, MoveDownKey, QStringLiteral("Ctrl+Down"))
         // Смена рода блоков — по знаку, который на клавише: звёздочка живёт на
