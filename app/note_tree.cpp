@@ -198,6 +198,16 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
         node->id = id;
         node->title = meta->title();
         node->snippet = meta->snippet();
+        // A BOOK'S CARD SAYS WHO AND WHEN, not how the text begins (brief 18):
+        // the first lines of a book are its title page again. The line goes
+        // where the snippet goes — same slot, same font, nothing new to draw.
+        if (meta->book()) {
+            QStringList card;
+            if (!meta->author().isEmpty()) card.append(meta->author());
+            if (!meta->year().isEmpty()) card.append(meta->year());
+            if (!card.isEmpty()) node->snippet = card.join(QStringLiteral(" · "));
+            node->iconName = QStringLiteral("book-open-text");
+        }
         node->path = meta->path();
         node->modified = meta->modified();
         node->created = meta->created();

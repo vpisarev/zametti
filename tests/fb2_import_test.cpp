@@ -15,6 +15,8 @@
 //     definition to match. Timings are printed for the report.
 
 #include "fb2_book.h"
+#include "note_tree.h"
+#include "scratch_files.h"
 #include "znote.h"
 #include "zstorage.h"
 #include "test_util.h"
@@ -198,6 +200,19 @@ void checkSample() {
     for (const QString& line : verify.lines)
         if (line.startsWith(QStringLiteral("PROBLEM"))) std::printf("  %s\n", line.toUtf8().constData());
     ZT_EQ("verify без бед", "0", n(verify.problems));
+
+    // THE CARD IN THE LIST: a book says who and when where a note shows how
+    // its text begins. The tree model reads the store anew (the lock file of
+    // the store above goes first, as tree_test does).
+    {
+        zt::dropFile(store.dir.path(), store.dir.path() + QStringLiteral("/.zametti/store.lock"));
+        zametti::NoteTreeModel model(store.dir.path());
+        ZT_TRUE("модель дерева видит хранилище", model.isStore());
+        const zametti::NoteRow row = model.rowOf(id);
+        ZT_EQ("карточка книги — автор и год", "Иван Петрович Пробников, соавтор · 2001",
+              row.snippet.toStdString());
+        ZT_EQ("а заголовок — название", "Пробная книга: всё, что умеет fb2", row.title.toStdString());
+    }
 }
 
 void checkCorpus() {
