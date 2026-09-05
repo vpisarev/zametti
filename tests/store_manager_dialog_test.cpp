@@ -11,6 +11,7 @@
 #include "store_manager_dialog.h"
 
 #include "keyfile.h"
+#include "note_id.h"
 #include "secret_store.h"
 #include "zstorage.h"
 #include "zstorage_manager.h"
@@ -429,6 +430,68 @@ void checkSealFreshCloudAndChangePassword() {
 
 }  // namespace
 
+// ЖИВОЙ ДЕФЕКТ ВЛАДЕЛЬЦА (05.09.2026, .testdata/zametti_storages_dialog_defect.png):
+// у хранилища с заметками факт занимает две строки — суммы и «modified …», — и
+// вторая строка на маке пропечатывалась наполовину: ярлыку доставалась ровно
+// его минимальная высота (две строки), а верхний отступ факта (formStep)
+// съедал половину нижней. Прежние наборы смотрели только на пустые хранилища,
+// где факт однострочный, и дефект не видели. Проверка — по размеру, а не по
+// снимку: ярлык обязан получить не меньше, чем ему нужно на отступ и две
+// строки, и его sizeHint обязан это просить.
+void checkFactLinesNotClipped() {
+    zt::MiniStore home;
+    const QString root = home.root() + QStringLiteral("/склад");
+    QDir().mkpath(root);
+    QString err;
+    ZT_TRUE(("хранилище завелось: " + err.toStdString()).c_str(),
+            ZStorage(root).init(&err));
+    // Одна заметка с валидным id — сводка считает её и ставит дату правки.
+    {
+        QFile note(root + QLatin1Char('/') +
+                   QString::fromStdString(zametti::newNoteId()) + QStringLiteral(".md"));
+        ZT_TRUE("заметка записана", note.open(QIODevice::WriteOnly));
+        note.write("# Заметка\n\nтекст\n");
+    }
+    ZStorageManager stores(nullptr, kTiny);
+    ZStorage::Config entry;
+    entry.root = root;
+    stores.remember(entry);
+    auto secrets = std::make_shared<FakeSecrets>();
+
+    TestDialog dialog(nullptr, stores, secrets);
+    dialog.show();
+    QTest::qWait(60);
+    auto* local = dialog.findChild<QLabel*>(QStringLiteral("localLine"));
+    ZT_TRUE(("факт в две строки: " + s(local->text())).c_str(),
+            local->text().contains(QStringLiteral("modified")));
+    const int need =
+        local->contentsMargins().top() + 2 * local->fontMetrics().lineSpacing();
+    ZT_TRUE(("sizeHint факта просит отступ и две строки: " +
+             std::to_string(local->sizeHint().height()) + " < " + std::to_string(need))
+                .c_str(),
+            local->sizeHint().height() >= need);
+    ZT_TRUE(("факту дали отступ и две строки: " + std::to_string(local->height()) +
+             " < " + std::to_string(need))
+                .c_str(),
+            local->height() >= need);
+    dialog.grab().save(
+        QDir(shotDir()).filePath(QStringLiteral("store-manager-две-строки.png")));
+    // ОКНО НИЖЕ, ЧЕМ ПРОСИТ ФОРМА (у владельца так выходит от его кегля: форма
+    // не влезает в стартовые 560 точек). Единственная строка формы, которой
+    // есть куда сжиматься, — факт, и он обязан сжаться не ниже двух строк с
+    // отступом, а не ровно до двух строк без отступа.
+    dialog.resize(900, 400);
+    QTest::qWait(60);
+    std::printf("  факт при высоте 400: height=%d min=%d hint=%d need=%d\n", local->height(),
+                local->minimumHeight(), local->sizeHint().height(), need);
+    ZT_TRUE(("в низком окне факту всё равно хватает: " + std::to_string(local->height()) +
+             " < " + std::to_string(need))
+                .c_str(),
+            local->height() >= need);
+    dialog.grab().save(
+        QDir(shotDir()).filePath(QStringLiteral("store-manager-низкое-окно.png")));
+}
+
 void checkEyeToggles() {
     // Глаз пароля: заглушка из связки наполняется НАСТОЯЩИМ паролем по явному
     // жесту; набранное показывается как есть, без чтения связки; отказ связки
@@ -489,6 +552,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkOpenAppliesPendingCloud();
     checkSealFreshCloudAndChangePassword();
     checkEyeToggles();
+    checkFactLinesNotClipped();
     return zt::report("store_manager_dialog");
 }
 
