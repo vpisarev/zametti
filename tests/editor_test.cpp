@@ -1977,10 +1977,12 @@ void checkCheckboxScale() {
     check(textBig > textOne, "текст пункта отодвинулся под крупную рамку");
 }
 
-// ВЫСОТА СТРОКИ ЗАДАЧИ РАСТЁТ С РАМКОЙ (просьба владельца 05.09.2026): шаг
-// между соседними задачами при checkboxScale 1.2 больше шага при 1.0 ровно на
-// рост стороны рамки — просвет между рамками прежний. Мельче единицы строка
-// не ужимается; буллеты от ручки не зависят.
+// ВЫСОТА СТРОКИ ЗАДАЧИ (просьбы владельца 05.09.2026): пока рамка с наименьшим
+// просветом (checkboxLineGap × сторона) влезает в обычную строку списка,
+// задачи стоят так же плотно, как буллеты; когда перестаёт — строка растёт
+// ровно настолько, чтобы просвет остался, и не больше («излишняя пустота»
+// первой редакции на 1.4). Мельче единицы строка не ужимается; буллеты от
+// ручки не зависят.
 void checkCheckboxLineHeight() {
     const zametti::ZSettings saved = zametti::settings();
     struct Restore {
@@ -1992,7 +1994,7 @@ void checkCheckboxLineHeight() {
         "чекбокс-высота.md",
         QStringLiteral("- [ ] первая\n- [x] вторая\n\n- буллет\n- ещё буллет\n"));
     struct Pitch {
-        qreal task = 0, bullet = 0, side = 0;
+        qreal task = 0, bullet = 0, side = 0, air = 0;
     };
     const auto measure = [&path](qreal scale) {
         zametti::mutableSettingsForTests().style().setCheckboxScale(scale);
@@ -2010,15 +2012,25 @@ void checkCheckboxLineHeight() {
         Pitch out;
         out.task = top(1) - top(0);
         out.bullet = top(4) - top(3);
-        out.side = zametti::checkboxRect(doc->findBlockByNumber(0)).height();
+        const QRectF first = zametti::checkboxRect(doc->findBlockByNumber(0));
+        const QRectF second = zametti::checkboxRect(doc->findBlockByNumber(1));
+        out.side = first.height();
+        out.air = second.top() - first.bottom();
         return out;
     };
+    const qreal gap = zametti::settings().style().checkboxLineGap();
     const Pitch one = measure(1.0);
-    const Pitch big = measure(1.2);
+    const Pitch big = measure(1.4);
     const Pitch small = measure(0.8);
-    check(one.side > 0 && big.side > one.side, "рамка на 1.2 крупнее");
-    check(std::abs((big.task - one.task) - (big.side - one.side)) < 1.0,
-          "шаг между задачами вырос ровно на рост рамки");
+    check(one.side > 0 && big.side > one.side, "рамка на 1.4 крупнее");
+    // На 1.0 рамка с просветом влезает в строку списка — ритм тот же, что у буллетов.
+    check(std::abs(one.task - one.bullet) < 0.01, "на 1.0 задачи стоят как буллеты");
+    // На 1.4 рамки не смыкаются: просвет не меньше заданной доли стороны...
+    check(big.air >= gap * big.side - 0.5,
+          "на 1.4 между рамками соседних задач остаётся просвет");
+    // ...и строка не выше, чем нужно ровно под рамку с просветом.
+    check(big.task <= qMax(big.bullet, big.side * (1.0 + gap)) + 1.0,
+          "на 1.4 строка задачи не выше, чем нужно под рамку с просветом");
     check(std::abs(big.bullet - one.bullet) < 0.01, "шаг между буллетами не изменился");
     check(std::abs(small.task - one.task) < 0.01, "рамка мельче чернил строку не ужимает");
 }
