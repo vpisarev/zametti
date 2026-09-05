@@ -51,6 +51,7 @@ add_executable(zametti-tests
     # --- хранилище и журнал ---
     store_test.cpp
     store_identity_test.cpp
+    bookmarks_test.cpp
     zsystem_test.cpp
     root_note_test.cpp
     journal_test.cpp

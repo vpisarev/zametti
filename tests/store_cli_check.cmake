@@ -51,6 +51,9 @@ zs(0 "\\.md" new --root "${store}")
 zs(0 "storeId:" root init --root "${store}")
 zs(0 "storeId:" root show --root "${store}")
 zs(0 "" verify --root "${store}")
+# The bookmarks file (brief 18) is the store's own: verify has nothing to say.
+file(WRITE "${store}/bookmarks.json" "{ \"version\": 1, \"bookmarks\": [] }\n")
+zs(0 "" verify --root "${store}")
 
 # Прореживание на живом хранилище: ходит по журналам и обязано молча
 # согласиться, что чистить нечего.
