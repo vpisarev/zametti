@@ -9,6 +9,7 @@
 #include "text_stats.h"
 
 #include <QTextBlock>
+#include <QTextFragment>
 #include <algorithm>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -237,12 +238,29 @@ NoteStats ZDocument::getStats() const { return documentStats(d_->text); }
 
 int ZDocument::blockCount() const { return d_->text.blockCount(); }
 
+namespace {
+// A heading as a name: its text without the footnote references (`[^id]`
+// shows its id in superscript inside the block's text, and "ЭПОСn_1" is not
+// a chapter's name) and without object placeholders.
+QString headingName(const QTextBlock& block) {
+    QString out;
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid()) continue;
+        if (fragment.charFormat().hasProperty(FootnoteIdProperty)) continue;
+        out += fragment.text();
+    }
+    out.remove(QChar::ObjectReplacementCharacter);
+    return out.simplified();
+}
+}  // namespace
+
 QString ZDocument::headingAbove(int index) const {
     for (QTextBlock block = d_->text.findBlockByNumber(index); block.isValid();
          block = block.previous()) {
         const QTextBlockFormat format = block.blockFormat();
         if (format.boolProperty(RawProperty)) continue;
-        if (format.intProperty(KindProperty) == int(Kind::Heading)) return block.text();
+        if (format.intProperty(KindProperty) == int(Kind::Heading)) return headingName(block);
     }
     return {};
 }
@@ -256,7 +274,7 @@ std::vector<ZDocument::OutlineEntry> ZDocument::outline() const {
         OutlineEntry entry;
         entry.block = block.blockNumber();
         entry.level = std::clamp(format.headingLevel(), 1, 6);
-        entry.text = block.text();
+        entry.text = headingName(block);
         out.push_back(std::move(entry));
     }
     return out;
