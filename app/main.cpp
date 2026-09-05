@@ -2511,8 +2511,18 @@ int main(int argc, char** argv) {
     for (const QKeySequence& keys :
          zametti::keySequencesOf(zametti::settings().editor().markdownModeKey()))
         shortcut(keys, [&] { markdown.toggle(); });
-    shortcut(QKeySequence(Qt::Key_F3), [&] { stepSearch(1); });
-    shortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), [&] { stepSearch(-1); });
+    // Ходьба по находкам — сочетания из настроек (shortcuts.findNext /
+    // findPrevious: F3 и Ctrl+G, на маке Cmd+G); подсказки кнопок панели —
+    // из того же списка, чтобы панель не обещала клавишу, которой нет.
+    {
+        const QList<QKeySequence> next =
+            zametti::keySequencesOf(zametti::settings().editor().findNextKey());
+        const QList<QKeySequence> previous =
+            zametti::keySequencesOf(zametti::settings().editor().findPreviousKey());
+        for (const QKeySequence& keys : next) shortcut(keys, [&] { stepSearch(1); });
+        for (const QKeySequence& keys : previous) shortcut(keys, [&] { stepSearch(-1); });
+        findBar.setStepKeys(next, previous);
+    }
 
     // Клавиши режима истории (ходьба по изменениям) ставит контроллер — он же
     // зовётся из набора.

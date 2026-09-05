@@ -704,6 +704,14 @@ struct ZSettings {
         // маковских программ. Оба и записаны: на каждой системе сработает своё.
         ZM_SETTING_PLAIN(QString, fullscreenKey, FullscreenKey,
                          QStringLiteral("F11; Ctrl+Meta+F"))
+        // ХОДЬБА ПО НАХОДКАМ ПОИСКА. Список через точку с запятой, как у
+        // fullscreenKey: F3 — привычка Windows и Linux, Ctrl+G на маке Qt
+        // показывает и слушает как Cmd+G — штатное «Find Next» всех маковских
+        // программ (просьба владельца, 05.09.2026). На каждой системе
+        // сработает своё; подсказки кнопок панели поиска берут список отсюда.
+        ZM_SETTING_PLAIN(QString, findNextKey, FindNextKey, QStringLiteral("F3; Ctrl+G"))
+        ZM_SETTING_PLAIN(QString, findPreviousKey, FindPreviousKey,
+                         QStringLiteral("Shift+F3; Ctrl+Shift+G"))
         ZM_SETTING_PLAIN(QString, makeCommentKey, MakeCommentKey, QStringLiteral("Ctrl+Shift+C"))
 
         // Tab ставит ПРОБЕЛЫ до следующего стопа, а не знак табуляции; этой же

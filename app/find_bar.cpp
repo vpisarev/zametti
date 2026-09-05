@@ -282,6 +282,18 @@ bool FindBar::eventFilter(QObject* watched, QEvent* event) {
     return QWidget::eventFilter(watched, event);
 }
 
+void FindBar::setStepKeys(const QList<QKeySequence>& next,
+                          const QList<QKeySequence>& previous) {
+    const auto hint = [](const QString& what, const QList<QKeySequence>& keys) {
+        QStringList names;
+        for (const QKeySequence& k : keys) names << k.toString(QKeySequence::NativeText);
+        return names.isEmpty() ? what : what + QStringLiteral(" (") + names.join(QStringLiteral(", ")) +
+                                            QLatin1Char(')');
+    };
+    nextButton_->setToolTip(hint(QStringLiteral("Next"), next));
+    previousButton_->setToolTip(hint(QStringLiteral("Previous"), previous));
+}
+
 void FindBar::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Escape) {
         rememberQuery();

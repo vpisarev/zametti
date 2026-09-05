@@ -13,7 +13,9 @@
 #ifndef ZAMETTI_FIND_BAR_H
 #define ZAMETTI_FIND_BAR_H
 
+#include <QKeySequence>
 #include <QLabel>
+#include <QList>
 #include <QLineEdit>
 #include <QToolButton>
 #include <QWidget>
@@ -50,6 +52,10 @@ public:
     void setQueryUsable(bool usable);
     // Счётчик «3/17» или пояснение вроде «ничего не найдено».
     void setStatus(const QString& text);
+    // Сочетания ходьбы по находкам — для подсказок кнопок «‹» и «›». Сами
+    // сочетания ставит окно (они его, а не панели); панель лишь говорит,
+    // какие они, в записи своей системы (на маке — ⌘G).
+    void setStepKeys(const QList<QKeySequence>& next, const QList<QKeySequence>& previous);
 
     // История запросов. Живёт между запусками (state.json), поэтому список
     // отдаётся наружу целиком, а не прячется внутри панели.
