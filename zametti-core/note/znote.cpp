@@ -17,6 +17,10 @@ constexpr char kFolder[] = "folder";
 constexpr char kLost[] = "lost";
 constexpr char kRoot[] = "root";
 constexpr char kSort[] = "sort";
+// Books (brief 18): the role, and the two header keys the list shows.
+constexpr char kBook[] = "book";
+constexpr char kAuthor[] = "author";
+constexpr char kYear[] = "year";
 // Сколько знаков сниппета держим в метаданных: две-три строки списка при
 // любой разумной ширине панели.
 constexpr int kSnippetChars = 200;
@@ -108,6 +112,12 @@ ZNote::Metadata ZNote::metadata() const {
     m.sortMark_ = sortMark();
     m.archived_ = isArchived();
     m.readOnly_ = isReadOnly();
+    m.locked_ = isLocked();
+    m.book_ = isBook();
+    if (m.book_) {
+        m.author_ = bookAuthor();
+        m.year_ = bookYear();
+    }
     m.folder_ = isFolder() || isLost();
     m.root_ = isRoot();
     m.lostFound_ = isLost();
@@ -152,6 +162,11 @@ bool ZNote::isArchived() const { return header_.archived(); }
 void ZNote::setArchived(bool archived) { header_.setArchived(archived); }
 bool ZNote::isReadOnly() const { return header_.readOnly(); }
 void ZNote::setReadOnly(bool readOnly) { header_.setReadOnly(readOnly); }
+bool ZNote::isLocked() const { return header_.locked(); }
+void ZNote::setLocked(bool locked) { header_.setLocked(locked); }
+bool ZNote::isBook() const { return header_.get(kRole) == kBook; }
+QString ZNote::bookAuthor() const { return QString::fromStdString(header_.get(kAuthor)); }
+QString ZNote::bookYear() const { return QString::fromStdString(header_.get(kYear)); }
 QString ZNote::created() const { return QString::fromStdString(header_.get(kCreated)); }
 QString ZNote::modified() const { return QString::fromStdString(header_.get(kModified)); }
 void ZNote::stampModified() { header_.set(kModified, store::isoNow().toStdString()); }

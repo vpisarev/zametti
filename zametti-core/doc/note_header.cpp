@@ -162,4 +162,39 @@ void NoteHeader::setReadOnly(bool readOnly) {
     else unset(kAccessKey);
 }
 
+bool NoteHeader::locked() const {
+    const std::string value = get(kLockKey);
+    if (value.empty()) return false;
+    if (value == kLockValue) return true;
+    // Same policy as `access`: an unknown word must not lock a note, and must
+    // not be silently swallowed either.
+    std::fprintf(stderr, "unknown lock in header: %s\n", value.c_str());
+    return false;
+}
+
+void NoteHeader::setLocked(bool locked) {
+    present_ = true;
+    if (locked) set(kLockKey, kLockValue);
+    else unset(kLockKey);
+}
+
+std::string NoteHeader::safeValue(std::string_view value) {
+    std::string out;
+    out.reserve(value.size());
+    for (size_t i = 0; i < value.size(); ++i) {
+        const char c = value[i];
+        if (c == '\n' || c == '\r' || c == '\t') {
+            out += ' ';
+        } else if (c == '-' && i + 1 < value.size() && value[i + 1] == '-') {
+            out += "- ";
+        } else {
+            out += c;
+        }
+    }
+    // Edge whitespace: the reader trims it anyway, so a value that starts or
+    // ends with a space would not survive the round trip byte for byte.
+    const std::string_view trimmedOut = trimmed(out);
+    return std::string(trimmedOut);
+}
+
 }  // namespace zametti

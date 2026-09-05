@@ -141,6 +141,14 @@ public:
         // учитывается: у одной заметки нет ни родителей, ни каталога — подъём
         // по цепочке делает ZStorage::isReadOnly.
         bool readOnly() const { return readOnly_; }
+        // The soft lock (`lock: yes`, NoteHeader::kLockKey): the note's own
+        // mark, nothing inherited — a lock belongs to one note.
+        bool locked() const { return locked_; }
+        // A BOOK (`role: book`, brief 18): the list shows author and year
+        // instead of a snippet, the window opens it in reading mode.
+        bool book() const { return book_; }
+        const QString& author() const { return author_; }
+        const QString& year() const { return year_; }
         bool folder() const { return folder_; }
         bool lostFound() const { return lostFound_; }
         // Корневая заметка хранилища: она же его имя и его настройки показа.
@@ -162,6 +170,10 @@ public:
         std::optional<SortOrder> sortMark_;
         bool archived_ = false;
         bool readOnly_ = false;
+        bool locked_ = false;
+        bool book_ = false;
+        QString author_;
+        QString year_;
         bool folder_ = false;
         bool lostFound_ = false;
         bool root_ = false;
@@ -189,6 +201,16 @@ public:
     // запирает и всё, что внутри, — но об этом знает хранилище, а не заметка.
     bool isReadOnly() const;
     void setReadOnly(bool readOnly);
+    // The soft lock (NoteHeader::kLockKey): typed input is refused, the file
+    // is still written — annotations, bookmarks, the lock's own removal.
+    bool isLocked() const;
+    void setLocked(bool locked);
+    // A book (`role: book`). The book keys of the header — author, translator,
+    // year, isbn, publisher, series, lang, genre, cover, source — are read
+    // through headerValue(); the two the list shows have their own verbs.
+    bool isBook() const;
+    QString bookAuthor() const;
+    QString bookYear() const;
     QString created() const;
     QString modified() const;
     void stampModified();

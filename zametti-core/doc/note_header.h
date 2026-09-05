@@ -99,6 +99,29 @@ public:
     bool readOnly() const;
     void setReadOnly(bool readOnly);
 
+    // THE SOFT LOCK: `lock: yes` (books, brief 18; owner's decision of
+    // 05.09.2026). Orthogonal to `access: read-only` and deliberately weaker:
+    // the EDITOR refuses typed input, while the program still rewrites the
+    // file — annotations (`==…==`, `{>>…<<}`), the removal of the lock itself,
+    // a move, a rename, the archive. A frozen library is `access: read-only`;
+    // a book one reads and marks up is `lock: yes`. Not inherited from
+    // folders: a book is a single note, and the lock is its own.
+    //
+    // An unknown value is not an error, same as for `access`: the note counts
+    // as unlocked, the line stays in the file, stderr says what was not
+    // understood.
+    static constexpr const char* kLockKey = "lock";
+    static constexpr const char* kLockValue = "yes";
+    bool locked() const;
+    void setLocked(bool locked);
+
+    // A VALUE THAT CAN LIVE IN A HEADER LINE: `set` asserts that a value holds
+    // neither "--" (it would close the HTML comment) nor a line break. Values
+    // that come from OUTSIDE — a book title, an author, a file name — pass
+    // through here first: "--" becomes "- -", line breaks become spaces, edge
+    // whitespace is dropped.
+    static std::string safeValue(std::string_view value);
+
     bool present() const { return present_; }
     void setPresent(bool present) { present_ = present; }
 

@@ -171,11 +171,17 @@ Known keys:
 | `parent` | id of the parent note; no key — the note is at the root |
 | `created` | when it was created, ISO-8601 with an offset |
 | `modified` | when the content was edited, ISO-8601 with an offset |
-| `role` | `folder` — a folder note, `lost` — the Lost & found, `root` — the store's root note (exactly one per store) |
+| `role` | `folder` — a folder note, `lost` — the Lost & found, `root` — the store's root note (exactly one per store), `book` — an imported book (see below) |
 | `archived` | `yes` — the note is put away into the Archive; no key — alive |
 | `lost-parent` | the find's previous parent; set by the Lost & found |
 | `access` | `read-only` — the note may be read but not written; no key — an ordinary, editable note. On a FOLDER the mark covers everything inside it |
+| `lock` | `yes` — the soft lock: the editor refuses typed input, but the program still writes the file (annotations, the removal of the lock, a move, the archive). Set by the book import; toggled by the lock button. Not inherited |
 | `sort` | sort order inside the folder; no key — inherited |
+| `author`, `translator` | book: comma-separated lists of names |
+| `year`, `isbn`, `publisher`, `series`, `lang` | book: single values; `publisher` may carry the city after a comma, `series` is «Name #N» |
+| `genre` | book: comma-separated list |
+| `cover` | book: id of the cover attachment (`<id>.<ext>` next to the notes); the cover is not inserted into the body |
+| `source` | book: the imported file's name and the BLAKE3 of its bytes, «name.fb2 blake3:<hex>» |
 
 Rules for the header content:
 

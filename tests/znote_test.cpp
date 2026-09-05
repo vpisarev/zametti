@@ -213,11 +213,47 @@ void checkVersionStamp() {
           "<!-- zametti\nversion: 1\n-->\n\nпросто текст\n", bare.toMarkdown());
 }
 
+// THE SOFT LOCK AND THE BOOK KEYS (brief 18). `lock: yes` is the note's own
+// mark, separate from `access: read-only`; an unknown word does not lock.
+// `role: book` puts author and year into the metadata for the list; a value
+// from outside passes through NoteHeader::safeValue before it reaches a line.
+void checkBookAndLock() {
+    ZNote book;
+    ZT_TRUE("разобрана", book.load("<!-- zametti\nrole: book\nlock: yes\nauthor: Михаил Шолохов\n"
+                                   "year: 1928\n-->\n\n# Тихий Дон\n\nтело\n"));
+    ZT_TRUE("книга по роли", book.isBook());
+    ZT_TRUE("заперта", book.isLocked());
+    ZT_TRUE("но не read-only", !book.isReadOnly());
+    const ZNote::Metadata m = book.metadata();
+    ZT_TRUE("метаданные: книга и замок", m.book() && m.locked() && !m.readOnly());
+    ZT_EQ("автор в метаданных", "Михаил Шолохов", m.author().toStdString());
+    ZT_EQ("год в метаданных", "1928", m.year().toStdString());
+
+    book.setLocked(false);
+    ZT_TRUE("замок снят", !book.isLocked());
+    ZT_TRUE("строки lock нет в файле", book.toMarkdown().find("lock:") == std::string::npos);
+    book.setLocked(true);
+    ZT_TRUE("замок поставлен", book.toMarkdown().find("lock: yes\n") != std::string::npos);
+
+    ZNote odd;
+    ZT_TRUE("разобрана", odd.load("<!-- zametti\nlock: maybe\n-->\n\nтело\n"));
+    ZT_TRUE("незнакомое слово не запирает", !odd.isLocked());
+    ZT_TRUE("и остаётся в файле", odd.toMarkdown().find("lock: maybe") != std::string::npos);
+    ZT_TRUE("обычная заметка — не книга", !odd.isBook() && odd.metadata().author().isEmpty());
+
+    using zametti::NoteHeader;
+    ZT_EQ("safeValue: «--» разбивается", "a- -b", NoteHeader::safeValue("a--b"));
+    ZT_EQ("safeValue: перевод строки — пробел", "a b", NoteHeader::safeValue("a\nb"));
+    ZT_EQ("safeValue: края обрезаны", "x", NoteHeader::safeValue("  x \n"));
+    ZT_EQ("safeValue: три дефиса", "- - -", NoteHeader::safeValue("---"));
+}
+
 }  // namespace
 
 TEST(ZNote, All) {
     checkHistory();
     checkNote();
+    checkBookAndLock();
     checkFileRound();
     checkVersionStamp();
     EXPECT_EQ(0, zt::freshFailures());
