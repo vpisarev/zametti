@@ -48,6 +48,9 @@ struct ToolbarState {
     // marks and comments is not a history worth a mode (owner's decision,
     // 05.09.2026).
     bool book = false;
+    // The reading mode is on (brief 18): the side panels are hidden for its
+    // duration and their button is dark — the book takes the whole window.
+    bool reading = false;
     // Синхронизация настроена. Не настроена — кнопка облака не поломка, а
     // состояние, и подсказка говорит словами, что сделать.
     bool cloudConfigured = false;
@@ -81,6 +84,13 @@ inline QString toolbarPromiseFor(Toolbar::Button id, const ToolbarState& state) 
         return QStringLiteral("documentation is read-only");
     if (state.book && id == Button::History)
         return QStringLiteral("a book keeps its journal, but shows no history");
+    if (id == Button::Panels && state.reading)
+        return QStringLiteral("the side panels come back when the reading ends");
+    // The reading mode shows the OPEN note's document; the documentation and
+    // an archived note are shown by pages of their own.
+    if (id == Button::Reading && (state.documentation || state.archivedNote))
+        return state.documentation ? QStringLiteral("documentation has a page of its own")
+                                   : QStringLiteral("an archived note is shown as it was");
     // The lock is a mark of the note's own header: nothing to write on the
     // documentation, and a frozen or archived note is not unlocked by it.
     if (id == Button::Lock && locked)

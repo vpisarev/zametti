@@ -1,0 +1,239 @@
+#include "zbook_view.h"
+
+#include "settings.h"
+
+#include <QFontMetricsF>
+#include <QResizeEvent>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <algorithm>
+
+namespace zametti {
+
+ZBookView::ZBookView(QWidget* parent) : QWidget(parent) {
+    for (int i = 0; i < 2; ++i) {
+        auto* page = new BookPage(this);
+        pages_.push_back(page);
+        connect(page, &BookPage::pageStepRequested, this, &ZBookView::pageStep);
+        connect(page, &BookPage::jumpRequested, this, &ZBookView::jump);
+        connect(page, &BookPage::revealRequested, this, &ZBookView::showLine);
+        connect(page, &NoteView::zoomStepRequested, this, &ZBookView::zoomStepRequested);
+        connect(page, &BookPage::activated, this, [this, i] { active_ = i; });
+    }
+    pages_[1]->hide();
+    setFocusProxy(pages_[0]);
+    // An edit of the document (a bookmark does not edit; marks will) shifts
+    // the lines: the table is counted anew once the typing pauses.
+    edited_.setSingleShot(true);
+    edited_.setInterval(300);
+    connect(&edited_, &QTimer::timeout, this, [this] {
+        resetTable();
+        showSpread(table_.pageOf(anchor_));
+    });
+    connect(&table_, &BookPages::countKnown, this, [this](int) { announce(); });
+}
+
+qreal ZBookView::charUnit() const {
+    return QFontMetricsF(pages_[0]->font()).horizontalAdvance(QLatin1Char('A'));
+}
+
+void ZBookView::showNote(std::shared_ptr<ZNote> note) {
+    if (note == nullptr) {
+        clear();
+        return;
+    }
+    if (note_ == note) {
+        reclaim();
+        return;
+    }
+    if (note_ != nullptr) clear();
+    note_ = std::move(note);
+    // The follower first, the lead last: the last registration of the object
+    // handlers wins, and it must be the lead's.
+    pages_[1]->showNote(note_, /*lead=*/false);
+    pages_[0]->showNote(note_, /*lead=*/true);
+    table_.attach(pages_[0]->document());
+    contents_ = connect(pages_[0]->document(), &QTextDocument::contentsChanged, this,
+                        [this] { edited_.start(); });
+    anchor_ = places_.value(note_->id(), PageStart{});
+    active_ = 0;
+    relayoutPages();
+}
+
+void ZBookView::clear() {
+    if (note_ == nullptr) return;
+    places_.insert(note_->id(), anchor_);
+    disconnect(contents_);
+    edited_.stop();
+    table_.attach(nullptr);
+    // The leaving views detach first (Qt drops the paint device of the
+    // layout a view leaves): both pages go back to their blank documents
+    // before the editor's turn.
+    pages_[0]->clear();
+    pages_[1]->clear();
+    note_.reset();
+}
+
+BookPage& ZBookView::activePage() {
+    if (active_ >= shown_) active_ = 0;
+    return *pages_[size_t(active_)];
+}
+
+void ZBookView::relayoutPages() {
+    const ZSettings::Reading& reading = settings().reading();
+    const qreal unit = charUnit();
+    const int gap = int(reading.pageGap() * unit);
+    int wanted = reading.pagesPerSpread();
+    if (wanted == 0) {
+        const qreal least = reading.minPageWidth() * unit;
+        wanted = width() >= 2 * least + gap ? 2 : 1;
+    }
+    if (wanted != shown_) {
+        shown_ = wanted;
+        pages_[1]->setVisible(shown_ == 2);
+        if (active_ >= shown_) active_ = 0;
+    }
+    // THE PAGES ARE EXACTLY AS WIDE AS EACH OTHER — by hand, not by a layout.
+    // They share one document, and the document has one text width: a layout
+    // splitting an odd width would give the two pages viewports a pixel
+    // apart, and each would lay the document out for its own on every
+    // resize, in whichever order the events came (caught by the symmetry
+    // shot: justified lines a pixel different after a round trip).
+    const int pageWidth = (width() - gap * (shown_ - 1)) / shown_;
+    const int span = pageWidth * shown_ + gap * (shown_ - 1);
+    int x = (width() - span) / 2;
+    for (int i = 0; i < shown_; ++i) {
+        pages_[size_t(i)]->setGeometry(x, 0, pageWidth, height());
+        x += pageWidth + gap;
+    }
+    resetTable();
+    if (note_ != nullptr) showSpread(table_.pageOf(anchor_));
+}
+
+void ZBookView::resetTable() {
+    // The height the layout settled on: the pages are laid out by now, and
+    // both have the same one.
+    table_.reset(pages_[0]->pageHeight());
+}
+
+void ZBookView::showSpread(int first) {
+    if (note_ == nullptr) return;
+    PageStart start;
+    if (!table_.startOf(first, &start)) {
+        // Past the end: the last spread.
+        while (first > 0 && !table_.startOf(first, &start)) --first;
+        if (!table_.startOf(first, &start)) return;
+    }
+    first_ = first;
+    anchor_ = start;
+    pages_[0]->showStart(start);
+    if (shown_ == 2) {
+        PageStart next;
+        if (table_.startOf(first + 1, &next)) {
+            pages_[1]->showStart(next);
+        } else {
+            // The book ends on the left page: the right one is a blank leaf,
+            // shown past the end so that no text repeats.
+            pages_[1]->showStart(PageStart{pages_[0]->document()->blockCount(), 0});
+        }
+    }
+    announce();
+}
+
+void ZBookView::pageStep(int delta) {
+    if (note_ == nullptr) return;
+    int next = first_ + delta * shown_;
+    if (next < 0) next = 0;
+    PageStart probe;
+    if (!table_.startOf(next, &probe)) return;   // already on the last spread
+    showSpread(next);
+}
+
+void ZBookView::jump(bool toEnd) {
+    if (note_ == nullptr) return;
+    if (!toEnd) {
+        showSpread(0);
+        return;
+    }
+    // The end is known only once the table is: count it now, on demand.
+    PageStart probe;
+    int last = first_;
+    while (table_.startOf(last + 1, &probe)) ++last;
+    if (shown_ == 2) last -= last % 2;
+    showSpread(last);
+}
+
+void ZBookView::showLine(const PageStart& line) {
+    if (note_ == nullptr) return;
+    int page = table_.pageOf(line);
+    if (shown_ == 2) page -= page % 2;
+    // Already on view — the pages stay put (as the editor keeps its place
+    // when the hit is on screen).
+    if (page == first_) {
+        announce();
+        return;
+    }
+    showSpread(page);
+}
+
+void ZBookView::showBlock(int block) { showLine(PageStart{block, 0}); }
+
+void ZBookView::reclaim() {
+    if (note_ == nullptr) return;
+    pages_[0]->showNote(note_, /*lead=*/true);
+    resetTable();
+    showSpread(table_.pageOf(anchor_));
+}
+
+void ZBookView::refreshAppearance() {
+    for (BookPage* page : pages_) page->refreshAppearance();
+    if (note_ == nullptr) return;
+    pages_[0]->takeOverDocument();
+    relayoutPages();
+}
+
+void ZBookView::applyZoom(qreal zoom) {
+    for (BookPage* page : pages_) page->setZoom(zoom);
+    if (note_ != nullptr) pages_[0]->takeOverDocument();
+    relayoutPages();
+}
+
+qreal ZBookView::zoom() const { return pages_[0]->zoom(); }
+
+void ZBookView::clearMatches() {
+    for (BookPage* page : pages_) page->clearMatches();
+}
+
+void ZBookView::restorePlace(const PageStart& place) {
+    anchor_ = place;
+    if (note_ != nullptr) showSpread(table_.pageOf(anchor_));
+}
+
+void ZBookView::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    // The pages get their new size through the layout first; the table is
+    // counted for the settled height, on the next turn of the loop.
+    QTimer::singleShot(0, this, [this] { relayoutPages(); });
+}
+
+void ZBookView::announce() {
+    if (note_ == nullptr) return;
+    const QTextDocument* doc = pages_[0]->document();
+    const QTextBlock top = doc->findBlockByNumber(anchor_.block);
+    const int chars = std::max(1, doc->characterCount() - 1);
+    const int percent = top.isValid() ? int(100.0 * top.position() / chars) : 0;
+    // THE CHAPTER IS THE ONE THE FIRST WORDS BELONG TO. A page often begins
+    // with the collapsed blank line BEFORE a chapter's title; asked from that
+    // block, the chapter above would be the previous one (owner's finding on
+    // Paustovsky's stories). So the first block with text on the page names
+    // the chapter — three blocks at most, a blank line never comes alone.
+    int named = anchor_.block;
+    for (QTextBlock b = top; b.isValid() && b.blockNumber() < anchor_.block + 3; b = b.next()) {
+        named = b.blockNumber();
+        if (!b.text().trimmed().isEmpty()) break;
+    }
+    emit positionChanged(note_->doc().headingAbove(named), first_ + 1, table_.count(),
+                         std::clamp(percent, 0, 100));
+}
+
+}  // namespace zametti

@@ -129,6 +129,14 @@ add_library(zametti-ui STATIC
     markdown_edit_view.cpp
     markdown_controller.h
     markdown_controller.cpp
+    book_pages.h
+    book_pages.cpp
+    book_page.h
+    book_page.cpp
+    zbook_view.h
+    zbook_view.cpp
+    reading_controller.h
+    reading_controller.cpp
     json_edit_view.h
     json_edit_view.cpp
     settings_controller.h

@@ -254,6 +254,11 @@ public:
 
     int blockCount() const;
     BlockInfo blockAt(int index) const;
+    // The nearest heading above the block (the block itself counts) — the
+    // chapter a page belongs to. A walk back, O(distance to the heading);
+    // empty when there is none. An outline of the whole note replaces it
+    // where the walk would be long (brief 18, the table of contents).
+    QString headingAbove(int index) const;
 
     // Канонический текст построчно, с картой «строка → блок». На этом стоит
     // разность версий.

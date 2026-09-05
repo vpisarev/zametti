@@ -108,6 +108,10 @@ public:
     // масштабирование экрана здесь ни при чём — его делает Qt, а это
     // ЛИЧНАЯ поправка поверх.
     ZM_SETTING(int, interfaceZoom, InterfaceZoom, 0, kZoomStepsMin, kZoomStepsMax)
+    // THE SCALE OF A BOOK (brief 18): the pages of the reading mode are read
+    // from further away than a note is edited, so they keep a step of their
+    // own — Ctrl+= on a page does not touch the editor's step.
+    ZM_SETTING(int, bookZoom, BookZoom, 0, kZoomStepsMin, kZoomStepsMax)
     // Ширина списка записей в режиме истории (сплиттер справа от разности);
     // 0 — не двигали, берётся ширина средней колонки из настроек. Просьба
     // владельца: список крал место у разности, а столько ему не нужно.

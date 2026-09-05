@@ -475,6 +475,10 @@ void NoteView::takeOverDocument() {
     attachObjectHandlers(document());
     restoreScale();
     applyContentWidth();
+    // The other view may have laid the document out for ITS viewport;
+    // applyContentWidth alone would not notice (its margins did not change).
+    if (!qFuzzyCompare(document()->textWidth(), qreal(viewport()->width())))
+        document()->setTextWidth(viewport()->width());
 }
 
 void NoteView::applyContentWidth() {
@@ -498,9 +502,11 @@ void NoteView::applyContentWidth() {
     const qreal fromDocument = document()->rootFrame()->frameFormat().leftMargin();
     const int room = viewport()->width() + viewportMargin_ * 2;
     const int wanted = contentColumnMargin(docStyle(), charUnit, room, fromDocument);
-    if (wanted != viewportMargin_) {
+    const int pad = pagePadding();
+    if (wanted != viewportMargin_ || pad != viewportPad_) {
         viewportMargin_ = wanted;
-        setViewportMargins(wanted, 0, wanted, 0);
+        viewportPad_ = pad;
+        setViewportMargins(wanted, pad, wanted, pad);
         // ШИРИНУ ВЁРСТКИ ДОСЫЛАЕМ САМИ. Поля вьюпорта сузили окно, а документ
         // остаётся свёрстан по прежней ширине: QTextEdit пересчитывает её на
         // своём resizeEvent, а тот приходит позже нас. При запуске это и

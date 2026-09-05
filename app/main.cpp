@@ -16,6 +16,8 @@
 #include "settings_controller.h"
 #include "history_panel.h"
 #include "reader_view.h"
+#include "reading_controller.h"
+#include "zbook_view.h"
 #include "toolbar_controller.h"
 #include "zoom_scale.h"
 #include "zoom_target.h"
@@ -645,6 +647,9 @@ int main(int argc, char** argv) {
     zametti::ReaderView docView(nullptr, zametti::ReaderView::Tint::Plain);
 
     zametti::NoteEditor editor;
+    // THE READING MODE (brief 18): the open note as a book — one or two pages
+    // over the editor's live document, on a page of the stack of its own.
+    zametti::ZBookView bookView;
 
     // Хранилище открывает объект приложения; левая и средняя колонки — его
     // проекция (NotePanels: дерево папок, список заметок, показ открытой).
@@ -712,6 +717,7 @@ int main(int argc, char** argv) {
         textStack.addWidget(&historyView);
         textStack.addWidget(&markdownView);
         textStack.addWidget(&settingsView);
+        textStack.addWidget(&bookView);
         textStack.setCurrentWidget(&editor);
 
         layout->addWidget(&textStack, 1);
@@ -727,6 +733,7 @@ int main(int argc, char** argv) {
     findBar.setRegexOn(session.searchRegex());
     zametti::HistoryController history(editor, historyView);
     zametti::MarkdownController markdown(editor, markdownView);
+    zametti::ReadingController reading(editor, bookView);
     zametti::SettingsController settingsMode(editor, settingsView,
                                              std::make_shared<zametti::ZConfigFile>());
 
@@ -763,6 +770,7 @@ int main(int argc, char** argv) {
         history.refreshAppearance();
         markdown.refreshAppearance();
         settingsMode.refreshAppearance();
+        reading.refreshAppearance();
 
         // Делегаты читают настройки прямо при отрисовке — им довольно
         // перерисовки, но размеры строк они считают там же, и без сброса
@@ -1013,6 +1021,7 @@ int main(int argc, char** argv) {
     // не дотягивается: при смене масштаба документ собирается заново из того же
     // содержимого. В историю правок это не попадает — облик не содержимое.
     editor.setZoom(zametti::zoomScale(session.noteZoom()));
+    bookView.applyZoom(zametti::zoomScale(session.bookZoom()));
 
     // МЕСТО КАРЕТКИ, ПЕРЕЖИВШЕЕ ПЕРЕЗАПУСК, — В ПАМЯТЬ РЕДАКТОРА, до открытия.
     // Дальше заметка открывается обычной дорогой и встаёт туда же, где её
@@ -1055,7 +1064,8 @@ int main(int argc, char** argv) {
     // ЧЕЙ СЕЙЧАС МАСШТАБ — спрашивается ОДНОЙ функцией (zoom_target.h), и оба
     // места ниже спрашивают именно её: «применить» и «шагнуть от текущего».
     const auto zoomTarget = [&] {
-        return zametti::zoomTargetFor(settingsMode.active(), markdown.active(), history.active());
+        return zametti::zoomTargetFor(settingsMode.active(), markdown.active(), history.active(),
+                                      reading.active());
     };
     auto applyZoom = [&](qreal value) {
         switch (zoomTarget()) {
@@ -1078,6 +1088,9 @@ int main(int argc, char** argv) {
                 archiveView.applyZoom(value);
                 docView.applyZoom(value);
                 return;
+            case zametti::ZoomTarget::Book:
+                bookView.applyZoom(value);
+                return;
         }
     };
     // СТУПЕНЬ, А НЕ МНОЖИТЕЛЬ, И ИСТИНА ЖИВЁТ В ZAppState (zoom_scale.h).
@@ -1088,6 +1101,7 @@ int main(int argc, char** argv) {
     const auto zoomStepsOf = [&](zametti::ZoomTarget target) {
         switch (target) {
             case zametti::ZoomTarget::Plain: return zapp.state().sourceZoom();
+            case zametti::ZoomTarget::Book: return zapp.state().bookZoom();
             case zametti::ZoomTarget::Note: break;
         }
         return zapp.state().noteZoom();
@@ -1096,6 +1110,7 @@ int main(int argc, char** argv) {
         switch (target) {
             case zametti::ZoomTarget::Plain: zapp.state().setSourceZoom(steps); break;
             case zametti::ZoomTarget::Note: zapp.state().setNoteZoom(steps); break;
+            case zametti::ZoomTarget::Book: zapp.state().setBookZoom(steps); break;
         }
         // Обрезку по краям шкалы делает сеттер — читаем то, что он принял.
         applyZoom(zametti::zoomScale(zoomStepsOf(target)));
@@ -1123,6 +1138,8 @@ int main(int argc, char** argv) {
          std::initializer_list<zametti::PlainEditView*>{&markdownView, &settingsView})
         QObject::connect(view, &zametti::PlainEditView::zoomStepRequested, &window,
                          [&](int delta) { stepZoom(delta); });
+    QObject::connect(&bookView, &zametti::ZBookView::zoomStepRequested, &window,
+                     [&](int delta) { stepZoom(delta); });
 
     // МАСШТАБ ОБОЛОЧКИ — ОТДЕЛЬНАЯ РУЧКА, Ctrl+Alt+±. Тулбар, дерево, список,
     // полоса сведений, панель поиска и диалоги; текста заметки он не касается,
@@ -1237,7 +1254,19 @@ int main(int argc, char** argv) {
                                    : markdown.active()   ? static_cast<QWidget*>(&markdownView)
                                    : doc                 ? static_cast<QWidget*>(&docView)
                                    : archived            ? static_cast<QWidget*>(&archiveView)
+                                   : reading.active()    ? static_cast<QWidget*>(&bookView)
                                                          : static_cast<QWidget*>(&editor));
+    };
+    // THE FOCUS GOES TO THE NOTE'S VIEW ON SCREEN — the pages of the book in
+    // the reading mode (which claim the document again: another mode may
+    // have laid it out for its own viewport), the editor otherwise.
+    const auto focusNoteView = [&] {
+        if (reading.active()) {
+            bookView.reclaim();
+            bookView.activePage().setFocus();
+            return;
+        }
+        editor.setFocus();
     };
     // ЧТО СЕЙЧАС НА СТРАНИЦЕ ЧТЕНИЯ. Она показывает два разных рода: вшитую
     // документацию (за ней нет файла в хранилище) и настоящую заметку под
@@ -1309,6 +1338,7 @@ int main(int argc, char** argv) {
             state.lockedNote = editor.isLockedNote();
             state.tempUnlocked = editor.isTemporarilyUnlocked();
             state.book = editor.isBookNote();
+            state.reading = reading.active();
             state.cloudConfigured = cloudSync.configured();
             state.cloudStatus = cloudSync.statusText();
             return state;
@@ -1402,7 +1432,7 @@ int main(int argc, char** argv) {
         if (history.lastIndex() >= 0 && !editor.filePath().isEmpty())
             visitedSnapshot.insert(editor.filePath(), history.lastIndex());
         window.setWindowTitle(windowTitleFor(editor.filePath()) + QStringLiteral(" — zametti"));
-        if (!markdown.active()) editor.setFocus();
+        if (!markdown.active()) focusNoteView();
     });
     // РЕЖИМ ПРАВКИ ИСХОДНИКА — третья страница стека, на месте редактора. Как и
     // у истории, кнопка тулбара показывает состояние режима, откуда бы в него
@@ -1416,8 +1446,29 @@ int main(int argc, char** argv) {
             markdownView.setFocus();
             return;
         }
-        editor.setFocus();
+        focusNoteView();
     });
+    // THE READING MODE — its own page of the stack, a toggle on the toolbar
+    // (brief 18). The button follows the mode wherever it was entered from: a
+    // book enters it by itself when opened.
+    QObject::connect(&reading, &zametti::ReadingController::modeChanged, &window, [&](bool on) {
+        showPage();
+        toolbarState.refresh();
+        toolbar.setChecked(zametti::Toolbar::Button::Reading, on);
+        if (!on) statusBar.setReading(QString(), QString());
+        if (settingsMode.active() || history.active() || markdown.active()) return;
+        focusNoteView();
+    });
+    QObject::connect(&bookView, &zametti::ZBookView::positionChanged, &window,
+                     [&](const QString& chapter, int page, int count, int percent) {
+                         if (!reading.active()) return;
+                         // The chapter in capitals — larger to the eye in the
+                         // small font of the line (owner's wish).
+                         const QString place =
+                             count > 0 ? QStringLiteral("page %1/%2 · %3%").arg(page).arg(count).arg(percent)
+                                       : QStringLiteral("page %1/… · %2%").arg(page).arg(percent);
+                         statusBar.setReading(chapter.toUpper(), place);
+                     });
     // РЕЖИМ ИСХОДНИКА ПЕРЕЖИВАЕТ ПОХОД В ИСТОРИЮ (см. MarkdownController).
     // Подключается ПОСЛЕ обработчиков стека выше: возобновление режима на выходе
     // из истории обязано идти последним, чтобы страница и фокус остались за ним.
@@ -1444,7 +1495,7 @@ int main(int argc, char** argv) {
                          // Вышли — фокус тому, кто снова на виду.
                          if (markdown.active()) markdownView.setFocus();
                          else if (history.active()) historyView.setFocus();
-                         else editor.setFocus();
+                         else focusNoteView();
                      });
 
     // ЗАПИСАЛИ КОНФИГ ИЗНУТРИ — ПРИМЕНЯЕМ ТЕМ ЖЕ ПУТЁМ, что и внешнюю правку:
@@ -2225,6 +2276,7 @@ int main(int argc, char** argv) {
         if (history.active()) return historyView.textView();
         if (!docView.path().isEmpty()) return docView;
         if (editor.isArchivedNote()) return archiveView;
+        if (reading.active()) return bookView.activePage();
         return editor;
     };
 
@@ -2510,6 +2562,7 @@ int main(int argc, char** argv) {
 
     QObject::connect(&findBar, &zametti::FindBar::closed, &window, [&] {
         editor.clearMatches();
+        bookView.clearMatches();
         markdownView.clearMatches();
         settingsView.clearMatches();
         historyView.textView().clearMatches();
@@ -2580,6 +2633,9 @@ int main(int argc, char** argv) {
     for (const QKeySequence& keys :
          zametti::keySequencesOf(zametti::settings().editor().markdownModeKey()))
         shortcut(keys, [&] { markdown.toggle(); });
+    for (const QKeySequence& keys :
+         zametti::keySequencesOf(zametti::settings().editor().readingModeKey()))
+        shortcut(keys, [&] { reading.toggle(); });
     // Ходьба по находкам — сочетания из настроек (shortcuts.findNext /
     // findPrevious: F3 и Ctrl+G, на маке Cmd+G); подсказки кнопок панели —
     // из того же списка, чтобы панель не обещала клавишу, которой нет.
@@ -2989,10 +3045,24 @@ int main(int argc, char** argv) {
         toolbar.setTip(Button::Panels, visible ? QStringLiteral("Hide side panels")
                                                : QStringLiteral("Show side panels"));
     };
+    // THE BOOK TAKES THE WHOLE WINDOW (owner's wish, 05.09.2026): the reading
+    // mode hides the side panels for its duration and brings back what was
+    // there before; the panels button is dark meanwhile (toolbar_state.h).
+    bool panelsBeforeReading = !session.panelsHidden();
+    QObject::connect(&reading, &zametti::ReadingController::modeChanged, &window, [&](bool on) {
+        if (on) {
+            panelsBeforeReading = toolbar.isChecked(Button::Panels);
+            showPanels(false);
+        } else {
+            showPanels(panelsBeforeReading);
+        }
+        toolbarState.refresh();
+    });
     {
         // Зовём ВСЕГДА, а не только когда панели спрятаны: кнопка обязана
         // показывать своё состояние с первой секунды, а не с первого нажатия.
         showPanels(!session.panelsHidden());
+        if (reading.active()) showPanels(false);
 
         // КНОПКА ОБЛАКА ОЖИЛА (m17, сессия 4). Не настроенный синк — не
         // поломка и не обещание «потом», а состояние: тултип говорит, что
@@ -3092,6 +3162,11 @@ int main(int argc, char** argv) {
                 break;
             case Button::Lock:
                 toggleLock();
+                break;
+            case Button::Reading:
+                // A toggle, like the source mode: lit — the note is read as a
+                // book; modeChanged squares the button with the mode.
+                reading.toggle();
                 break;
             case Button::History:
                 // ПЕРЕКЛЮЧАТЕЛЬ: горит — идёт режим истории, нажали снова —
@@ -3366,7 +3441,10 @@ int main(int argc, char** argv) {
         out.setWindowGeometry(window.saveGeometry());
         out.setSplitterState(splitter.saveState());
         out.setHistoryListWidth(historyListWidth);
-        out.setPanelsHidden(!toolbar.isChecked(zametti::Toolbar::Button::Panels));
+        // Hidden by the reading mode is not hidden by the person: what comes
+        // back after the book is what is remembered.
+        out.setPanelsHidden(reading.active() ? !panelsBeforeReading
+                                             : !toolbar.isChecked(zametti::Toolbar::Button::Panels));
         out.setMarkdownMode(markdown.active());
         out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());

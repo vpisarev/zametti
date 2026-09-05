@@ -68,6 +68,10 @@ public:
         // open lock closes it at once; a click on the closed one asks whether
         // to open it until the next note or to take the lock off.
         Lock,
+        // READING MODE (brief 18): the note as a book — pages side by side,
+        // keys turn them. A toggle with a page of its own, like the source
+        // mode; a book opens in it by itself.
+        Reading,
         // ПРАВКА ИСХОДНИКА: заметка показывается сырым markdown, как в файле.
         // Тоже ПЕРЕКЛЮЧАТЕЛЬ и тоже со своим видом: горит — идёт режим. Он
         // принадлежит ПРИЛОЖЕНИЮ, а не заметке (решение владельца): по заметкам

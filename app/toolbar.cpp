@@ -50,6 +50,9 @@ constexpr Toolbar::Spec kSpecs[] = {
     // setTip from the window); here is only the start. Before the history:
     // the history and the source edit stand side by side (toolbar_test).
     {B::Lock, "lock-open", "Lock the note", "", 4, false},
+    // The shortcut is configurable (shortcuts.readingMode) and shown from the
+    // settings (tipFor), like the source mode's.
+    {B::Reading, "book-open-text", "Read as a book", "", 4, true},
     {B::History, "rotate-ccw-clock", "Note history", "", 4, true},
     // Сочетание у этой кнопки НАСТРАИВАЕМОЕ (editor.markdownModeKey) и по
     // умолчанию пустое: в тултип оно подставляется из настроек (tipFor), а не

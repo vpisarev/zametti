@@ -65,6 +65,10 @@ public:
     // Сообщение поверх сведений о заметке: «сохранено», «файл изменился
     // снаружи». Пустая строка возвращает обычный вид.
     void setMessage(const QString& text);
+    // THE READING MODE (brief 18): the chapter on the left, the place on the
+    // right («page 37/1210 · 42%»), instead of the note's facts. Both empty —
+    // back to the ordinary line.
+    void setReading(const QString& chapter, const QString& place);
 
     void refreshAppearance();
 
@@ -82,6 +86,8 @@ private:
     NoteInfo note_;
     ImageMetadata image_;
     QString message_;
+    QString chapter_;
+    QString place_;
     int line_ = 1;
     int column_ = 1;
 };

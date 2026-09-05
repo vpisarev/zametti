@@ -111,9 +111,23 @@ void StatusBar::setMessage(const QString& text) {
     showLeft();
 }
 
+void StatusBar::setReading(const QString& chapter, const QString& place) {
+    if (chapter == chapter_ && place == place_) return;
+    chapter_ = chapter;
+    place_ = place;
+    relayout();
+}
+
 void StatusBar::showLeft() {
     if (!message_.isEmpty()) {
         left_->setText(message_);
+        return;
+    }
+    if (!chapter_.isEmpty() || !place_.isEmpty()) {
+        const QFontMetrics metrics(left_->font());
+        left_->setTextFormat(Qt::PlainText);
+        left_->setText(metrics.elidedText(chapter_, Qt::ElideRight, qMax(0, left_->width())));
+        left_->setToolTip(chapter_);
         return;
     }
     if (image_.valid()) {
@@ -240,6 +254,10 @@ void StatusBar::showImage() {
 
 void StatusBar::relayout() {
     showLeft();
+    if (!chapter_.isEmpty() || !place_.isEmpty()) {
+        right_->setText(place_);
+        return;
+    }
     if (!note_.valid) {
         right_->setText(QString());
         return;

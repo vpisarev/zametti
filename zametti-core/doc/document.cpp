@@ -236,6 +236,16 @@ NoteStats ZDocument::getStats() const { return documentStats(d_->text); }
 
 int ZDocument::blockCount() const { return d_->text.blockCount(); }
 
+QString ZDocument::headingAbove(int index) const {
+    for (QTextBlock block = d_->text.findBlockByNumber(index); block.isValid();
+         block = block.previous()) {
+        const QTextBlockFormat format = block.blockFormat();
+        if (format.boolProperty(RawProperty)) continue;
+        if (format.intProperty(KindProperty) == int(Kind::Heading)) return block.text();
+    }
+    return {};
+}
+
 BlockInfo ZDocument::blockAt(int index) const {
     BlockInfo out;
     const QTextBlock block = d_->text.findBlockByNumber(index);

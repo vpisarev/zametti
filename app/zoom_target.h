@@ -30,13 +30,16 @@ namespace zametti {
 enum class ZoomTarget {
     Note,   // обычный вид заметки (с ним же архивная и документация)
     Plain,  // плоские виды: исходник, настройки, разность — масштаб общий
+    Book,   // the reading mode: the pages of a book have a scale of their own
 };
 
 // ПОРЯДОК ТОТ ЖЕ, ЧТО У ВЫБОРА СТРАНИЦЫ СТЕКА (main.cpp, showPage): настройки >
 // история > исходник > редактор. Иначе клавиши достанутся не тому, что человек
 // видит перед собой.
-inline ZoomTarget zoomTargetFor(bool settingsActive, bool markdownActive, bool historyActive) {
+inline ZoomTarget zoomTargetFor(bool settingsActive, bool markdownActive, bool historyActive,
+                                bool readingActive = false) {
     if (settingsActive || historyActive || markdownActive) return ZoomTarget::Plain;
+    if (readingActive) return ZoomTarget::Book;
     return ZoomTarget::Note;
 }
 

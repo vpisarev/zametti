@@ -720,6 +720,8 @@ struct ZSettings {
         // и обе записи должны работать. Пустая строка убирает сочетание совсем,
         // команда при этом остаётся в контекстном меню.
         ZM_SETTING_PLAIN(QString, toggleTaskKey, ToggleTaskKey, QStringLiteral("Ctrl+D; Ctrl+SPACE"))
+        // The reading mode (brief 18): the note as a book, pages side by side.
+        ZM_SETTING_PLAIN(QString, readingModeKey, ReadingModeKey, QStringLiteral("Ctrl+Shift+R"))
         ZM_SETTING_PLAIN(QString, moveUpKey, MoveUpKey, QStringLiteral("Ctrl+Up"))
         ZM_SETTING_PLAIN(QString, moveDownKey, MoveDownKey, QStringLiteral("Ctrl+Down"))
         // Смена рода блоков — по знаку, который на клавише: звёздочка живёт на

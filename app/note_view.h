@@ -240,7 +240,7 @@ public:
     // у кромки — вид не трогаем; иначе ставим его в золотое сечение окна
     // (settings().ui().focusRatio() от верха). Окна ещё нет — ничего: место
     // поставит тот, кто держит каретку на первой настоящей раскладке.
-    void revealInGolden(const QRectF& place);
+    virtual void revealInGolden(const QRectF& place);
     // Обычный ensureCursorVisible прокручивает ровно на минимум, то есть всегда
     // ставит курсор впритык к краю окна — после отмены правки, сделанной парой
     // страниц выше, смотреть на неё приходилось в самом низу экрана.
@@ -452,6 +452,10 @@ protected:
     // (codeFamily × monospacePoint), что у правки исходника, — один масштаб
     // плоских видов обязан давать один размер букв.
     virtual QFont zoomedBaseFont(qreal zoom) const;
+    // Air above and below the text inside the viewport (viewport margins,
+    // so nothing of it reaches the document): a book page keeps a little
+    // above its first line; the editor has none.
+    virtual int pagePadding() const { return 0; }
 
     // ХУК ПОЛЯ: зовётся из цикла отрисовки по КАЖДОМУ ВИДИМОМУ блоку, painter
     // уже в координатах документа, rect — прямоугольник блока. По умолчанию
@@ -751,6 +755,7 @@ private:
     // Повтор поиска после правки — через паузу (см. scheduleResearch).
     QTimer researchSoon_;
 
+    int viewportPad_ = 0;
     int viewportMargin_ = 0;
     // Блок, который только что скопировали: на нём кнопка на секунду
     // становится галочкой, иначе о том, что нажатие сработало, человек не

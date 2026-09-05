@@ -56,6 +56,7 @@ void ZAppState::readZoom(const QJsonObject& root) {
         setSourceZoom(steps.value(QStringLiteral("source"))
                           .toInt(steps.value(QStringLiteral("history")).toInt(0)));
         setInterfaceZoom(steps.value(QStringLiteral("interface")).toInt(0));
+        setBookZoom(steps.value(QStringLiteral("book")).toInt(0));
         return;
     }
 
@@ -144,7 +145,8 @@ void ZAppState::save(const ZStorageManager& stores) const {
                   {QStringLiteral("zoom"),
                    QJsonObject{{QStringLiteral("note"), session.noteZoom()},
                                {QStringLiteral("source"), session.sourceZoom()},
-                               {QStringLiteral("interface"), session.interfaceZoom()}}},
+                               {QStringLiteral("interface"), session.interfaceZoom()},
+                               {QStringLiteral("book"), session.bookZoom()}}},
                   {QStringLiteral("windowGeometry"),
                    QString::fromLatin1(session.windowGeometry().toBase64())},
                   {QStringLiteral("splitterState"),
