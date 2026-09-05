@@ -37,6 +37,14 @@ namespace zametti {
 qreal markerColumn(MarkerStyle style, int ordinal, int level, const QFont& base,
                    const ZDocStyle& look = settings().style());
 
+// Доля высоты строки для пункта с ЭТИМ маркером. У задачи с нарисованной
+// рамкой крупнее чернил (layout.checkboxScale > 1) строка выше на рост рамки:
+// иначе рамки соседних задач смыкались бы (просьба владельца 05.09.2026).
+// Долей, а не пикселями — как вся высота строки: едет за зумом сама. Для
+// прочих маркеров и рамки не крупнее чернил — listLineHeightFactor как есть.
+qreal listLineHeightFactorFor(Marker marker, const QFont& base,
+                              const ZDocStyle& look = settings().style());
+
 // Знак маркера с учётом вложенности: нумерованный идёт по кругу
 // 1. → a. → 1) (буквы биективно: z, aa, ..., zz, aaa). Наружу — для тестов.
 QString markerText(MarkerStyle style, int ordinal, int level,

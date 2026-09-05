@@ -689,9 +689,10 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // множится на высоту объекта, а не на высоту буквы: под фотографией в 340
     // точек 140 % оставляли полосу пустоты в полторы сотни точек. Объект сам
     // назвал свой размер — добавлять к нему ритм текста нечего.
+    // Пункт с рамкой задачи крупнее чернил — выше на рост рамки (marker.h).
     const qreal lineFactor = (imageObject || formulaObject || tableObject)
                                  ? 1.0
-                                 : (list ? style.listLineHeightFactor()
+                                 : (list ? listLineHeightFactorFor(b.marker, ctx.base, style)
                                          : style.lineHeightFactor());
     applyLineHeight(blockFmt, lineFactor, ctx.basePoint * fontStepFactor(lineStep), ctx.base, style);
 
