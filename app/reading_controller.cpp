@@ -1,5 +1,7 @@
 #include "reading_controller.h"
 
+#include "zapp.h"
+
 namespace zametti {
 
 ReadingController::ReadingController(NoteEditor& editor, ZBookView& view, QObject* parent)
@@ -7,6 +9,7 @@ ReadingController::ReadingController(NoteEditor& editor, ZBookView& view, QObjec
     // THE LEAVING VIEW DETACHES FIRST: before the editor installs the next
     // note, the pages give the old document back (and remember the place).
     connect(&editor_, &NoteEditor::fileAboutToChange, this, [this](const QString&) {
+        rememberMode();
         if (active_) view_.clear();
     });
     connect(&editor_, &NoteEditor::fileChanged, this, [this](const QString&) { refill(); });
@@ -33,8 +36,16 @@ bool ReadingController::enter() {
     editor_.releaseCaret();
     view_.showNote(editor_.noteHandle());
     active_ = true;
+    rememberMode();
     emit modeChanged(true);
     return true;
+}
+
+void ReadingController::rememberMode() {
+    if (editor_.filePath().isEmpty()) return;
+    const std::shared_ptr<ZNote> note = editor_.noteHandle();
+    if (note == nullptr) return;
+    ZApp::instance().state().rememberMode(note->id(), active_ ? 1 : 2);
 }
 
 void ReadingController::leave() {
@@ -42,6 +53,7 @@ void ReadingController::leave() {
     view_.clear();
     editor_.takeOverDocument();
     active_ = false;
+    rememberMode();
     emit modeChanged(false);
 }
 
@@ -58,7 +70,11 @@ void ReadingController::refill() {
         leave();
         return;
     }
-    if (editor_.isBookNote()) {
+    // THE MODE THE NOTE WAS LEFT IN wins; never chosen — a book is read, a
+    // note is edited.
+    const int remembered = ZApp::instance().state().caretOf(editor_.noteHandle()->id()).mode;
+    const bool read = remembered == 1 || (remembered == 0 && editor_.isBookNote());
+    if (read) {
         if (active_) {
             editor_.releaseCaret();
             view_.showNote(editor_.noteHandle());

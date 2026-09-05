@@ -25,6 +25,9 @@ public:
     // false — no note is open, nothing to read.
     bool enter();
     void leave();
+    // Write the mode the note is in now into the app state (by note id):
+    // called on enter / leave and before the note changes.
+    void rememberMode();
     bool toggle();
     bool active() const { return active_; }
 

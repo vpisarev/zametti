@@ -15,19 +15,54 @@ QString ZAppState::path() {
     return configDir() + QStringLiteral("/state.json");
 }
 
-void ZAppState::rememberCaret(const QString& noteId, const CaretSpot& spot) {
-    if (noteId.isEmpty()) return;
+namespace {
+// The entry of the note, taken out of the list (to the head after the edit);
+// a fresh one when there is none.
+ZAppState::CaretEntry takeEntry(QList<ZAppState::CaretEntry>& carets, const QString& noteId) {
     // Без дублей: запись по id одна; свежая — в голову, чтобы при обрезке по
     // числу уходили самые давние.
-    for (qsizetype i = carets_.size(); i-- > 0;)
-        if (carets_[i].noteId == noteId) carets_.removeAt(i);
-    carets_.prepend({noteId, spot.cursor, spot.anchor, spot.scroll});
+    ZAppState::CaretEntry entry;
+    entry.noteId = noteId;
+    for (qsizetype i = carets.size(); i-- > 0;) {
+        if (carets[i].noteId != noteId) continue;
+        entry = carets[i];
+        carets.removeAt(i);
+    }
+    return entry;
+}
+}  // namespace
+
+void ZAppState::rememberCaret(const QString& noteId, const CaretSpot& spot) {
+    if (noteId.isEmpty()) return;
+    CaretEntry entry = takeEntry(carets_, noteId);
+    entry.cursor = spot.cursor;
+    entry.anchor = spot.anchor;
+    entry.scroll = spot.scroll;
+    carets_.prepend(entry);
+    while (carets_.size() > kCaretLimit) carets_.removeLast();
+}
+
+void ZAppState::rememberReading(const QString& noteId, int block, int line) {
+    if (noteId.isEmpty()) return;
+    CaretEntry entry = takeEntry(carets_, noteId);
+    entry.readingBlock = block;
+    entry.readingLine = line;
+    carets_.prepend(entry);
+    while (carets_.size() > kCaretLimit) carets_.removeLast();
+}
+
+void ZAppState::rememberMode(const QString& noteId, int mode) {
+    if (noteId.isEmpty()) return;
+    CaretEntry entry = takeEntry(carets_, noteId);
+    entry.mode = mode;
+    carets_.prepend(entry);
     while (carets_.size() > kCaretLimit) carets_.removeLast();
 }
 
 CaretSpot ZAppState::caretOf(const QString& noteId) const {
     for (const CaretEntry& e : carets_)
-        if (e.noteId == noteId) return CaretSpot{e.cursor, e.anchor, e.scroll};
+        if (e.noteId == noteId)
+            return CaretSpot{e.cursor, e.anchor, e.scroll, e.readingBlock, e.readingLine, e.mode};
     return CaretSpot{};
 }
 
@@ -104,6 +139,9 @@ ZAppState ZAppState::load(ZStorageManager* stores) {
         e.cursor = o.value(QStringLiteral("cursor")).toInt(0);
         e.anchor = o.value(QStringLiteral("anchor")).toInt(e.cursor);
         e.scroll = o.value(QStringLiteral("scroll")).toInt(0);
+        e.readingBlock = o.value(QStringLiteral("readingBlock")).toInt(0);
+        e.readingLine = o.value(QStringLiteral("readingLine")).toInt(0);
+        e.mode = o.value(QStringLiteral("mode")).toInt(0);
         if (!e.noteId.isEmpty() && session.carets_.size() < kCaretLimit)
             session.carets_.append(e);
     }
@@ -135,7 +173,10 @@ void ZAppState::save(const ZStorageManager& stores) const {
         carets.append(QJsonObject{{QStringLiteral("id"), e.noteId},
                                   {QStringLiteral("cursor"), e.cursor},
                                   {QStringLiteral("anchor"), e.anchor},
-                                  {QStringLiteral("scroll"), e.scroll}});
+                                  {QStringLiteral("scroll"), e.scroll},
+                                            {QStringLiteral("readingBlock"), e.readingBlock},
+                                            {QStringLiteral("readingLine"), e.readingLine},
+                                            {QStringLiteral("mode"), e.mode}});
     const QJsonObject root{
                   {QStringLiteral("lastFile"), session.lastFile()},
                   {QStringLiteral("storeRoot"), session.storeRoot()},

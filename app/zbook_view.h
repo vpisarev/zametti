@@ -15,7 +15,6 @@
 #include "book_pages.h"
 #include "znote.h"
 
-#include <QHash>
 #include <QTimer>
 #include <QWidget>
 #include <memory>
@@ -69,8 +68,10 @@ public:
     // The bookmarks changed: the glyphs in the margins repaint.
     void refreshMarks();
 
-    // Where the left page starts — for the app state.
+    // Where the left page starts; remembered in the app state by note id
+    // (the same map as the carets: one store of places, ReaderView's rule).
     PageStart place() const { return anchor_; }
+    void rememberPlace();
     void restorePlace(const PageStart& place);
 
 signals:
@@ -100,8 +101,6 @@ private:
     int first_ = 0;
     int active_ = 0;
     PageStart anchor_;
-    // Places read this session, by note id (the app state takes over in §5).
-    QHash<QString, PageStart> places_;
     QTimer edited_;
     QMetaObject::Connection contents_;
 };

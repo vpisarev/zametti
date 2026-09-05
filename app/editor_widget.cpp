@@ -3532,6 +3532,12 @@ void NoteEditor::toggleBookmark(int block) {
     if (note_ == nullptr || storage_ == nullptr || !note_->hasPath()) return;
     if (block < 0 || block >= document()->blockCount()) return;
     NoteBookmarks& marks = note_->bookmarks();
+    // A blank line names nothing: the bookmark goes on the first paragraph
+    // with text from here on (the page's first paragraph, the caret's line).
+    while (block < document()->blockCount() && marks.at(block) == nullptr &&
+           NoteBookmarks::snippetOf(document()->findBlockByNumber(block).text()).isEmpty())
+        ++block;
+    if (block >= document()->blockCount()) return;
     QString error;
     const QString now = store::isoNow();
     if (const NoteBookmarks::Anchor* have = marks.at(block)) {

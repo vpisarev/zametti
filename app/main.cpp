@@ -3494,6 +3494,9 @@ int main(int argc, char** argv) {
         out.setHistoryListWidth(historyListWidth);
         // Hidden by the reading mode is not hidden by the person: what comes
         // back after the book is what is remembered.
+        // The reading place and the mode of the open note (brief 18).
+        if (reading.active()) bookView.rememberPlace();
+        reading.rememberMode();
         out.setPanelsHidden(reading.active() ? !panelsBeforeReading
                                              : !toolbar.isChecked(zametti::Toolbar::Button::Panels));
         out.setMarkdownMode(markdown.active());

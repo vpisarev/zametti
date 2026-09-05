@@ -1,6 +1,7 @@
 #include "zbook_view.h"
 
 #include "settings.h"
+#include "zapp.h"
 
 #include <QFontMetricsF>
 #include <QPalette>
@@ -59,14 +60,20 @@ void ZBookView::showNote(std::shared_ptr<ZNote> note) {
     table_.attach(pages_[0]->document());
     contents_ = connect(pages_[0]->document(), &QTextDocument::contentsChanged, this,
                         [this] { edited_.start(); });
-    anchor_ = places_.value(note_->id(), PageStart{});
+    const CaretSpot spot = ZApp::instance().state().caretOf(note_->id());
+    anchor_ = PageStart{spot.readingBlock, spot.readingLine};
     active_ = 0;
     relayoutPages();
 }
 
+void ZBookView::rememberPlace() {
+    if (note_ == nullptr) return;
+    ZApp::instance().state().rememberReading(note_->id(), anchor_.block, anchor_.line);
+}
+
 void ZBookView::clear() {
     if (note_ == nullptr) return;
-    places_.insert(note_->id(), anchor_);
+    rememberPlace();
     disconnect(contents_);
     edited_.stop();
     table_.attach(nullptr);

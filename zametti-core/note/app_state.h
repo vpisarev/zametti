@@ -145,9 +145,21 @@ public:
         int cursor = 0;
         int anchor = 0;
         int scroll = 0;
+        // The reading place and the mode (brief 18), see CaretSpot.
+        int readingBlock = 0;
+        int readingLine = 0;
+        int mode = 0;
     };
     static constexpr int kCaretLimit = 500;
+    // THE CARET HALF ONLY: cursor, anchor, scroll. The reading half of the
+    // entry (place, mode) is written by the two below and survives this call
+    // — the editor stashes the caret on every switch of notes, and it must
+    // not wipe where the book was being read.
     void rememberCaret(const QString& noteId, const CaretSpot& spot);
+    // The reading place (brief 18): the line at the top of the left page.
+    void rememberReading(const QString& noteId, int block, int line);
+    // The mode the note was left in: 1 — reading, 2 — editing.
+    void rememberMode(const QString& noteId, int mode);
     // Место каретки в заметке по id; неизвестная заметка — начало документа
     // (0, 0, 0): вызывающему не о чем спрашивать дальше (решение владельца —
     // «чуть-чуть интеллекта каждому классу», чтобы логика не размазывалась).
