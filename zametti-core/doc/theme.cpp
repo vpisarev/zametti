@@ -33,6 +33,7 @@ const Role kRoles[] = {
     {"divider", "#c8cdd2", "the thematic break '---'"},
     {"raw", "#999fa6", "source we could not parse, kept verbatim"},
     {"caption", "#777e86", "picture captions and note-list snippets"},
+    {"bookmark", "#802040", "the bookmark glyph in a book's margin"},
     {"codeBackground", "#0e000000", "behind code, in blocks and inline"},
     {"codeLang", "#7a8088", "language name on the code plate"},
 
@@ -238,6 +239,7 @@ void ZTheme::applyTo(ZSettings& settings) const {
     set([&](const QColor& c) { look.setSelectionBackground(c); }, colour("selectionBackground"));
     set([&](const QColor& c) { look.setSelectionForeground(c); }, colour("selectionForeground"));
     set([&](const QColor& c) { look.setSearchHighlight(c); }, colour("searchHighlight"));
+    set([&](const QColor& c) { look.setBookmarkColor(c); }, colour("bookmark"));
     set([&](const QColor& c) { look.setCaretColor(c); }, colour("accent"));
     set([&](const QColor& c) { look.setCheckboxCheckedColor(c); }, colour("accent"));
     set([&](const QColor& c) { look.setCheckboxUncheckedColor(c); }, colour("checkboxOff"));

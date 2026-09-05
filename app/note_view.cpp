@@ -470,6 +470,13 @@ void NoteView::repaintOverNativeCaret(QPainter& painter) {
     painter.restore();
 }
 
+void NoteView::takeOverDocument() {
+    if (document() == nullptr) return;
+    attachObjectHandlers(document());
+    restoreScale();
+    applyContentWidth();
+}
+
 void NoteView::applyContentWidth() {
     // ЦЕНТРИРОВАНИЕ КОЛОНКИ — ПОЛЯМИ ВЬЮПОРТА, А НЕ ДОКУМЕНТА.
     //

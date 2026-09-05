@@ -1,4 +1,5 @@
 #include "znote.h"
+#include "settings.h"
 
 #include "times.h"
 
@@ -43,7 +44,16 @@ QString ZNote::id() const { return QFileInfo(path_).completeBaseName(); }
 bool ZNote::load(std::string_view bytes) {
     NoteHeader lifted;
     std::vector<Piece> built;
-    if (!doc_.loadMarkdown(bytes, &lifted, &built)) return false;
+    // THE LOOK IS CHOSEN BY THE ROLE, HERE AND ONLY HERE (brief 18): a book is
+    // built with the reading style — serif, the red line, justified — and
+    // every road to a note's document (editor, reader, history, import) goes
+    // through this load. Switching the window between reading and editing
+    // never rebuilds: the same document, the same undo stack.
+    const auto styleFor = [](const NoteHeader& header) -> std::shared_ptr<const ZDocStyle> {
+        if (header.get(kRole) == kBook) return settings().readingStyle();
+        return nullptr;
+    };
+    if (!doc_.loadMarkdown(bytes, &lifted, &built, styleFor)) return false;
     header_ = lifted;
     // Блоки сборки — заплатке редактора; она сравнивает их с правленым.
     built_.set(std::move(built), doc_.revision());

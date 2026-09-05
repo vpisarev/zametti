@@ -331,6 +331,33 @@ const std::vector<Key>& keys() {
         ZM_KEY_INT("pdf", "maxImageSize", "pictures are shrunk to this side before export", pdf(),
                    maxExportedImageSize, MaxExportedImageSize),
 
+        // --- READING (brief 18) ----------------------------------------------
+        ZM_KEY_STR("reading", "fontFamily", "font of a book; \"serif\" = the system serif",
+                   reading(), fontFamily, FontFamily),
+        ZM_KEY_REAL("reading", "fontSize", "size of the book font, in points; 0 = the note font",
+                    reading(), fontPoint, FontPoint),
+        ZM_KEY_REAL("reading", "lineHeightFactor", "line height of a book, as a factor of the font height",
+                    reading(), lineHeightFactor, LineHeightFactor),
+        ZM_KEY_REAL("reading", "maxContentWidth", "column width of a page, in widths of 'A'",
+                    reading(), maxContentWidth, MaxContentWidth),
+        ZM_KEY_REAL("reading", "sideMargin", "side margin of a page, in widths of 'A'",
+                    reading(), sideMargin, SideMargin),
+        ZM_KEY_REAL("reading", "firstLineIndent", "red line of a paragraph, in widths of 'A'",
+                    reading(), firstLineIndent, FirstLineIndent),
+        ZM_KEY_REAL("reading", "paragraphSpacing",
+                    "air between paragraphs, in line heights; 0 = the red line alone",
+                    reading(), paragraphSpacing, ParagraphSpacing),
+        ZM_KEY_BOOL("reading", "justify", "justified paragraphs", reading(), justify, Justify),
+        ZM_KEY_BOOL("reading", "centerHeadings", "centred headings", reading(), centerHeadings,
+                    CenterHeadings),
+        ZM_KEY_INT("reading", "pagesPerSpread", "pages side by side: 0 = as many as fit, 1 or 2",
+                   reading(), pagesPerSpread, PagesPerSpread),
+        ZM_KEY_REAL("reading", "minPageWidth",
+                    "least width of one page for the automatic choice, in widths of 'A'",
+                    reading(), minPageWidth, MinPageWidth),
+        ZM_KEY_REAL("reading", "pageGap", "gap between the two pages, in widths of 'A'",
+                    reading(), pageGap, PageGap),
+
         // --- ЖУРНАЛЫ ---------------------------------------------------------
         ZM_KEY_BOOL("logs", "writeErrLog", "write err.log next to this file", logs(), writeErrLog,
                     WriteErrLog),
@@ -372,6 +399,21 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
 }  // namespace
 
 const std::vector<ZSettings::Key>& ZSettings::registry() { return keys(); }
+
+std::shared_ptr<const ZDocStyle> ZSettings::readingStyle() const {
+    auto look = std::make_shared<ZDocStyle>(style_);
+    const Reading& r = reading_;
+    if (!r.fontFamily().isEmpty()) look->setFontFamily(r.fontFamily());
+    if (r.fontPoint() > 0.0) look->setBaseFontPoint(r.fontPoint());
+    look->setLineHeightFactor(r.lineHeightFactor());
+    look->setMaxContentWidth(r.maxContentWidth());
+    look->setSideMargin(r.sideMargin());
+    look->setFirstLineIndent(r.firstLineIndent());
+    look->setEmptyLineFactor(r.paragraphSpacing());
+    look->setJustify(r.justify());
+    look->setCenterHeadings(r.centerHeadings());
+    return look;
+}
 
 const ZSettings& settings() { return g_settings; }
 // Люк наборов (tests/settings_hook.h): в боевых заголовках его нет.

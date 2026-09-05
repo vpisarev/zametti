@@ -81,6 +81,18 @@ public:
     // настроек оформления.
     void refreshAppearance();
 
+    // THE NOTE ITSELF, for the view that shows the same live document in
+    // reading mode (brief 18): a view must hold the note, not just its
+    // document (the contract at ZDocument::getDocument), and the search cache
+    // of the note is one for both views. The editor stays the owner of the
+    // note's life — opening, saving, the caret map; the handle only keeps it
+    // alive and lets the other view read it.
+    std::shared_ptr<ZNote> noteHandle() const { return note_; }
+    // Let go of the caret hold (see holdingCaret_): the reading view takes
+    // the document, and a hidden editor chasing its caret on every layout
+    // step would lay the whole book out for nothing.
+    void releaseCaret() { holdingCaret_ = false; }
+
     // АРХИВНУЮ ЗАМЕТКУ ПОКАЗЫВАЕТ ВИД, А НЕ РЕДАКТОР. Тело её лежит в файле,
     // как у живой, поэтому и документ у неё обычный; но правится она только
     // после возврата из архива, и показывать её редактором значит обещать
@@ -747,7 +759,6 @@ private:
     // поставил кто-то другой (зум держит блок в середине окна, поиск ведёт к
     // совпадению), решение уже принято, и лезть поверх него нельзя.
     bool holdingCaret_ = false;
-    void releaseCaret() { holdingCaret_ = false; }
     void keepCaretInView();
 
     int imageResizeBlock_ = -1;        // номер блока; -1 — не тянем

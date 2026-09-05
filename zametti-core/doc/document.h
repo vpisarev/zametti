@@ -133,8 +133,14 @@ public:
     // lifted (конверт файла — дело заметки, ZNote); документ строится из тела.
     // built — блоки, из которых собран документ (заплатке; долг, названный в
     // znote.h): не спросили — черновик умирает вместе с вызовом.
+    // styleFor — the style to build with, chosen by the lifted header (a note
+    // with role: book is built with the reading look, ZNote::load); a null
+    // answer keeps whatever style is attached. Asked here, between the parse
+    // and the build, because the role is known only once the header is
+    // lifted, and the build needs the style before it starts.
+    using StyleChooser = std::function<std::shared_ptr<const ZDocStyle>(const NoteHeader&)>;
     bool loadMarkdown(std::string_view bytes, NoteHeader* lifted = nullptr,
-                      std::vector<Piece>* built = nullptr);
+                      std::vector<Piece>* built = nullptr, const StyleChooser& styleFor = {});
 
     // Канонические байты ТЕЛА — без шапки: шапки у документа нет, она у
     // заметки (ZNote). Это ровно то, что уйдёт в файл после конверта, — и

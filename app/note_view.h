@@ -179,6 +179,15 @@ public:
     // размеров в документе нет). Звать обязан КАЖДЫЙ, кто подменил документ или
     // собрал его целиком, иначе заметка молча откроется в 100 %.
     void restoreScale() { setZoom(zoom_); }
+    // TAKE THE SHOWN DOCUMENT OVER (brief 18). One live document is shown by
+    // two views in turn — the editor and the book view — and the document
+    // remembers only one owner: the object handlers registered on its layout
+    // hold a back-pointer to a view, and the text width is one for both. So
+    // the view that comes on screen claims the document again: handlers, its
+    // own font (a no-op when the font is the same), its own column. Both
+    // roads call this — the fresh show and the return — by the project's rule
+    // for derived display state.
+    void takeOverDocument();
 
     // Пересчитывает поля под текущую ширину вьюпорта. Вызывается после каждой
     // пересборки документа: сборщик ставит поля по умолчанию, ничего не зная

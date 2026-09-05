@@ -74,7 +74,8 @@ ZDocument ZDocument::fromPieces(const std::vector<Piece>& blocks,
 
 // --- круг с диском ---------------------------------------------------------
 
-bool ZDocument::loadMarkdown(std::string_view bytes, NoteHeader* lifted, std::vector<Piece>* built) {
+bool ZDocument::loadMarkdown(std::string_view bytes, NoteHeader* lifted, std::vector<Piece>* built,
+                             const StyleChooser& styleFor) {
     // НОРМАЛИЗАЦИЯ ПРОБЕЛОВ — ЧАСТЬ ВВОЗА, а не отдельный шаг: так делают все
     // нынешние места вызова, и без неё ZDocument читал бы не то же, что читает
     // программа.
@@ -88,6 +89,9 @@ bool ZDocument::loadMarkdown(std::string_view bytes, NoteHeader* lifted, std::ve
     NoteHeader header;
     parsePieces(normaliseSpaces(QString::fromUtf8(bytes.data(), qsizetype(bytes.size()))),
                 blocks, header);
+    if (styleFor) {
+        if (std::shared_ptr<const ZDocStyle> chosen = styleFor(header)) setStyle(std::move(chosen));
+    }
     if (lifted != nullptr) *lifted = std::move(header);
     buildDocument(blocks, d_->text);
     if (built != nullptr) *built = std::move(blocks);

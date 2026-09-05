@@ -168,6 +168,12 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first);
 // ВСЁ НИЖЕ — ПО СТИЛЮ; без стиля — по стилю настроек (settings().style()).
 // Стиль документа принадлежит документу (ZDocument::style()), и правка обязана
 // звать эти функции с ним, а не с глобальным.
+// The height of an EMPTY line (a VSpace block): the ordinary line height, or
+// the style's emptyLineFactor when set — a book collapses the blank line
+// between paragraphs to one fixed pixel (brief 18). One function for both
+// roads that make such a block: the builder and the editor's own insert.
+void applyEmptyLineHeight(QTextBlockFormat& format, qreal linePoint, const QFont& base,
+                          const ZDocStyle& style);
 void applyLineHeight(QTextBlockFormat& format, qreal factor, qreal linePoint,
                      const QFont& base, const ZDocStyle& style = settings().style());
 

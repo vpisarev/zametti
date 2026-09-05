@@ -203,6 +203,21 @@ public:
     // начало следующей. Ноль — не ограничивать.
     ZM_SETTING(qreal, maxContentWidth, MaxContentWidth, 90.0, 20.0, 400.0)
 
+    // --- the reading look (brief 18) ---
+    // These are BAKED into block formats by the builder, so they belong to the
+    // style and are chosen by the note's role at build time (role: book →
+    // ZSettings::readingStyle()); the editor's own style keeps them off.
+    // First-line indent of a paragraph, in widths of "A". A book sets its
+    // paragraphs apart with a red line instead of air between them.
+    ZM_SETTING(qreal, firstLineIndent, FirstLineIndent, 0.0, 0.0, 10.0)
+    // Height of an empty line (the block between two paragraphs) as a factor of
+    // the line height; negative = the ordinary lineHeightFactor. A book wants
+    // zero: the blank line stays in the file, but takes no room on the page.
+    ZM_SETTING(qreal, emptyLineFactor, EmptyLineFactor, -1.0, -1.0, 4.0)
+    // Justified paragraphs and centred headings — the classic book page.
+    ZM_SETTING_PLAIN(bool, justify, Justify, false)
+    ZM_SETTING_PLAIN(bool, centerHeadings, CenterHeadings, false)
+
     // --- цвета ---
     ZM_SETTING_PLAIN(QColor, pageBackground, PageBackground, 0xfe, 0xfe, 0xfb)
     // ЦВЕТ ТЕКСТА. Своего цвета текста у программы не было вовсе: она стояла на
@@ -249,6 +264,8 @@ public:
     // то, что я ищу», и в окне они попадаются рядом: текущая находка ещё и
     // выделена. Одним цветом их было не различить.
     ZM_SETTING_PLAIN(QColor, searchHighlight, SearchHighlight, 0xcb, 0xab, 0xff)
+    // The bookmark glyph in the left margin (brief 18): claret, the owner's pick.
+    ZM_SETTING_PLAIN(QColor, bookmarkColor, BookmarkColor, 0x80, 0x20, 0x40)
     // Разность версий в истории. Появилось — зелёным, исчезло — красным;
     // изменённая строка показывается парой «− старая / + новая» теми же двумя
     // цветами (сессия 7). Оранжевым (diffChanged) рисуется ПОЛОСА ТЕКУЩЕГО
@@ -1225,6 +1242,37 @@ struct ZSettings {
     };
 
     // ================================================================
+    // READING (brief 18): how a book looks and how the spread is laid out.
+    // The baked part (font, rhythm, red line, justification) becomes a
+    // ZDocStyle through readingStyle() and is chosen by the note's role at
+    // build time; the rest (pages per spread, gaps) is read by the book view.
+    // ================================================================
+    struct Reading {
+        // "serif" is a generic family: Qt resolves it to the system serif
+        // (Times New Roman on macOS, DejaVu Serif on Linux). Empty = the note font.
+        ZM_SETTING_PLAIN(QString, fontFamily, FontFamily, QStringLiteral("serif"))
+        // Zero = the note font's size.
+        ZM_SETTING(qreal, fontPoint, FontPoint, 0.0, 0.0, 96.0)
+        ZM_SETTING(qreal, lineHeightFactor, LineHeightFactor, 1.5, 1.0, 3.0)
+        // Column width in widths of "A" (50 ≈ 34 em) and the side margin of a page.
+        ZM_SETTING(qreal, maxContentWidth, MaxContentWidth, 50.0, 20.0, 400.0)
+        ZM_SETTING(qreal, sideMargin, SideMargin, 4.0, 0.0, 60.0)
+        // The red line and the air between paragraphs (in line heights; zero =
+        // paragraphs touch, the red line alone tells them apart).
+        ZM_SETTING(qreal, firstLineIndent, FirstLineIndent, 1.5, 0.0, 10.0)
+        ZM_SETTING(qreal, paragraphSpacing, ParagraphSpacing, 0.0, 0.0, 3.0)
+        ZM_SETTING_PLAIN(bool, justify, Justify, true)
+        ZM_SETTING_PLAIN(bool, centerHeadings, CenterHeadings, true)
+        // Pages side by side: 0 = as many as fit (two when the window is wide
+        // enough for two columns of minPageWidth), 1 or 2 to force.
+        ZM_SETTING(int, pagesPerSpread, PagesPerSpread, 0, 0, 2)
+        // The least width of one page, in widths of "A", for the automatic choice.
+        ZM_SETTING(qreal, minPageWidth, MinPageWidth, 45.0, 20.0, 200.0)
+        // Gap between the two pages of a spread, in widths of "A".
+        ZM_SETTING(qreal, pageGap, PageGap, 4.0, 0.0, 20.0)
+    };
+
+    // ================================================================
     // ОБЛАЧНАЯ СИНХРОНИЗАЦИЯ (m17). Секретов здесь НЕТ и не будет: пароль
     // сервера живёт в keyring, пароль шифрования не хранится нигде. Здесь —
     // только то, что человек правит руками, как и весь конфиг.
@@ -1293,6 +1341,14 @@ struct ZSettings {
     Pdf& pdf() { return pdf_; }
     const Sync& sync() const { return sync_; }
     Sync& sync() { return sync_; }
+    const Reading& reading() const { return reading_; }
+    Reading& reading() { return reading_; }
+
+    // THE READING LOOK AS A STYLE: a copy of style() with the baked fields
+    // replaced from reading(). A note with role: book is built with it
+    // (ZNote::load); nothing else in the program is touched. A fresh copy on
+    // every call — the caller keeps the pointer for the document's lifetime.
+    std::shared_ptr<const ZDocStyle> readingStyle() const;
 
 private:
     ZDocStyle style_;
@@ -1310,6 +1366,7 @@ private:
     Pdf pdf_;
     Sync sync_;
     Logs logs_;
+    Reading reading_;
 };
 
 

@@ -308,8 +308,21 @@ QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first, const ZDoc
     format.setTopMargin(blockTopMargin(Kind::VSpace, false, previousIsVSpace, first, style) *
                         layoutLineUnit(style));
     format.setBottomMargin(0);
-    applyLineHeight(format, style.lineHeightFactor(), base.pointSizeF(), base, style);
+    applyEmptyLineHeight(format, base.pointSizeF(), base, style);
     return format;
+}
+
+void applyEmptyLineHeight(QTextBlockFormat& format, qreal linePoint, const QFont& base,
+                          const ZDocStyle& style) {
+    // A BOOK COLLAPSES THE EMPTY LINE (brief 18): the blank line between two
+    // paragraphs stays in the file, but the page shows the red line instead of
+    // air. A zero factor cannot go through applyLineHeight (zero means "leave
+    // as is" there), and a zero-height block would have nowhere to put a
+    // caret: one pixel, fixed, whatever the line height mode.
+    const qreal factor = style.emptyLineFactor() < 0.0 ? style.lineHeightFactor()
+                                                         : style.emptyLineFactor();
+    if (factor <= 0.0) format.setLineHeight(1.0, QTextBlockFormat::FixedHeight);
+    else applyLineHeight(format, factor, linePoint, base, style);
 }
 
 QFont layoutBaseFont(const ZDocStyle& style) {
@@ -591,6 +604,8 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         switch (b.kind) {
             case Kind::Heading:
                 blockFmt.setHeadingLevel(b.headingLevel);
+                // A book centres its chapter titles (the reading look, brief 18).
+                if (style.centerHeadings()) blockFmt.setAlignment(Qt::AlignHCenter);
                 charFmt.setFontWeight(QFont::Bold);
                 lineStep = style.headingStep()[size_t(b.headingLevel - 1)];
                 setFontStep(charFmt, lineStep);
@@ -619,6 +634,16 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
             // сам всплыть здесь ошибкой сборки, а не молча собраться
             // обычным абзацем.
             case Kind::Paragraph:
+                // THE READING LOOK IS BAKED HERE, by the style the note was
+                // built with: a book gets the red line and justified text, the
+                // editor's own style keeps both off. Paragraphs inside list
+                // items keep the list's geometry.
+                if (b.level < 0) {
+                    if (style.firstLineIndent() > 0.0)
+                        blockFmt.setTextIndent(style.firstLineIndent() * ctx.charUnit);
+                    if (style.justify()) blockFmt.setAlignment(Qt::AlignJustify);
+                }
+                break;
             case Kind::VSpace:
             case Kind::ListItem:
                 break;
@@ -750,7 +775,10 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                                  ? 1.0
                                  : (list ? listLineHeightFactorFor(b.marker, ctx.base, style)
                                          : style.lineHeightFactor());
-    applyLineHeight(blockFmt, lineFactor, ctx.basePoint * fontStepFactor(lineStep), ctx.base, style);
+    if (!raw && b.kind == Kind::VSpace)
+        applyEmptyLineHeight(blockFmt, ctx.basePoint, ctx.base, style);
+    else
+        applyLineHeight(blockFmt, lineFactor, ctx.basePoint * fontStepFactor(lineStep), ctx.base, style);
 
     // ОДИН QTextBlock на любой блок заметки. Завершающий перевод строки у
     // литерального держится признаком, а не байтом (TrailingNewlineProperty):
