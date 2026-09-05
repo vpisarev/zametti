@@ -2035,6 +2035,22 @@ void checkCheckboxLineHeight() {
     check(std::abs(small.task - one.task) < 0.01, "рамка мельче чернил строку не ужимает");
 }
 
+// ВЫДЕЛЕНИЕ ПО ШИРИНЕ ТЕКСТА (05.09.2026): маковский стиль красит его на всю
+// строку до края области перерисовки, и частичные перерисовки расходились с
+// полными «лишними блоками» у правого края. Намёк стиля у вида и его
+// вьюпорта обязан быть выключен. Краснеет только там, где стиль его включает
+// (Cocoa): под Fusion он выключен и так — это проверка на маке.
+void checkSelectionIsTextWidth() {
+    zametti::NoteEditor editor;
+    QStyleOption option;
+    option.initFrom(editor.viewport());
+    check(editor.viewport()->style()->styleHint(QStyle::SH_RichText_FullWidthSelection, &option,
+                                                editor.viewport()) == 0,
+          "вьюпорт заметки не красит выделение на всю строку");
+    check(editor.style()->styleHint(QStyle::SH_RichText_FullWidthSelection, &option, &editor) == 0,
+          "вид заметки не красит выделение на всю строку");
+}
+
 void checkCheckboxClickWithSelection() {
     const QString path = writeNote(
         "щелчок-выделение.md", QStringLiteral("- [ ] раз\n- [ ] два\n- [ ] три\n"));
@@ -3370,6 +3386,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkCheckboxClickWithSelection();
     checkCheckboxScale();
     checkCheckboxLineHeight();
+    checkSelectionIsTextWidth();
     checkUndoKeepsCursor();
     checkViewHoldsForEveryOperation();
     checkColumnAcrossMargins();
