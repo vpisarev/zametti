@@ -3,6 +3,7 @@
 #include "settings.h"
 
 #include <QFontMetricsF>
+#include <QPalette>
 #include <QResizeEvent>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -22,6 +23,7 @@ ZBookView::ZBookView(QWidget* parent) : QWidget(parent) {
     }
     pages_[1]->hide();
     setFocusProxy(pages_[0]);
+    paintCanvas();
     // An edit of the document (a bookmark does not edit; marks will) shifts
     // the lines: the table is counted anew once the typing pauses.
     edited_.setSingleShot(true);
@@ -185,8 +187,18 @@ void ZBookView::reclaim() {
     showSpread(table_.pageOf(anchor_));
 }
 
+void ZBookView::paintCanvas() {
+    // The paper under both pages and the gap between them: the page colour
+    // of the pages themselves, so the spread reads as one sheet.
+    QPalette canvas = palette();
+    canvas.setColor(QPalette::Window, pages_[0]->palette().color(QPalette::Base));
+    setPalette(canvas);
+    setAutoFillBackground(true);
+}
+
 void ZBookView::refreshAppearance() {
     for (BookPage* page : pages_) page->refreshAppearance();
+    paintCanvas();
     if (note_ == nullptr) return;
     pages_[0]->takeOverDocument();
     relayoutPages();

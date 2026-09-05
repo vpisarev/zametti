@@ -84,6 +84,7 @@ private:
     void showSpread(int first);
     void resetTable();
     void announce();
+    void paintCanvas();
     qreal charUnit() const;
 
     std::shared_ptr<ZNote> note_;

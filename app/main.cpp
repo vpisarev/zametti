@@ -1463,11 +1463,14 @@ int main(int argc, char** argv) {
                      [&](const QString& chapter, int page, int count, int percent) {
                          if (!reading.active()) return;
                          // The chapter in capitals — larger to the eye in the
-                         // small font of the line (owner's wish).
-                         const QString place =
-                             count > 0 ? QStringLiteral("page %1/%2 · %3%").arg(page).arg(count).arg(percent)
-                                       : QStringLiteral("page %1/… · %2%").arg(page).arg(percent);
-                         statusBar.setReading(chapter.toUpper(), place);
+                         // small font of the line; a spread names both its
+                         // pages, «pages 5–6/108» (owner's wishes).
+                         const QString total = count > 0 ? QString::number(count) : QStringLiteral("…");
+                         QString pages = QStringLiteral("page %1").arg(page);
+                         if (bookView.pagesShown() == 2 && (count < 0 || page < count))
+                             pages = QStringLiteral("pages %1–%2").arg(page).arg(page + 1);
+                         statusBar.setReading(chapter.toUpper(),
+                                              QStringLiteral("%1/%2 · %3%").arg(pages, total).arg(percent));
                      });
     // РЕЖИМ ИСХОДНИКА ПЕРЕЖИВАЕТ ПОХОД В ИСТОРИЮ (см. MarkdownController).
     // Подключается ПОСЛЕ обработчиков стека выше: возобновление режима на выходе

@@ -29,6 +29,10 @@ BookPage::BookPage(QWidget* parent)
     setReadOnly(true);
     // Keys turn pages, Ctrl+C copies, Ctrl+F searches: the page takes focus.
     setFocusPolicy(Qt::StrongFocus);
+    // ONE CANVAS, TWO PAGES DRAWN ON IT (owner's wish): no frame around a
+    // page and no seam between the two — the spread paints the same page
+    // colour under both, and the gap is just paper.
+    setFrameShape(QFrame::NoFrame);
     applyPalette(*this, /*history=*/false);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
