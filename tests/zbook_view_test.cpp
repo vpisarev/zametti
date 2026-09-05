@@ -10,6 +10,7 @@
 // same pixels as "opened fresh" (the project's symmetry rule) for both the
 // page and the editor; zoom recounts the pages; the status text follows.
 #include "book_page.h"
+#include "doc_model.h"
 #include "book_pages.h"
 #include "editor_widget.h"
 #include "reading_controller.h"
@@ -31,6 +32,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextFragment>
 #include <QTextFrame>
 #include <QTextLayout>
 #include <QVBoxLayout>
@@ -52,11 +54,13 @@ QString bookText(int paragraphs) {
     QString out = QStringLiteral("<!-- zametti\nrole: book\nlock: yes\n-->\n\n# The Book\n\n");
     for (int i = 0; i < paragraphs; ++i) {
         if (i % 12 == 0) out += QStringLiteral("## Chapter %1\n\n").arg(i / 12 + 1);
+        if (i == 1) out += QStringLiteral("A sentence with a note.[^n1]\n\n");
         out += QStringLiteral("Paragraph %1 of the book, long enough to wrap onto several lines of a "
                               "narrow page when the page is narrow, and to hold a word to find: "
                               "needle%1 sits here.\n\n")
                    .arg(i);
     }
+    out += QStringLiteral("[^n1]: The footnote's own text.\n");
     return out;
 }
 
@@ -348,6 +352,30 @@ void checkSymmetry() {
                     rig.left().pageHeight());
 }
 
+// A click on a footnote reference shows the note's text.
+void checkFootnote() {
+    Rig rig;
+    rig.open(rig.bookPath);
+    BookPage& page = rig.left();
+    const QTextDocument& doc = *page.document();
+    int position = -1;
+    for (QTextBlock b = doc.begin(); b.isValid() && position < 0; b = b.next())
+        for (QTextBlock::iterator it = b.begin(); !it.atEnd(); ++it)
+            if (it.fragment().charFormat().hasProperty(zametti::FootnoteIdProperty)) {
+                position = it.fragment().position();
+                break;
+            }
+    ZT_TRUE("ссылка на сноску есть в документе", position >= 0);
+    if (position < 0) return;
+    QTextCursor at(page.document());
+    at.setPosition(position);
+    const QRect rect = page.cursorRect(at);
+    const QPointF where(rect.left() + 2, rect.center().y());
+    ZT_EQ("под точкой — текст сноски", std::string("The footnote's own text."),
+          page.footnoteAt(where).toStdString());
+    ZT_TRUE("а рядом с текстом сноски нет", page.footnoteAt(QPointF(where.x() - 60, where.y())).isEmpty());
+}
+
 // BOOKMARKS ON THE PAGE (brief 18): a double click in the left margin sets
 // one on the paragraph and paints the glyph; the key takes it off; two of
 // them and Ctrl+] / Ctrl+[ turn to the next / previous; the store's file
@@ -419,6 +447,11 @@ void checkBookmarks() {
 }
 
 }  // namespace
+
+TEST(BookView, Footnote) {
+    checkFootnote();
+    EXPECT_EQ(0, zt::report("book-footnote"));
+}
 
 TEST(BookView, Bookmarks) {
     checkBookmarks();
