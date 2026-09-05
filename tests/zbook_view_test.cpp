@@ -385,11 +385,16 @@ void checkBookmarks() {
     const int deep2 = block + 80;
     rig.editor->toggleBookmark(deep1);
     rig.editor->toggleBookmark(deep2);
-    ZT_TRUE("два букмарка", note->bookmarks().blocks().size() == 2);
+    // A blank line carries no bookmark: it went to the next paragraph with text.
+    const std::vector<int> set = note->bookmarks().blocks();
+    ZT_TRUE("два букмарка", set.size() == 2);
+    ZT_TRUE("оба на абзацах с текстом",
+            set.size() == 2 && !doc.findBlockByNumber(set[0]).text().trimmed().isEmpty() &&
+                !doc.findBlockByNumber(set[1]).text().trimmed().isEmpty());
     QTest::keyClick(&page, Qt::Key_BracketRight, Qt::ControlModifier);
     QTest::qWait(30);
     ZT_TRUE("Ctrl+] — страница с первым букмарком",
-            !(PageStart{deep1, 0} < page.start()) && rig.book->currentPage() > 0);
+            set.size() == 2 && !(PageStart{set[0], 0} < page.start()) && rig.book->currentPage() > 0);
     const int pageOfDeep1 = rig.book->currentPage();
     QTest::keyClick(&page, Qt::Key_BracketRight, Qt::ControlModifier);
     QTest::qWait(30);
@@ -400,13 +405,17 @@ void checkBookmarks() {
     // Back in the editor: the same glyphs, a double click in the margin toggles.
     rig.controller.leave();
     QTest::qWait(30);
-    ZT_TRUE("редактор видит букмарки", rig.editor->blockBookmarked(deep1) && rig.editor->blockBookmarked(deep2));
-    // Close and open the note again: found by text.
+    ZT_TRUE("редактор видит букмарки",
+            set.size() == 2 && rig.editor->blockBookmarked(set[0]) && rig.editor->blockBookmarked(set[1]));
+    // Close and open the note again: found by text. The book was left in the
+    // editor, so it opens in the editor — the mode is remembered by note.
     rig.open(rig.plainPath);
     rig.open(rig.bookPath);
-    const std::shared_ptr<ZNote> again = rig.left().note();
+    ZT_TRUE("книга, оставленная в редакторе, открылась в редакторе", !rig.controller.active());
+    const std::shared_ptr<ZNote> again = rig.editor->noteHandle();
     ZT_TRUE("после повторного открытия букмарки найдены по тексту",
-            again != nullptr && (again->bookmarks().blocks() == std::vector<int>{deep1, deep2}));
+            again != nullptr && again->bookmarks().blocks() == set);
+    ZT_TRUE("и в чтение — по кнопке", rig.controller.enter() && rig.left().note() == again);
 }
 
 }  // namespace
