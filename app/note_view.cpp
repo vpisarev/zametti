@@ -501,7 +501,7 @@ void NoteView::applyContentWidth() {
     const qreal charUnit = QFontMetricsF(baseFont()).horizontalAdvance(QLatin1Char('A'));
     const qreal fromDocument = document()->rootFrame()->frameFormat().leftMargin();
     const int room = viewport()->width() + viewportMargin_ * 2;
-    const int wanted = contentColumnMargin(docStyle(), charUnit, room, fromDocument);
+    const int wanted = contentColumnMargin(columnStyle(), charUnit, room, fromDocument);
     const int pad = pagePadding();
     if (wanted != viewportMargin_ || pad != viewportPad_) {
         viewportMargin_ = wanted;

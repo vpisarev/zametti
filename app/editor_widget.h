@@ -92,6 +92,9 @@ public:
     // the document, and a hidden editor chasing its caret on every layout
     // step would lay the whole book out for nothing.
     void releaseCaret() { holdingCaret_ = false; }
+    // The editor's column is the note column of the settings whatever the
+    // note was built with (a book — with the reading style).
+    const ZDocStyle& columnStyle() const override { return settings().style(); }
 
     // АРХИВНУЮ ЗАМЕТКУ ПОКАЗЫВАЕТ ВИД, А НЕ РЕДАКТОР. Тело её лежит в файле,
     // как у живой, поэтому и документ у неё обычный; но правится она только

@@ -67,6 +67,7 @@ signals:
 protected:
     QFont zoomedBaseFont(qreal zoom) const override;
     int pagePadding() const override;
+    const ZDocStyle& columnStyle() const override { return *reading_; }
     NoteSearch& searchCache() override;
     const NoteSearch& searchCache() const override;
     void revealInGolden(const QRectF& place) override;

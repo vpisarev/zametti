@@ -456,6 +456,12 @@ protected:
     // so nothing of it reaches the document): a book page keeps a little
     // above its first line; the editor has none.
     virtual int pagePadding() const { return 0; }
+    // THE COLUMN IS THE VIEW'S, NOT THE DOCUMENT'S. A book is built with the
+    // reading style (a narrow column), but the editor shows it as wide as any
+    // note (owner's wish: the narrow column was a nuisance to look through),
+    // and a page of the book keeps the reading width. Only applyContentWidth
+    // asks; the baked side margin still comes from the document.
+    virtual const ZDocStyle& columnStyle() const { return docStyle(); }
 
     // ХУК ПОЛЯ: зовётся из цикла отрисовки по КАЖДОМУ ВИДИМОМУ блоку, painter
     // уже в координатах документа, rect — прямоугольник блока. По умолчанию
