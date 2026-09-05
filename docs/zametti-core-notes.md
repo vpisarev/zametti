@@ -207,7 +207,7 @@ markdown, и рассматривать его надо отдельно, а н�
 Корпуса в репозиторий не кладутся, лежат в `.testdata/` (в `.gitignore`):
 
 ```
-.testdata/corpus/       ~/Documents/vpnotes, 244 файла
+.testdata/corpus/       ~/Documents/mynotes, 244 файла
 .testdata/commonmark/   655 примеров из спецификации CommonMark
 .testdata/gfm/          672 примера из спецификации GFM
 ```

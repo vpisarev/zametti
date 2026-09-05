@@ -37,7 +37,7 @@
 - Стражи ctest (`message-boxes-through-zapp`, `document-only-for-showing`,
   `file-ops-only-through-guard`, `core-without-widgets`,
   `canon-without-display`, `window-without-store`) — зелёные.
-- Сценарий владельца САМ, а не его упрощение: живое окно на копии `vpnotes`
+- Сценарий владельца САМ, а не его упрощение: живое окно на копии `mynotes`
   (`ZAMETTI_PROBE_REPLACE_UNDO=01cmf0snt8d73g,opencv,OPENCV`, offscreen,
   свой `--config-dir`). Вхождений «opencv»: до 1, после Replace 0, Ctrl+Z в
   поле замены 1, Ctrl+Y там же 0, Ctrl+Z в поле запроса 1, Ctrl+Shift+Z 0;

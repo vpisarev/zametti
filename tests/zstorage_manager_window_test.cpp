@@ -470,9 +470,9 @@ void checkAddressNeverBitten() {
 
     // С папкой: сервер возвращается РОВНО как введён, папка — отдельно.
     auto shown = shownAfterReopen(QStringLiteral("https://host/webdav"),
-                                  QStringLiteral("vpnotes"));
+                                  QStringLiteral("mynotes"));
     ZT_EQ("сервер не тронут", std::string("https://host/webdav"), s(shown.first));
-    ZT_EQ("папка отдельно", std::string("vpnotes"), s(shown.second));
+    ZT_EQ("папка отдельно", std::string("mynotes"), s(shown.second));
 
     // Без папки: /webdav не откусывается тем более.
     shown = shownAfterReopen(QStringLiteral("https://host/webdav"), QString());
@@ -518,7 +518,7 @@ void checkSclerosisCured() {
     stores.select(0);
     stores.edit(Model::FieldId::Server,
                 QStringLiteral("https://опечатка.example/webdav"));
-    stores.edit(Model::FieldId::ServerDir, QStringLiteral("vpnotes2"));
+    stores.edit(Model::FieldId::ServerDir, QStringLiteral("mynotes2"));
     stores.edit(Model::FieldId::Login, QStringLiteral("u132748"));
     // Никакой работы: связи не было, и это не повод всё забыть.
     stores.stashDrafts();
@@ -529,7 +529,7 @@ void checkSclerosisCured() {
     const Model::Snapshot snap = reopened.snapshot();
     ZT_EQ("сервер пережил выход", std::string("https://опечатка.example/webdav"),
           s(snap.server.text));
-    ZT_EQ("папка пережила выход", std::string("vpnotes2"), s(snap.serverDir.text));
+    ZT_EQ("папка пережила выход", std::string("mynotes2"), s(snap.serverDir.text));
     ZT_EQ("логин пережил выход", std::string("u132748"), s(snap.login.text));
 }
 

@@ -333,7 +333,7 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
 // Прежде здесь был один порядок на всё дерево — «свойство точки обзора», — и
 // это была моя ошибка в устройстве: выбор папки перекладывал ВСЮ левую панель,
 // потому что вместе с выбором менялся действующий порядок. Владелец увидел это
-// так: «тыкаю на OpenCV, а мышка вдруг оказывается на Путешествия→Сочи —
+// так: «тыкаю на OpenCV, а мышка вдруг оказывается на Путешествия→Отпуск —
 // причём это не курсор прыгнул, а дерево перестроилось». Теперь выбор папки не
 // трогает дерево вовсе: порядок в нём меняется только от переключателя или от
 // правки метки.
@@ -423,7 +423,7 @@ const NoteTreeModel::Node* nodeOf(const QModelIndex& index, const NoteTreeModel:
 
 NoteTreeModel::NoteTreeModel(std::shared_ptr<ZStorage> storage, QObject* parent)
     // Корень чистый — его привело к чистому виду хранилище, у двери (см.
-    // ZStorage): «vpnotes//<id>.md» не равен по строке «vpnotes/<id>.md», и на
+    // ZStorage): «mynotes//<id>.md» не равен по строке «mynotes/<id>.md», и на
     // этом переставал обновляться заголовок в средней колонке.
     : QAbstractItemModel(parent),
       rootPath_(storage->root()),

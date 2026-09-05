@@ -130,7 +130,7 @@ static int ztRunSuite(int argc, char** argv) {
         first.root = QStringLiteral("/дом/заметки");
         first.name = QStringLiteral("Заметки");
         first.cloudUrl = QStringLiteral("https://host/dav/");
-        first.cloudUser = QStringLiteral("вадим");
+        first.cloudUser = QStringLiteral("юзер");
         zametti::ZStorage::Config second;
         second.root = QStringLiteral("/дом/работа");
         stores.remember(first);

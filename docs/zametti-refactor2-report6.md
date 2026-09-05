@@ -175,7 +175,7 @@
 
 ## 7. Приёмка: «Typesetting Math in Markdown»
 
-Копия живой заметки владельца (`sandbox/vpnotes/01n7wcv5fkf6ne.md`, хранилище
+Копия живой заметки владельца (`sandbox/mynotes/01n7wcv5fkf6ne.md`, хранилище
 не тронуто) → `.testdata/typesetting-math.md`. На ней:
 
 - круг файла **байт в байт** (74 строчных объекта);

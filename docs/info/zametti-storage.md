@@ -861,7 +861,7 @@ Belongs to THIS COPY of the store (a `cp -r` takes it along, the cloud never
 sees it) and carries no secrets:
 
 ```json
-{ "cloudUrl": "https://dav.example/webdav", "cloudServerDir": "vpnotes",
+{ "cloudUrl": "https://dav.example/webdav", "cloudServerDir": "mynotes",
   "cloudUser": "vp", "timeoutMs": 30000 }
 ```
 

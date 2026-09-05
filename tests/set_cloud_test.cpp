@@ -362,14 +362,14 @@ void checkConfigReadsLegacyKeys() {
     {
         QFile f(store.root() + QStringLiteral("/.zametti/remote.json"));
         ZT_TRUE("старый remote.json записался", f.open(QIODevice::WriteOnly));
-        f.write("{ \"url\": \"https://host/dav/\", \"user\": \"вадим\", "
+        f.write("{ \"url\": \"https://host/dav/\", \"user\": \"юзер\", "
                 "\"timeoutMs\": 7000 }");
     }
     ZStorage::Config cfg = s.cloudConfig();
     ZT_TRUE("облако прочитано", cfg.hasCloudAddress());
     ZT_EQ("url со старого ключа", std::string("https://host/dav/"),
           cfg.cloudUrl.toStdString());
-    ZT_EQ("логин со старого ключа", std::string("вадим"), cfg.cloudUser.toStdString());
+    ZT_EQ("логин со старого ключа", std::string("юзер"), cfg.cloudUser.toStdString());
     ZT_TRUE("таймаут прочитан", cfg.timeoutMs == 7000);
     ZT_EQ("root — корень копии, не из файла", store.root().toStdString(),
           cfg.root.toStdString());
@@ -395,12 +395,12 @@ void checkConfigReadsLegacyKeys() {
     {
         QFile mid(store.root() + QStringLiteral("/.zametti/cloud.json"));
         ZT_TRUE("cloud.json переписался", mid.open(QIODevice::WriteOnly));
-        mid.write("{ \"remoteUrl\": \"https://host2/dav/\", \"remoteUser\": \"вп\" }");
+        mid.write("{ \"remoteUrl\": \"https://host2/dav/\", \"remoteUser\": \"ю\" }");
     }
     const ZStorage::Config mid = s.cloudConfig();
     ZT_EQ("remoteUrl прочитан запасным путём", std::string("https://host2/dav/"),
           mid.cloudUrl.toStdString());
-    ZT_EQ("remoteUser прочитан запасным путём", std::string("вп"),
+    ZT_EQ("remoteUser прочитан запасным путём", std::string("ю"),
           mid.cloudUser.toStdString());
 
     // Строка списка хранилищ — наоборот, с корнем.

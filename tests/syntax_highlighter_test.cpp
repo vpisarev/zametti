@@ -160,11 +160,12 @@ void checkRules() {
     ZT_TRUE("запятая после него — нет", !hasProperty(doc, bare, 38, 39, isLink));
     ZT_TRUE("www.-адрес — ссылка", hasProperty(doc, bare, 42, 54, isLink));
     ZT_TRUE("точка в конце фразы — не адрес", !hasProperty(doc, bare, 54, 55, isLink));
-    // Строка владельца дословно («Пробуем Obsidian», ссылка на ozon без скобок).
+    // Modelled on a line from the owner's note: a long bare shop URL with no
+    // brackets, with hyphens and a number at the tail.
     const ZDocument owner = rawDoc(
-        "ссылка на тельняху: https://www.ozon.ru/product/longsliv-telnyashka-beregite-ptits-telnyashka-muzhskaya-858891201\n");
+        "ссылка на тельняху: https://www.example.com/product/long-sleeve-shirt-keep-the-birds-safe-858891201\n");
     const int len = int(linesOfDoc(owner)[0].size());
-    ZT_TRUE("ссылка на ozon из заметки владельца — подсвечена целиком",
+    ZT_TRUE("длинная ссылка на магазин — подсвечена целиком",
             hasProperty(owner, 0, 20, len, isLink));
     ZT_TRUE("а слова перед ней — нет", !hasProperty(owner, 0, 0, 6, isLink));
 }

@@ -227,4 +227,4 @@ build/tests/zametti-bench zoom                       # ворота к ZDocument
 
 Корпуса берутся из `.testdata/` (или из `ZAMETTI_TESTDATA`). Копия хранилища
 владельца для строгого круга — `.testdata/owner-copy`; **оригинал
-`sandbox/vpnotes` только читается.**
+`sandbox/mynotes` только читается.**

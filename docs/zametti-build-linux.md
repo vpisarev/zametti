@@ -82,7 +82,7 @@ bash packaging/linux/fix-sysroot.sh      # ОБЯЗАТЕЛЬНО ПОСЛЕ К�
 напечатать:
 
 ```
-sysroot: /home/vpisarev/work/zsys
+sysroot: /home/user/work/zsys
   симлинков переписано в относительные: 21
 ```
 

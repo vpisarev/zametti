@@ -344,7 +344,7 @@ bool hasServerPassword(const QString& storeId);   // пароль webdav
 деструктивна.
 
 ```
-The cloud storage "vpnotes" will be erased. Proceed?
+The cloud storage "mynotes" will be erased. Proceed?
 [Erase & change encryption password]  [Erase & disconnect]  [Cancel]
 ```
 
@@ -352,7 +352,7 @@ The cloud storage "vpnotes" will be erased. Proceed?
 стирания не требует** и переспрос честнее звучит иначе:
 
 ```
-Change the encryption password for "vpnotes"?
+Change the encryption password for "mynotes"?
 [Change password]  [Erase & disconnect]  [Cancel]
 ```
 
@@ -715,7 +715,7 @@ O, P, Q, R, T**.
   `build/tests/zametti-tests --gtest_filter='StoreManager*:Remote*:Store*'`.
 - **Пробник связки на маке ДО реализации** (§2.2).
 - Сценарий владельца целиком, руками, на КОПИИ хранилища
-  (`.testdata/vpnotes-refactor5`), с `ZAMETTI_CONFIG_DIR=<scratch>`:
+  (`.testdata/mynotes-refactor5`), с `ZAMETTI_CONFIG_DIR=<scratch>`:
   окно → `C` → `Reset cloud` → `[Change password]` → **секунды, не минуты**,
   ничего не перезаливается → закрыть → открыть → `C` с пустым полем →
   **пароль не спрашивают**, в полях кружочки, глаз показывает настоящий пароль.

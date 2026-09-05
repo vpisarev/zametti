@@ -33,7 +33,7 @@ Digest digestFromHex(const QString& hex) {
 QString SyncLedger::pathFor(const QString& storeId, const QString& storeRoot) {
     // Хеш КАНОНИЧЕСКОГО пути: две копии хранилища на одной машине не делят
     // бухгалтерию, а один и тот же каталог, названный по-разному
-    // («vpnotes/» и «vpnotes»), — делит.
+    // («mynotes/» и «mynotes»), — делит.
     const QString canonical = QDir(storeRoot).absolutePath();
     const std::string utf8 = canonical.toStdString();
     const QString tag = QString::fromStdString(hashOf(utf8).hex()).left(8);
