@@ -117,8 +117,20 @@ int markerToTextPx(zametti::NoteEditor& editor, int blockNumber) {
     const QTextLine line = layout->lineAt(0);
     const QPointF origin = layout->position();
     const QPoint off = editor.viewport()->mapTo(&editor, QPoint(0, 0));
-    const int top = off.y() + int(origin.y() + line.y()) + 1;
-    const int bottom = off.y() + int(origin.y() + line.y() + line.height()) - 1;
+    // Полоса сканирования — строка текста ВМЕСТЕ с рамкой маркера: у чекбокса
+    // крупнее чернил (checkboxScale 1.4 у владельца, 05.09.2026) верх и низ
+    // рамки на 200 % выходят за строку, и без их рядов пустая середина рамки
+    // (30+ столбцов) читалась бы как зазор до текста. Столбцы по-прежнему
+    // меряются по точкам — судья геометрии не спрашивает.
+    const QRectF marker = zametti::markerBoxOf(block);
+    qreal rowTop = origin.y() + line.y();
+    qreal rowBottom = origin.y() + line.y() + line.height();
+    if (!marker.isNull()) {
+        rowTop = qMin(rowTop, marker.top());
+        rowBottom = qMax(rowBottom, marker.bottom());
+    }
+    const int top = off.y() + int(rowTop) + 1;
+    const int bottom = off.y() + int(rowBottom) - 1;
     if (top < 0 || bottom >= off.y() + editor.viewport()->height()) return -2;
     const QRgb paper = shot.pixel(off.x() + 1, off.y() + 1);
     const auto inkAt = [&](int x) {
