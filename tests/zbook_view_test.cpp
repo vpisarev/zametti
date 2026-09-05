@@ -348,7 +348,73 @@ void checkSymmetry() {
                     rig.left().pageHeight());
 }
 
+// BOOKMARKS ON THE PAGE (brief 18): a double click in the left margin sets
+// one on the paragraph and paints the glyph; the key takes it off; two of
+// them and Ctrl+] / Ctrl+[ turn to the next / previous; the store's file
+// holds them; the editor shows the same glyphs; after closing and opening
+// the note the bookmark is found again by its text.
+void checkBookmarks() {
+    Rig rig;
+    rig.open(rig.bookPath);
+    ZT_TRUE("в чтении", rig.controller.active());
+    BookPage& page = rig.left();
+    const QTextDocument& doc = *page.document();
+    // The first paragraph on the page with text: its first line's y.
+    int block = page.start().block;
+    while (block < doc.blockCount() && doc.findBlockByNumber(block).text().trimmed().isEmpty()) ++block;
+    const QRectF rect = doc.documentLayout()->blockBoundingRect(doc.findBlockByNumber(block));
+    const QPointF inMargin(rect.left() / 2.0, rect.top() + 4.0 - page.verticalScrollBar()->value());
+    ZT_TRUE("точка в левом поле над абзацем", page.marginBlockAt(inMargin) == block);
+    QTest::mouseDClick(page.viewport(), Qt::LeftButton, Qt::NoModifier, inMargin.toPoint());
+    QTest::qWait(30);
+    const std::shared_ptr<ZNote> note = page.note();
+    ZT_TRUE("двойной клик по полю поставил букмарк", note->bookmarks().at(block) != nullptr);
+    ZT_TRUE("файл букмарков появился", QFile::exists(rig.storage->bookmarksPath()));
+    ZT_TRUE("глиф рисуется в поле: ячейка внутри поля документа",
+            page.bookmarkCell(doc.findBlockByNumber(block), rect).right() <= rect.left() &&
+                page.bookmarkCell(doc.findBlockByNumber(block), rect).width() > 4.0);
+    // The key on the page's first paragraph takes it off again.
+    page.setFocus();
+    QTest::keyClick(&page, Qt::Key_B, Qt::ControlModifier | Qt::ShiftModifier);
+    QTest::qWait(20);
+    ZT_TRUE("Ctrl+Shift+B снял букмарк с первого абзаца страницы", note->bookmarks().at(block) == nullptr);
+    ZT_TRUE("в файле — надгробие", rig.storage->bookmarks().forNote(note->id()).empty() &&
+                                    !rig.storage->bookmarks().all().empty());
+    // Two bookmarks deep in the book; Ctrl+] from the start turns to the first.
+    const int deep1 = block + 40;
+    const int deep2 = block + 80;
+    rig.editor->toggleBookmark(deep1);
+    rig.editor->toggleBookmark(deep2);
+    ZT_TRUE("два букмарка", note->bookmarks().blocks().size() == 2);
+    QTest::keyClick(&page, Qt::Key_BracketRight, Qt::ControlModifier);
+    QTest::qWait(30);
+    ZT_TRUE("Ctrl+] — страница с первым букмарком",
+            !(PageStart{deep1, 0} < page.start()) && rig.book->currentPage() > 0);
+    const int pageOfDeep1 = rig.book->currentPage();
+    QTest::keyClick(&page, Qt::Key_BracketRight, Qt::ControlModifier);
+    QTest::qWait(30);
+    ZT_TRUE("ещё Ctrl+] — дальше", rig.book->currentPage() > pageOfDeep1);
+    QTest::keyClick(&page, Qt::Key_BracketLeft, Qt::ControlModifier);
+    QTest::qWait(30);
+    ZT_TRUE("Ctrl+[ — назад к первому", rig.book->currentPage() == pageOfDeep1);
+    // Back in the editor: the same glyphs, a double click in the margin toggles.
+    rig.controller.leave();
+    QTest::qWait(30);
+    ZT_TRUE("редактор видит букмарки", rig.editor->blockBookmarked(deep1) && rig.editor->blockBookmarked(deep2));
+    // Close and open the note again: found by text.
+    rig.open(rig.plainPath);
+    rig.open(rig.bookPath);
+    const std::shared_ptr<ZNote> again = rig.left().note();
+    ZT_TRUE("после повторного открытия букмарки найдены по тексту",
+            again != nullptr && (again->bookmarks().blocks() == std::vector<int>{deep1, deep2}));
+}
+
 }  // namespace
+
+TEST(BookView, Bookmarks) {
+    checkBookmarks();
+    EXPECT_EQ(0, zt::report("book-bookmarks"));
+}
 
 TEST(BookView, PagesAndKeys) {
     checkPagesAndKeys();
