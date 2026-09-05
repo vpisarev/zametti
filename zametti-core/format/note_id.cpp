@@ -130,6 +130,20 @@ NewFileResult writeNewFile(const std::string& path, const void* data, std::size_
 std::string createNoteFile(const std::string& dir, const std::string& content,
                            std::string* pathOut,
                            const std::function<std::string()>& generator) {
+    const std::string name = createAttachmentFile(dir, "md", content.data(), content.size(),
+                                                  generator);
+    if (name.empty()) return {};
+    if (pathOut != nullptr) {
+        std::string base = dir;
+        while (base.size() > 1 && base.back() == '/') base.pop_back();
+        *pathOut = base + "/" + name;
+    }
+    return name.substr(0, name.size() - 3);
+}
+
+std::string createAttachmentFile(const std::string& dir, const std::string& suffix,
+                                 const void* data, std::size_t size,
+                                 const std::function<std::string()>& generator) {
     // Потолок попыток — от сумасшедшего генератора в тестах; в жизни вторая
     // попытка уже почти невозможна (32^6 вариантов в ту же секунду).
     for (int attempt = 0; attempt < 64; ++attempt) {
@@ -141,16 +155,16 @@ std::string createNoteFile(const std::string& dir, const std::string& content,
         // в средней колонке.
         std::string base = dir;
         while (base.size() > 1 && base.back() == '/') base.pop_back();
-        const std::string path = base + "/" + id + ".md";
+        const std::string name = id + "." + suffix;
+        const std::string path = base + "/" + name;
 
-        switch (writeNewFile(path, content.data(), content.size())) {
+        switch (writeNewFile(path, data, size)) {
             case NewFileResult::Exists:
                 continue;   // коллизия: берём другую случайную часть
             case NewFileResult::Failed:
                 return {};
             case NewFileResult::Created:
-                if (pathOut != nullptr) *pathOut = path;
-                return id;
+                return name;
         }
     }
     return {};

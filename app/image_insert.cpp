@@ -53,44 +53,37 @@ QString findTwin(const QString& dir, const QString& prefix, const QString& suffi
 
 QString writeFresh(const QString& dir, const QString& suffix, const QByteArray& bytes,
                    QString* error, qint64 takenAt = 0, bool* duplicate = nullptr) {
-    const QByteArray dirUtf8 = QDir::cleanPath(dir).toUtf8();
-    for (int attempt = 0; attempt < 64; ++attempt) {
-        // Имя чеканится от ВРЕМЕНИ СЪЁМКИ, а не от «сейчас»: тогда повторный
-        // ввоз того же снимка даёт тот же префикс id (первые восемь знаков —
-        // секунды), и двойник ищется простым перебором имён, без кэша. У
-        // снимка без даты (буфер обмена, скриншот) берётся «сейчас» — брать
-        // больше неоткуда, и двойников у таких не бывает по построению.
-        const std::string id =
-            takenAt > 0 ? makeNoteId(std::uint64_t(takenAt), systemRandomForImages())
-                        : newNoteId();
-        const QString name = QString::fromStdString(id) + QLatin1Char('.') + suffix;
-
-        // Двойник ищется ОДИН раз, на первой попытке: повторные попытки бывают
-        // только от коллизии имён, а она к содержимому отношения не имеет.
-        if (attempt == 0 && takenAt > 0) {
-            const QString twin =
-                findTwin(QDir::cleanPath(dir), QString::fromStdString(id).left(8), suffix, bytes);
-            if (!twin.isEmpty()) {
-                // Файла не заводим вовсе — ссылаемся на тот, что уже лежит.
-                if (duplicate != nullptr) *duplicate = true;
-                return twin;
-            }
-        }
-
-        const QByteArray path = dirUtf8 + '/' + name.toUtf8();
-
-        switch (writeNewFile(path.toStdString(), bytes.constData(), std::size_t(bytes.size()))) {
-            case NewFileResult::Exists:
-                continue;   // редчайшая коллизия — берём другой id
-            case NewFileResult::Failed:
-                *error = QStringLiteral("could not write an attachment file in %1").arg(dir);
-                return {};
-            case NewFileResult::Created:
-                return name;
+    // Имя чеканится от ВРЕМЕНИ СЪЁМКИ, а не от «сейчас»: тогда повторный
+    // ввоз того же снимка даёт тот же префикс id (первые восемь знаков —
+    // секунды), и двойник ищется простым перебором имён, без кэша. У
+    // снимка без даты (буфер обмена, скриншот) берётся «сейчас» — брать
+    // больше неоткуда, и двойников у таких не бывает по построению.
+    const auto mint = [takenAt] {
+        return takenAt > 0 ? makeNoteId(std::uint64_t(takenAt), systemRandomForImages())
+                           : newNoteId();
+    };
+    // Двойник ищется ОДИН раз, до записи: повторные попытки бывают только от
+    // коллизии имён, а она к содержимому отношения не имеет.
+    if (takenAt > 0) {
+        const std::string id = mint();
+        const QString twin =
+            findTwin(QDir::cleanPath(dir), QString::fromStdString(id).left(8), suffix, bytes);
+        if (!twin.isEmpty()) {
+            // Файла не заводим вовсе — ссылаемся на тот, что уже лежит.
+            if (duplicate != nullptr) *duplicate = true;
+            return twin;
         }
     }
-    *error = QStringLiteral("no free name found for the attachment");
-    return {};
+    // The O_EXCL loop with a fresh id per collision lives in the core, one
+    // for notes, pictures and books alike (createAttachmentFile).
+    const std::string name = createAttachmentFile(QDir::cleanPath(dir).toUtf8().toStdString(),
+                                                  suffix.toStdString(), bytes.constData(),
+                                                  std::size_t(bytes.size()), mint);
+    if (name.empty()) {
+        *error = QStringLiteral("could not write an attachment file in %1").arg(dir);
+        return {};
+    }
+    return QString::fromStdString(name);
 }
 
 StoredImage finish(const ImportResult& r, const QString& storeDir, const QString& alt,

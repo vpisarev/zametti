@@ -57,6 +57,15 @@ std::string createNoteFile(const std::string& dir, const std::string& content,
                            std::string* pathOut = nullptr,
                            const std::function<std::string()>& generator = {});
 
+// The same for an ATTACHMENT, "<id>.<suffix>": a fresh name under O_EXCL, a
+// new id on a collision, the bytes written whole. Returns the file NAME
+// ("<id>.<suffix>", not the path); empty — an I/O failure. One loop for the
+// notes, the pictures the editor inserts (image_insert.cpp) and the pictures
+// a book brings (importBook): a second copy of it once lived in the app.
+std::string createAttachmentFile(const std::string& dir, const std::string& suffix,
+                                 const void* data, std::size_t size,
+                                 const std::function<std::string()>& generator = {});
+
 }  // namespace zametti
 
 #endif  // ZAMETTI_NOTE_ID_H
