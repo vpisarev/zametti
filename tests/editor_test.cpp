@@ -1977,6 +1977,52 @@ void checkCheckboxScale() {
     check(textBig > textOne, "текст пункта отодвинулся под крупную рамку");
 }
 
+// ВЫСОТА СТРОКИ ЗАДАЧИ РАСТЁТ С РАМКОЙ (просьба владельца 05.09.2026): шаг
+// между соседними задачами при checkboxScale 1.2 больше шага при 1.0 ровно на
+// рост стороны рамки — просвет между рамками прежний. Мельче единицы строка
+// не ужимается; буллеты от ручки не зависят.
+void checkCheckboxLineHeight() {
+    const zametti::ZSettings saved = zametti::settings();
+    struct Restore {
+        const zametti::ZSettings& from;
+        ~Restore() { zametti::mutableSettingsForTests() = from; }
+    } restore{saved};
+
+    const QString path = writeNote(
+        "чекбокс-высота.md",
+        QStringLiteral("- [ ] первая\n- [x] вторая\n\n- буллет\n- ещё буллет\n"));
+    struct Pitch {
+        qreal task = 0, bullet = 0, side = 0;
+    };
+    const auto measure = [&path](qreal scale) {
+        zametti::mutableSettingsForTests().style().setCheckboxScale(scale);
+        zametti::NoteEditor editor;
+        editor.resize(700, 300);
+        editor.show();
+        QTest::qWait(20);
+        editor.openFile(path);
+        QTest::qWait(20);
+        const QTextDocument* doc = editor.document();
+        const QAbstractTextDocumentLayout* layout = doc->documentLayout();
+        const auto top = [&](int n) {
+            return layout->blockBoundingRect(doc->findBlockByNumber(n)).top();
+        };
+        Pitch out;
+        out.task = top(1) - top(0);
+        out.bullet = top(4) - top(3);
+        out.side = zametti::checkboxRect(doc->findBlockByNumber(0)).height();
+        return out;
+    };
+    const Pitch one = measure(1.0);
+    const Pitch big = measure(1.2);
+    const Pitch small = measure(0.8);
+    check(one.side > 0 && big.side > one.side, "рамка на 1.2 крупнее");
+    check(std::abs((big.task - one.task) - (big.side - one.side)) < 1.0,
+          "шаг между задачами вырос ровно на рост рамки");
+    check(std::abs(big.bullet - one.bullet) < 0.01, "шаг между буллетами не изменился");
+    check(std::abs(small.task - one.task) < 0.01, "рамка мельче чернил строку не ужимает");
+}
+
 void checkCheckboxClickWithSelection() {
     const QString path = writeNote(
         "щелчок-выделение.md", QStringLiteral("- [ ] раз\n- [ ] два\n- [ ] три\n"));
@@ -3311,6 +3357,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkLinkDoesNotGrow();
     checkCheckboxClickWithSelection();
     checkCheckboxScale();
+    checkCheckboxLineHeight();
     checkUndoKeepsCursor();
     checkViewHoldsForEveryOperation();
     checkColumnAcrossMargins();
