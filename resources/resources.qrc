@@ -31,7 +31,12 @@
      Расхождение ловит именно набор, а не молчаливое ":/icons/нет-такой". -->
 <RCC>
     <qresource prefix="/">
-        <file alias="zametti.png">zametti1024x1024.png</file>
+        <!-- С 05.09.2026 — «alt»-редакция иконки (решение владельца); прежняя
+             пара zametti1024x1024.png / zametti512x512.png оставлена на диске
+             как была. Alt-файлы — RGBA без палитры, 1 029 388 байт против
+             268 475 у прежней; пережимать чужой рисунок без спроса не стал,
+             это отдельный заход (compress.sh, с замером PSNR). -->
+        <file alias="zametti.png">zametti_alt_1024x1024.png</file>
     </qresource>
 
     <!-- Иконки Lucide, ISC. Происхождение и список — resources/icons/README.md. -->

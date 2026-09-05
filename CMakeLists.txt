@@ -262,7 +262,9 @@ if(WIN32)
     # Значок .exe — готовый .ico из репозитория, а не собираемый сборкой:
     # кросс-сборке негде взять хостовую программу, которая его соберёт. Чем он
     # сделан — resources/make-ico.cpp, там же и формат разобран.
-    set(ZAMETTI_WIN_ICO "${CMAKE_SOURCE_DIR}/resources/zametti.ico")
+    # zametti_alt.ico — из zametti_alt_512x512.png (05.09.2026); прежний
+    # zametti.ico оставлен рядом.
+    set(ZAMETTI_WIN_ICO "${CMAKE_SOURCE_DIR}/resources/zametti_alt.ico")
     if(NOT EXISTS "${ZAMETTI_WIN_ICO}")
         message(FATAL_ERROR
             "нет ${ZAMETTI_WIN_ICO} — программа собралась бы без значка, и\n"

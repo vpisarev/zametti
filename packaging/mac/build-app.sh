@@ -62,13 +62,13 @@ UNI="$ROOT/build-portable"
 mkdir -p "$UNI"
 APP_VERSION=""
 
-# ── Иконка: .icns собирается на месте из resources/zametti1024x1024.png ───────
+# ── Иконка: .icns собирается на месте из resources/zametti_alt_1024x1024.png ──
 # Один раз на запуск, обеим половинам одна и та же. Бинарный icns в
 # репозитории не живёт. 1024 — это и есть 512@2x.
 ICNS="$UNI/zametti.icns"
 make_icns() {
     local iconset="$UNI/zametti.iconset"
-    local src="$ROOT/resources/zametti1024x1024.png"
+    local src="$ROOT/resources/zametti_alt_1024x1024.png"
     rm -rf "$iconset"
     mkdir -p "$iconset"
     local size double
