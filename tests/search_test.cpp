@@ -971,6 +971,9 @@ void checkShortcutsReachWindow() {
         // 05.09.2026); QTextEdit его себе не забирает.
         {"Ctrl+G доходит до окна", QKeySequence(QStringLiteral("Ctrl+G")), Qt::Key_G,
          Qt::ControlModifier},
+        // Замена на маке: Cmd+H занято системой, поэтому Cmd+Option+F.
+        {"Ctrl+Alt+F доходит до окна", QKeySequence(QStringLiteral("Ctrl+Alt+F")), Qt::Key_F,
+         Qt::ControlModifier | Qt::AltModifier},
         {"Ctrl+Shift+G доходит до окна", QKeySequence(QStringLiteral("Ctrl+Shift+G")),
          Qt::Key_G, Qt::ControlModifier | Qt::ShiftModifier},
     };
