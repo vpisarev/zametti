@@ -280,6 +280,31 @@ std::vector<ZDocument::OutlineEntry> ZDocument::outline() const {
     return out;
 }
 
+QString ZDocument::footnoteText(const QString& id) const {
+    if (id.isEmpty()) return {};
+    for (QTextBlock block = d_->text.lastBlock(); block.isValid(); block = block.previous()) {
+        const QTextBlockFormat format = block.blockFormat();
+        if (format.boolProperty(RawProperty)) continue;
+        if (format.intProperty(KindProperty) != int(Kind::Footnote)) continue;
+        if (format.stringProperty(InfoProperty) != id) continue;
+        QString text = block.text();
+        text.replace(QChar::LineSeparator, QLatin1Char('\n'));
+        return text;
+    }
+    return {};
+}
+
+QString ZDocument::footnoteRefAt(int position) const {
+    const QTextBlock block = d_->text.findBlock(position);
+    if (!block.isValid()) return {};
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid() || !fragment.contains(position)) continue;
+        return fragment.charFormat().stringProperty(FootnoteIdProperty);
+    }
+    return {};
+}
+
 BlockInfo ZDocument::blockAt(int index) const {
     BlockInfo out;
     const QTextBlock block = d_->text.findBlockByNumber(index);

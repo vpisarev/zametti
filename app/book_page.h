@@ -49,6 +49,9 @@ public:
     // or a scroll into a page.
     PageStart lineAt(qreal y) const;
     qreal pageHeight() const;
+    // A footnote reference under the point: its definition's text (empty —
+    // none). Shown on a click as a plate by the page.
+    QString footnoteAt(const QPointF& viewportPos) const;
 
     // The reading font for a note that is not a book (a book's document is
     // already built with it); re-read from the settings.

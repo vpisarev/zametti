@@ -268,6 +268,12 @@ public:
         QString text;
     };
     std::vector<OutlineEntry> outline() const;
+    // The text of a footnote's definition (`[^id]: …`) by its id, for the
+    // plate a reader sees on a click; empty — no such note. Definitions live
+    // at the end of a book: the walk starts from the last block.
+    QString footnoteText(const QString& id) const;
+    // The footnote id referenced by the character at the position, or empty.
+    QString footnoteRefAt(int position) const;
 
     // Канонический текст построчно, с картой «строка → блок». На этом стоит
     // разность версий.

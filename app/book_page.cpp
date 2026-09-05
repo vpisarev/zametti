@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QScopeGuard>
 #include <QScrollBar>
+#include <QToolTip>
 #include <QTextBlock>
 #include <QTextLayout>
 #include <QWheelEvent>
@@ -280,8 +281,28 @@ void BookPage::wheelEvent(QWheelEvent* event) {
     event->accept();
 }
 
+QString BookPage::footnoteAt(const QPointF& viewportPos) const {
+    if (note_ == nullptr || document() == nullptr) return {};
+    const QPointF inDocument(viewportPos.x() + horizontalScrollBar()->value(),
+                             viewportPos.y() + verticalScrollBar()->value());
+    const int position = document()->documentLayout()->hitTest(inDocument, Qt::ExactHit);
+    if (position < 0) return {};
+    return note_->doc().footnoteText(note_->doc().footnoteRefAt(position));
+}
+
 void BookPage::mousePressEvent(QMouseEvent* event) {
     emit activated();
+    // A CLICK ON A FOOTNOTE REFERENCE shows the note itself (brief 18 §4):
+    // the definitions stay at the end of the book, but the reader should not
+    // have to turn there and back.
+    if (event->button() == Qt::LeftButton) {
+        const QString note = footnoteAt(event->position());
+        if (!note.isEmpty()) {
+            QToolTip::showText(event->globalPosition().toPoint(), note, viewport());
+            event->accept();
+            return;
+        }
+    }
     NoteView::mousePressEvent(event);
 }
 
