@@ -134,12 +134,19 @@ void waitForImport(zametti::NoteEditor& editor) {
 // Имя вложения чеканится от ДАТЫ СЪЁМКИ, а не от «сейчас»: на этом стоит вся
 // дедупликация — повторный ввоз того же снимка обязан дать тот же префикс id.
 void checkNameCarriesShotDate() {
-    // Снимок с EXIF: берём настоящий файл из корпуса, выдуманный EXIF проверял
-    // бы наш же писатель, а не чужие файлы.
-    const QString source = QStringLiteral("/home/vpisarev/Pictures/Wallpapers");
+    // A shot with EXIF: a real file from the corpus; a made-up EXIF would test
+    // our own writer rather than foreign files.
+    const QString source = zt::TestData::corpus(QStringLiteral("images/originals/photo"));
+    if (source.isEmpty()) {
+        std::printf("images/originals/photo: корпуса нет, дата съёмки не проверена\n");
+        return;
+    }
     QDir dir(source);
     const QStringList shots = dir.entryList({QStringLiteral("*.jpg")}, QDir::Files);
-    if (shots.isEmpty()) return;   // нет корпуса — проверять нечего
+    if (shots.isEmpty()) {
+        std::printf("images/originals/photo: нет ни одного .jpg, дата съёмки не проверена\n");
+        return;
+    }
 
     const QString path = dir.filePath(shots.first());
     const QString store = QDir(g_dir).filePath(QStringLiteral("дата"));

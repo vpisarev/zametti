@@ -395,10 +395,15 @@ static int ztRunSuite(int argc, char** argv) {
     checkOrientationReset();
     checkFileNameInXmp();
     checkZamettiXmp();
-    if (argc > 1) checkWebpFlavour(std::filesystem::path(argv[1]));
-    if (argc > 1) checkRealFiles(std::filesystem::path(argv[1]));
-    if (argc > 1) checkAgainstExiftool(std::filesystem::path(argv[1]));
-    if (argc > 1) checkCompressedDataComparison(std::filesystem::path(argv[1]));
+    // An empty argv[1] means the corpus exists nowhere (tests/testdata.h):
+    // the checks over real files say so and are skipped rather than counting
+    // zero files as a failure.
+    const bool haveCorpus = argc > 1 && argv[1][0] != '\0';
+    if (!haveCorpus) std::printf("images/originals: корпуса нет, проверки на живых файлах пропущены\n");
+    if (haveCorpus) checkWebpFlavour(std::filesystem::path(argv[1]));
+    if (haveCorpus) checkRealFiles(std::filesystem::path(argv[1]));
+    if (haveCorpus) checkAgainstExiftool(std::filesystem::path(argv[1]));
+    if (haveCorpus) checkCompressedDataComparison(std::filesystem::path(argv[1]));
     return zt::report("метаданные картинок");
 }
 

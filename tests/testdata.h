@@ -1,15 +1,27 @@
-// Где лежат корпуса и куда набору писать своё.
+// Where the test corpora live and where a suite writes its own output.
 //
-// Раньше и то и другое приходило argv: каждому бинарнику свой путь, а в
-// CMakeLists — цикл по ZAMETTI_CORPUS с добавлением пяти проверок за раз.
-// В одном процессе argv на всех один, и место корпусов надо знать иначе.
+// Both used to arrive via argv: every binary got its own path, and CMakeLists
+// looped over ZAMETTI_CORPUS adding five checks at a time. In a single process
+// argv is shared by everyone, so the corpora have to be found differently.
 //
-// ПРАВИЛО ПРО ПРОПУСКИ. Корпуса в репозиторий не кладутся — их у нас гигабайты
-// (одни картинки 1.6 ГБ), и на чужой машине их не будет. Набор, которому нечего
-// проверять, обязан СКАЗАТЬ об этом вслух и пройти пустым, а не притвориться
-// зелёным. Я на этом уже обжигался: молчаливый пропуск неотличим от работающей
-// проверки, и правило «не заглушать наборы» держится в первую очередь на том,
-// что пропуск видно.
+// TWO TIERS OF CORPORA (05.09.2026, before opening the repository):
+//   tests/testdata/  - public fixtures, committed: the CommonMark/GFM spec
+//                      examples and synthetic notes. Nothing personal goes
+//                      here (see the README there).
+//   .testdata/       - the owner's private corpora (copies of real notes,
+//                      images, screenshots); git-ignored, absent elsewhere.
+// A relative path is looked up in the public tier first, then the private
+// one: the owner's runs exercise exactly the copies that ship, so the public
+// copy is the verified one. ZAMETTI_TESTDATA names WHERE THE PRIVATE TIER IS
+// (default: .testdata); the public tier is always in the repository. Hence
+// `ZAMETTI_TESTDATA=/nonexistent` is exactly a fresh clone.
+//
+// THE RULE ABOUT SKIPS. Private corpora are not committed: we have gigabytes
+// of them (images alone are 1.6 GB), and another machine will not have them.
+// A suite with nothing to check MUST SAY SO out loud and pass empty, not
+// pretend to be green. I have been burned by this already: a silent skip is
+// indistinguishable from a working check, and the "don't mute suites" rule
+// rests first of all on skips being visible.
 
 #pragma once
 
@@ -20,44 +32,53 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QString>
+#include <QStringList>
 
 namespace zt {
 
 class TestData {
 public:
-    // Корень корпусов. Берётся из ZAMETTI_TESTDATA, иначе — .testdata рядом с
-    // исходниками (путь к ним прописан сборкой).
-    static QString root() {
+    // Corpus roots in lookup order: tests/testdata next to the sources
+    // (public), then the private one - ZAMETTI_TESTDATA or .testdata next to
+    // the sources. The source path is baked in by the build.
+    static QStringList roots() {
         const QByteArray env = qgetenv("ZAMETTI_TESTDATA");
-        if (!env.isEmpty()) return QString::fromLocal8Bit(env);
-        return QStringLiteral(ZAMETTI_SOURCE_DIR) + QStringLiteral("/.testdata");
+        const QString priv = env.isEmpty()
+            ? QStringLiteral(ZAMETTI_SOURCE_DIR) + QStringLiteral("/.testdata")
+            : QString::fromLocal8Bit(env);
+        return {QStringLiteral(ZAMETTI_SOURCE_DIR) + QStringLiteral("/tests/testdata"), priv};
     }
 
-    // Каталог корпуса по имени: corpus, commonmark, gfm, images/originals…
-    // Пусто — корпуса нет.
-    static QString corpus(const QString& name) {
-        const QString path = root() + QLatin1Char('/') + name;
-        return QFileInfo::exists(path) ? path : QString();
+    // The first existing root; if none exists, the private one (that is what
+    // the skip message names). Suites should prefer corpus()/file(): those
+    // search every tier, not a single one.
+    static QString root() {
+        const QStringList all = roots();
+        for (const QString& r : all)
+            if (QFileInfo::exists(r)) return r;
+        return all.last();
     }
 
-    // Файл корпуса. Пусто — файла нет.
-    static QString file(const QString& relative) {
-        const QString path = root() + QLatin1Char('/') + relative;
-        return QFileInfo::exists(path) ? path : QString();
-    }
+    // A corpus directory by name: corpus, commonmark, gfm, images/originals...
+    // Searched across tiers; empty means the corpus exists nowhere.
+    static QString corpus(const QString& name) { return find(name); }
 
-    // Свой каталог набору под то, что он пишет. СВОЙ у каждого: в одном
-    // процессе восемьдесят наборов, и общий каталог они бы затоптали.
-    // Чистится при выдаче — набор всегда начинает с пустого места.
+    // A corpus file. Searched across tiers; empty means the file exists nowhere.
+    static QString file(const QString& relative) { return find(relative); }
+
+    // A suite's own directory for whatever it writes. Its OWN: eighty suites
+    // share one process and would trample a shared directory. Wiped on
+    // handout, so a suite always starts from an empty place.
     //
-    // ЖИВЁТ ВО ВРЕМЕННОЙ ЗОНЕ, А НЕ В КАТАЛОГЕ СБОРКИ (решение владельца,
-    // 30.08.2026). Каталог сборки лежит в домашнем каталоге, а внутри /home и
-    // /Users программа каталогов не сносит вовсе — и наборы живут по тому же
-    // правилу, что программа, без оговорок для себя. Правило, у которого есть
-    // исключение для наборов, не защищает: каталог владельца снёс ПРОБНИК.
+    // LIVES IN THE TEMP ZONE, NOT IN THE BUILD DIRECTORY (owner's decision,
+    // 30.08.2026). The build directory sits in the home directory, and inside
+    // /home and /Users the program never removes directories at all - the
+    // suites live by the same rule as the program, with no exceptions for
+    // themselves. A rule with an exception for suites protects nothing: it was
+    // a PROBE that wiped the owner's directory.
     //
-    // Где именно — печатает сам набор; путь стабилен от прогона к прогону, так
-    // что снимки приёмки берутся оттуда же, откуда и раньше брались.
+    // Where exactly - the suite prints it; the path is stable from run to run,
+    // so acceptance screenshots are taken from the same place as before.
     static QString outDir(const QString& suite) {
         const QString path =
             QDir::tempPath() + QStringLiteral("/zametti-наборы/") + suite;
@@ -65,12 +86,22 @@ public:
         QDir().mkpath(path);
         return path;
     }
+
+private:
+    static QString find(const QString& relative) {
+        const QStringList all = roots();
+        for (const QString& r : all) {
+            const QString path = r + QLatin1Char('/') + relative;
+            if (QFileInfo::exists(path)) return path;
+        }
+        return QString();
+    }
 };
 
 }  // namespace zt
 
-// Пропустить набор, громко сказав почему. Обёртка нужна ровно затем, чтобы
-// пропуск нельзя было сделать молча одним GTEST_SKIP() без объяснения.
+// Skip a suite, saying loudly why. The wrapper exists precisely so that a
+// skip cannot be done silently with a bare GTEST_SKIP() and no explanation.
 #define ZT_SKIP_NO_CORPUS(path, what)                                              \
     do {                                                                           \
         if ((path).isEmpty()) {                                                    \

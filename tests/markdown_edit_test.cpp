@@ -607,8 +607,8 @@ void checkOwnZoom() {
 // владельца широкое, и три бага этого класса проект уже ловил.
 void checkOwnerNote() {
     const QString source =
-        zt::TestData::root() + QStringLiteral("/owner-copy/01n7wcv5fkf6ne.md");
-    if (!QFile::exists(source)) {
+        zt::TestData::file(QStringLiteral("owner-copy/01n7wcv5fkf6ne.md"));
+    if (source.isEmpty()) {
         std::printf("owner-copy: корпуса нет, акт пропущен\n");
         return;
     }
