@@ -27,6 +27,7 @@
 #include "markdown_edit_view.h"
 #include "note_list.h"
 #include "note_panels.h"
+#include "panel_memory.h"
 #include "note_tree.h"
 #include "search.h"
 #include "search_results.h"
@@ -1373,7 +1374,6 @@ int main(int argc, char** argv) {
             state.lockedNote = editor.isLockedNote();
             state.tempUnlocked = editor.isTemporarilyUnlocked();
             state.book = editor.isBookNote();
-            state.reading = reading.active();
             state.flatView = markdown.active() || history.active() || settingsMode.active();
             state.cloudConfigured = cloudSync.configured();
             state.cloudStatus = cloudSync.statusText();
@@ -2793,7 +2793,11 @@ int main(int argc, char** argv) {
         const int sidebar = zametti::settings().ui().sidebarWidth();
         const int noteList = zametti::settings().ui().noteListWidth();
         if (model.isStore()) {
-            if (!session.splitterState().isEmpty() && splitter.restoreState(session.splitterState()))
+            // A state saved from hidden panels (state.json of an older build)
+            // restores them folded to nothing: that is no width, and the
+            // settings' widths are laid out instead.
+            if (!session.splitterState().isEmpty() && splitter.restoreState(session.splitterState()) &&
+                splitter.sizes().value(0) > 0)
                 return;
             splitter.setSizes({sidebar, noteList, qMax(400, window.width() - sidebar - noteList)});
         } else {
@@ -3076,12 +3080,13 @@ int main(int argc, char** argv) {
 
     // Панели убираются и возвращаются одной кнопкой. Ширины запоминаются ПЕРЕД
     // тем, как прятать: сплиттер хранит размеры видимых виджетов, и спрятанные
-    // панели вернулись бы схлопнутыми.
-    QList<int> keptSizes = splitter.sizes();
+    // панели вернулись бы схлопнутыми. The memory itself lives in PanelMemory
+    // (panel_memory.h): it takes widths only from a shown, laid-out window —
+    // a start in the reading mode used to fold both panels to a strip.
+    zametti::PanelMemory panelMemory(splitter, panels, window);
     const auto showPanels = [&](bool visible) {
-        if (!visible) keptSizes = splitter.sizes();
-        panels.setVisible(visible);
-        if (visible && keptSizes.size() == splitter.count()) splitter.setSizes(keptSizes);
+        if (!visible) panelMemory.hide();
+        else if (!panelMemory.show()) applyStartWidths();
         // Кнопка НАЖАТА, когда панели видны, а не наоборот: нажатый
         // переключатель означает «это включено». Прежде было зеркально —
         // панели пропадали, а кнопка загоралась.
@@ -3093,24 +3098,14 @@ int main(int argc, char** argv) {
         toolbar.setTip(Button::Panels, visible ? QStringLiteral("Hide side panels")
                                                : QStringLiteral("Show side panels"));
     };
-    // THE BOOK TAKES THE WHOLE WINDOW (owner's wish, 05.09.2026): the reading
-    // mode hides the side panels for its duration and brings back what was
-    // there before; the panels button is dark meanwhile (toolbar_state.h).
-    bool panelsBeforeReading = !session.panelsHidden();
-    QObject::connect(&reading, &zametti::ReadingController::modeChanged, &window, [&](bool on) {
-        if (on) {
-            panelsBeforeReading = toolbar.isChecked(Button::Panels);
-            showPanels(false);
-        } else {
-            showPanels(panelsBeforeReading);
-        }
-        toolbarState.refresh();
-    });
+    // THE READING MODE LEAVES THE PANELS ALONE (owner's decision, 06.09.2026;
+    // before that a book took the whole window by itself): the panels button
+    // and the full-screen mode are the two ways to clear the window for the
+    // spread, and both remember what was there before.
     {
         // Зовём ВСЕГДА, а не только когда панели спрятаны: кнопка обязана
         // показывать своё состояние с первой секунды, а не с первого нажатия.
         showPanels(!session.panelsHidden());
-        if (reading.active()) showPanels(false);
 
         // КНОПКА ОБЛАКА ОЖИЛА (m17, сессия 4). Не настроенный синк — не
         // поломка и не обещание «потом», а состояние: тултип говорит, что
@@ -3490,15 +3485,19 @@ int main(int argc, char** argv) {
         // вида. Обратный ход — деление кегля на кегль — как раз и давал те
         // дробные числа, ради которых заведена шкала.
         out.setWindowGeometry(window.saveGeometry());
-        out.setSplitterState(splitter.saveState());
+        // The splitter state with the panels ON SCREEN: taken live, or the one
+        // remembered before they were hidden (a state saved from hidden panels
+        // used to bring them back folded on the next start).
+        out.setSplitterState(panelMemory.stateForExit());
         out.setHistoryListWidth(historyListWidth);
-        // Hidden by the reading mode is not hidden by the person: what comes
-        // back after the book is what is remembered.
+        // Hidden by the full-screen mode is not hidden by the person: what
+        // comes back after it is what is remembered.
         // The reading place and the mode of the open note (brief 18).
         if (reading.active()) bookView.rememberPlace();
         reading.rememberMode();
-        out.setPanelsHidden(reading.active() ? !panelsBeforeReading
-                                             : !toolbar.isChecked(zametti::Toolbar::Button::Panels));
+        out.setPanelsHidden(window.isFullScreen()
+                                ? !panelsBeforeFullscreen
+                                : !toolbar.isChecked(zametti::Toolbar::Button::Panels));
         out.setMarkdownMode(markdown.active());
         out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());
@@ -3588,6 +3587,37 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "probe: history mode %s\n",
                              history.enter() ? "entered" : "did not enter");
             });
+        // ZAMETTI_PROBE_READING=0|1 — leave or enter the reading mode before
+        // the shot, and say what the panels are: the widths of the splitter
+        // before and after (a start in the reading mode used to give the
+        // panels back folded, 06.09.2026). ZAMETTI_PROBE_PANELS=0|1 — hide or
+        // show the panels the same way, through the toolbar's door.
+        {
+            const auto sizesText = [&] {
+                QStringList parts;
+                for (int size : splitter.sizes()) parts.append(QString::number(size));
+                return parts.join(QLatin1Char(','));
+            };
+            const QByteArray readingProbe = qgetenv("ZAMETTI_PROBE_READING");
+            const QByteArray panelsProbe = qgetenv("ZAMETTI_PROBE_PANELS");
+            if (!readingProbe.isEmpty() || !panelsProbe.isEmpty())
+                QTimer::singleShot(ms / 2, &window, [&, readingProbe, panelsProbe, sizesText] {
+                    std::fprintf(stderr, "probe panels: before reading=%d panels=%d sizes=%s\n",
+                                 reading.active() ? 1 : 0, toolbar.isChecked(Button::Panels) ? 1 : 0,
+                                 sizesText().toUtf8().constData());
+                    if (!readingProbe.isEmpty()) {
+                        if (readingProbe == "1") reading.enter();
+                        else reading.leave();
+                    }
+                    if (!panelsProbe.isEmpty()) showPanels(panelsProbe == "1");
+                    QTimer::singleShot(50, &window, [&, sizesText] {
+                        std::fprintf(stderr, "probe panels: after reading=%d panels=%d sizes=%s\n",
+                                     reading.active() ? 1 : 0,
+                                     toolbar.isChecked(Button::Panels) ? 1 : 0,
+                                     sizesText().toUtf8().constData());
+                    });
+                });
+        }
         // ZAMETTI_PROBE_REPLACE_UNDO=<id>,<искомое>,<замена> — сценарий владельца
         // в живом окне (05.09.2026): открыть заметку, Ctrl+H, набрать запрос и
         // замену, нажать Replace, потом Ctrl+Z в поле замены, Ctrl+Y там же,

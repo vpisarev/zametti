@@ -72,6 +72,9 @@ public:
     NoteListModel& list() { return list_; }
     bool isStore() const { return model_.isStore(); }
     void setVisible(bool visible);
+    // The panels are switched on — the intent, not what is on screen now
+    // (see wanted_ below).
+    bool wanted() const { return wanted_; }
 
     // --- открытая заметка ---------------------------------------------------
     // Какая заметка открыта в редакторе. Прямой связью с NoteEditor::fileChanged:
