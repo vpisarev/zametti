@@ -960,6 +960,28 @@ void checkEscapeKeepsMode() {
     ZT_TRUE("режим кончился", !rig.controller.active());
 }
 
+// THE LOCK HOLDS IN THE SOURCE MODE (owner's report, 07.09.2026: a locked book
+// was freely edited as source). The view is read-only while the note is
+// locked, and follows the temporary unlock and the lock back.
+void checkLockHoldsInSource() {
+    const QString path = writeNote(QStringLiteral("locked.md"),
+                                   QStringLiteral("<!-- zametti\nrole: book\nlock: yes\n-->\n\n# Book\n\nText.\n"));
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    ZT_TRUE("заметка заперта", rig.editor.isLockedNote() && rig.editor.isEffectivelyLocked());
+    ZT_TRUE("вошли в исходник", rig.controller.enter());
+    ZT_TRUE("исходник запертой заметки — только чтение", rig.view.isReadOnly());
+    const QString before = rig.view.source();
+    QTest::keyClicks(&rig.view, QStringLiteral("typed"));
+    ZT_EQ("набор в запертый исходник не проходит", before.toStdString(), rig.view.source().toStdString());
+    rig.editor.setTemporaryUnlock(true);
+    ZT_TRUE("временно отперли — исходник правится", !rig.view.isReadOnly());
+    rig.editor.setTemporaryUnlock(false);
+    ZT_TRUE("заперли обратно — снова только чтение", rig.view.isReadOnly());
+    rig.controller.leave();
+}
+
 }  // namespace
 
 TEST(MarkdownEdit, All) {
@@ -983,6 +1005,7 @@ TEST(MarkdownEdit, All) {
     checkCaretLook();
     checkUndoAtBottomLeavesToHistory();
     checkNbspSurvives();
+    checkLockHoldsInSource();
     checkEscapeKeepsMode();
     checkOwnerNote();
 }
