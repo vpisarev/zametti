@@ -299,6 +299,9 @@ void checkSpread() {
         BookPage& page = rig.book->page(i);
         if (page.blankLeaf()) continue;
         const int above = int(page.startTopY()) - page.verticalScrollBar()->value();
+        // The range is widened to the start: the last page begins at the top.
+        ZT_TRUE(std::string("страница ") + std::to_string(i) + " начинается с верха листа",
+                std::abs(above) <= 1);
         if (above <= 2) continue;
         const QImage shot = page.viewport()->grab().toImage();
         const QRgb paper = page.palette().color(QPalette::Base).rgb();
