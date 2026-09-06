@@ -413,19 +413,23 @@ void checkSymmetry() {
             rig.left().viewport()->width() == rig.book->page(1).viewport()->width());
     ZT_TRUE("документ свёрстан по ширине страницы",
             qFuzzyCompare(rig.left().document()->textWidth(), qreal(rig.left().viewport()->width())));
-    const QImage fresh = rig.book->grab().toImage();
+    // PIXELS, NOT FORMATS: grab() may hand back ARGB32 one time and RGB32 the
+    // next, and QImage::operator== compares the format too — the shots were
+    // identical on disk while the set went red (books2, two of seven full runs).
+    const auto pixels = [](const QImage& image) { return image.convertToFormat(QImage::Format_RGB32); };
+    const QImage fresh = pixels(rig.book->grab().toImage());
     // Away to the editor and back.
     rig.controller.leave();
     QTest::qWait(60);
-    const QImage editorFresh = rig.editor->grab().toImage();
+    const QImage editorFresh = pixels(rig.editor->grab().toImage());
     rig.controller.enter();
     QTest::qWait(60);
     ZT_TRUE("место после возврата то же", rig.left().start() == place);
-    const QImage back = rig.book->grab().toImage();
+    const QImage back = pixels(rig.book->grab().toImage());
     ZT_TRUE("переключился-вернулся == свежий показ (разворот, пиксель в пиксель)", back == fresh);
     rig.controller.leave();
     QTest::qWait(60);
-    const QImage editorBack = rig.editor->grab().toImage();
+    const QImage editorBack = pixels(rig.editor->grab().toImage());
     ZT_TRUE("и редактор после чтения рисуется как до него", editorBack == editorFresh);
     if (back != fresh || editorBack != editorFresh) {
         const QString dir = zt::TestData::outDir(QStringLiteral("book-view"));
