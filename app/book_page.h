@@ -71,6 +71,11 @@ signals:
     void bookmarkToggleRequested(int block);
     void bookmarkStepRequested(int direction);
 
+public:
+    // The look the page lays its column out with: the spread sizes the pages
+    // by its column width and margins (ZBookView::relayoutPages).
+    const ZDocStyle& readingLook() const { return *reading_; }
+
 protected:
     QFont zoomedBaseFont(qreal zoom) const override;
     int pagePadding() const override;

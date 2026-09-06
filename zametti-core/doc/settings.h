@@ -1305,8 +1305,13 @@ struct ZSettings {
         ZM_SETTING(int, pagesPerSpread, PagesPerSpread, 0, 0, 2)
         // The least width of one page, in widths of "A", for the automatic choice.
         ZM_SETTING(qreal, minPageWidth, MinPageWidth, 45.0, 20.0, 200.0)
-        // Gap between the two pages of a spread, in widths of "A".
-        ZM_SETTING(qreal, pageGap, PageGap, 4.0, 0.0, 20.0)
+        // Gap between the two pages of a spread, in widths of "A". The pages
+        // hug the gutter (ZBookView::relayoutPages), so the paper between the
+        // two columns is 2 × sideMargin + pageGap: 14 A with the defaults —
+        // less than half of what the half-window pages used to leave at
+        // 1600 px. The gap also counts in the two-pages rule above
+        // (2 × minPageWidth + pageGap = 96 A must fit).
+        ZM_SETTING(qreal, pageGap, PageGap, 6.0, 0.0, 20.0)
     };
 
     // ================================================================

@@ -110,7 +110,21 @@ void ZBookView::relayoutPages() {
     // apart, and each would lay the document out for its own on every
     // resize, in whichever order the events came (caught by the symmetry
     // shot: justified lines a pixel different after a round trip).
-    const int pageWidth = (width() - gap * (shown_ - 1)) / shown_;
+    int pageWidth = (width() - gap * (shown_ - 1)) / shown_;
+    // THE SPREAD HUGS THE GUTTER (owner's wish, 06.09.2026): a page is no wider
+    // than its column with the two side margins, and the spare width of a wide
+    // window goes outside the spread, not between the columns. Halving the
+    // window gave two half-window pages, each centring its column in its own
+    // half — 330 px of paper between the columns at 1600 px, and the gap
+    // setting hardly mattered. A single page keeps the whole width: its
+    // column is centred by the view as before.
+    if (shown_ == 2) {
+        const ZDocStyle& look = pages_[0]->readingLook();
+        if (look.maxContentWidth() > 0.0) {
+            const int hugged = int((look.maxContentWidth() + 2.0 * look.sideMargin()) * unit);
+            pageWidth = std::min(pageWidth, std::max(hugged, 1));
+        }
+    }
     const int span = pageWidth * shown_ + gap * (shown_ - 1);
     int x = (width() - span) / 2;
     for (int i = 0; i < shown_; ++i) {
