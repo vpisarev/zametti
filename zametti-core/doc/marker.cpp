@@ -320,7 +320,8 @@ QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point) {
 void paintFootnoteLabel(QPainter& painter, const QTextBlock& block, const ZDocStyle& look) {
     const QTextLayout* layout = block.layout();
     if (layout == nullptr || layout->lineCount() == 0) return;
-    const QString id = block.blockFormat().stringProperty(InfoProperty);
+    // The label, as at the reference: the number at the end of the id.
+    const QString id = footnoteLabel(block.blockFormat().stringProperty(InfoProperty));
     if (id.isEmpty()) return;
     const QTextLine line = layout->lineAt(0);
     const QPointF origin = layout->position();

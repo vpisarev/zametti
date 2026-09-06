@@ -87,6 +87,9 @@ protected:
     void revealInGolden(const QRectF& place) override;
     void keyPressEvent(QKeyEvent* event) override;
     bool event(QEvent* event) override;
+    // A footnote reference under the pointer shows its note as a tooltip
+    // (books2: on hover, not only on a click).
+    bool viewportEvent(QEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;

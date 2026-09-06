@@ -216,7 +216,16 @@ void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep,
             // reference, and the reading view opens the note on a click.
             fmt.setVerticalAlignment(QTextCharFormat::AlignSuperScript);
             fmt.setForeground(style.linkColor());
-            fmt.setProperty(FootnoteIdProperty, b.text.mid(from, to - from));
+            // The id rides in the run (withFootnoteLabels); a run that kept
+            // its syntax — overlapping runs skip the labels — still names
+            // the id without the brackets.
+            QString id = s.footnoteId;
+            if (id.isEmpty()) {
+                id = b.text.mid(from, to - from);
+                if (id.startsWith(QLatin1String("[^")) && id.endsWith(QLatin1Char(']')))
+                    id = id.mid(2, id.size() - 3);
+            }
+            fmt.setProperty(FootnoteIdProperty, id);
         }
         if (s.code()) {
             fmt.setBackground(style.codeBackground());
@@ -502,10 +511,11 @@ const Piece& withNamedBareImages(const Piece& piece, Piece& storage) {
     return storage;
 }
 
-// A FOOTNOTE REFERENCE SHOWS ITS ID, NOT ITS SYNTAX: the run `[^id]` shrinks
-// to `id` in the text, the id itself goes to the format as FootnoteIdProperty
-// (applySpans reads it back from the text of the run). Same shifting rules as
-// the formula objects above; the file gets `[^id]` back from gatherLine.
+// A FOOTNOTE REFERENCE SHOWS ITS LABEL, NOT ITS SYNTAX: the run `[^id]`
+// shrinks to the label (footnoteLabel: the number at the end of the id, so
+// `n_1` reads as a plain 1 — books2) in the text, the id itself goes to the
+// run and from there to the format as FootnoteIdProperty. Same shifting rules
+// as the formula objects above; the file gets `[^id]` back from gatherLine.
 const Piece& withFootnoteLabels(const Piece& piece, Piece& storage) {
     bool any = false;
     for (const Run& run : piece.runs)
@@ -519,10 +529,12 @@ const Piece& withFootnoteLabels(const Piece& piece, Piece& storage) {
         if (!run.footnote()) continue;
         const QStringView written = storage.view(run);
         if (written.size() < 4 || !written.startsWith(u"[^") || !written.endsWith(u']')) continue;
+        const QString id = written.mid(2, written.size() - 3).toString();
+        const QString label = footnoteLabel(id);
         const int32_t at = run.start;
-        const int32_t removed = 3;
-        storage.text.remove(run.end - 1, 1);
-        storage.text.remove(at, 2);
+        const int32_t removed = int32_t(written.size() - label.size());
+        storage.text.replace(at, written.size(), label);
+        run.footnoteId = id;
         run.end -= removed;
         for (size_t k = i + 1; k < storage.runs.size(); ++k) {
             storage.runs[k].start -= removed;

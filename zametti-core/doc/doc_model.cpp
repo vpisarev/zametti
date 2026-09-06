@@ -91,6 +91,12 @@ void setFontStep(QTextCharFormat& format, int step) {
                        std::clamp(step, kFontStepMin, kFontStepMax));
 }
 
+QString footnoteLabel(const QString& id) {
+    int digits = 0;
+    while (digits < id.size() && id.at(id.size() - 1 - digits).isDigit()) ++digits;
+    return digits > 0 ? id.right(digits) : id;
+}
+
 qreal assignedLineHeight(const QTextBlock& block) {
     const QTextBlockFormat format = block.blockFormat();
     // Естественная высота строки: её знает разметка. У неразмеченного блока

@@ -5,6 +5,7 @@
 
 #include <QAbstractTextDocumentLayout>
 #include <QFontMetricsF>
+#include <QHelpEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -290,15 +291,42 @@ QString BookPage::footnoteAt(const QPointF& viewportPos) const {
     return note_->doc().footnoteText(note_->doc().footnoteRefAt(position));
 }
 
+namespace {
+// The note as the plate shows it. Rich text: a plain string is shown on one
+// line however long it is, a paragraph wraps to the tooltip's width.
+QString footnotePlate(const QString& note) {
+    QString body = note.toHtmlEscaped();
+    body.replace(QLatin1Char('\n'), QLatin1String("<br>"));
+    return QStringLiteral("<p>") + body + QStringLiteral("</p>");
+}
+}  // namespace
+
+bool BookPage::viewportEvent(QEvent* event) {
+    // THE NOTE ON HOVER (books2): the pointer resting on a reference shows
+    // the note's text; the definitions stay at the end of the book.
+    if (event->type() == QEvent::ToolTip) {
+        auto* help = static_cast<QHelpEvent*>(event);
+        const QString note = footnoteAt(QPointF(help->pos()));
+        if (note.isEmpty()) {
+            QToolTip::hideText();
+            event->ignore();
+        } else {
+            QToolTip::showText(help->globalPos(), footnotePlate(note), viewport());
+            event->accept();
+        }
+        return true;
+    }
+    return NoteView::viewportEvent(event);
+}
+
 void BookPage::mousePressEvent(QMouseEvent* event) {
     emit activated();
-    // A CLICK ON A FOOTNOTE REFERENCE shows the note itself (brief 18 §4):
-    // the definitions stay at the end of the book, but the reader should not
-    // have to turn there and back.
+    // A CLICK ON A FOOTNOTE REFERENCE shows the note itself too (brief 18
+    // §4): on a touch screen there is no hover.
     if (event->button() == Qt::LeftButton) {
         const QString note = footnoteAt(event->position());
         if (!note.isEmpty()) {
-            QToolTip::showText(event->globalPosition().toPoint(), note, viewport());
+            QToolTip::showText(event->globalPosition().toPoint(), footnotePlate(note), viewport());
             event->accept();
             return;
         }

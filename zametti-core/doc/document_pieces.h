@@ -44,6 +44,10 @@ struct Run {
     uint16_t flags = 0;     // биты InlineFlag
     QString href;
     QString title;
+    // The id of a footnote reference (`[^id]`), kept apart from the text
+    // once the builder has shrunk the run to its label (books2): the label
+    // is what the reader sees, the id is what the file gets back.
+    QString footnoteId;
 
     bool bold() const { return (flags & InlineBold) != 0; }
     bool italic() const { return (flags & InlineItalic) != 0; }

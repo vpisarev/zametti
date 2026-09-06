@@ -260,6 +260,14 @@ qreal fontStepFactor(int step);
 // бы крупным.
 void setFontStep(QTextCharFormat& format, int step);
 
+// THE LABEL OF A FOOTNOTE (books2): what the reader sees at the reference and
+// next to the definition. The number at the end of the id — `n_1` and `n12`
+// read as 1 and 12, the way a book numbers its notes; an id without a
+// trailing number is shown as it is. Numbering by the order of definitions
+// was rejected: it costs a walk over the document on every rebuilt paragraph
+// and moves every label when one note is added.
+QString footnoteLabel(const QString& id);
+
 // НАЗНАЧЕННАЯ ВЫСОТА СТРОКИ БЛОКА, В ПИКСЕЛЯХ.
 //
 // Спрашивать QTextBlockFormat::lineHeight() напрямую — ловушка: он отдаёт сырое
