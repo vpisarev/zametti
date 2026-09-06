@@ -1,5 +1,7 @@
 #include "book_pages.h"
 
+#include "doc_model.h"
+
 #include <QAbstractTextDocumentLayout>
 #include <QElapsedTimer>
 #include <QTextBlock>
@@ -93,6 +95,16 @@ bool BookPages::extend() {
     QTextBlock block = doc_->findBlockByNumber(last.block);
     bool first = true;
     for (; block.isValid(); block = block.next(), first = false) {
+        // A chapter begins a page of its own (books2): the heading that is
+        // not already the page's first line turns the page. The collapsed
+        // blank line before it stays at the foot of the previous page.
+        if (!first && breakLevel_ > 0 && kindOf(block) == Kind::Heading) {
+            const int level = block.blockFormat().headingLevel();
+            if (level > 0 && level <= breakLevel_) {
+                starts_.push_back({block.blockNumber(), 0});
+                return true;
+            }
+        }
         (void)layout->blockBoundingRect(block);   // lays the block out
         const QTextLayout* tl = block.layout();
         if (tl == nullptr) continue;

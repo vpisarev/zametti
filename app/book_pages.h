@@ -59,6 +59,12 @@ public:
     // Forget everything and start over with this page height (pixels of the
     // viewport). The background walk restarts on the next idle slice.
     void reset(qreal pageHeight);
+    // HEADINGS BEGIN A PAGE (books2): a heading of this level or shallower
+    // starts a new page unless it is the page's first line already; 0 — the
+    // geometric rule alone. The view sets the level of the book's chapters
+    // (ZBookView::resetTable) before a reset.
+    void setBreakLevel(int level) { breakLevel_ = level; }
+    int breakLevel() const { return breakLevel_; }
     qreal pageHeight() const { return height_; }
 
     // Start of page k (0-based), computing up to it when needed; false — the
@@ -87,6 +93,7 @@ private:
 
     QTextDocument* doc_ = nullptr;
     qreal height_ = 0.0;
+    int breakLevel_ = 0;
     std::vector<PageStart> starts_;
     bool complete_ = false;
     QTimer idle_;

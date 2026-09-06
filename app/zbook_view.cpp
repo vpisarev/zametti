@@ -9,6 +9,7 @@
 #include <QTextBlock>
 #include <QTextDocument>
 #include <algorithm>
+#include <array>
 
 namespace zametti {
 
@@ -135,9 +136,25 @@ void ZBookView::relayoutPages() {
     if (note_ != nullptr) showSpread(table_.pageOf(anchor_));
 }
 
+int ZBookView::chapterLevel() const {
+    // THE LEVEL OF THE CHAPTERS (owner's rule, 06.09.2026): the shallowest
+    // heading level that occurs more than once. An fb2 book has one H1 (the
+    // title) and its chapters as H2 — both turn the page; a manual with many
+    // H1 parts and H2 sections in them turns the page at the parts only.
+    // Nothing repeats — the first level alone.
+    if (note_ == nullptr) return 0;
+    std::array<int, 6> perLevel{};
+    for (const ZDocument::OutlineEntry& entry : note_->outline())
+        if (entry.level >= 1 && entry.level <= 6) ++perLevel[size_t(entry.level - 1)];
+    for (int level = 1; level <= 6; ++level)
+        if (perLevel[size_t(level - 1)] >= 2) return level;
+    return 1;
+}
+
 void ZBookView::resetTable() {
     // The height the layout settled on: the pages are laid out by now, and
     // both have the same one.
+    table_.setBreakLevel(chapterLevel());
     table_.reset(pages_[0]->pageHeight());
 }
 

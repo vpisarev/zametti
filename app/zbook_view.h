@@ -42,6 +42,9 @@ public:
     // the selection, takes the focus and is the search target.
     BookPage& activePage();
     int pagesShown() const { return shown_; }
+    // The heading level whose headings turn the page (BookPages::setBreakLevel):
+    // the shallowest level that occurs more than once in the outline, else 1.
+    int chapterLevel() const;
     BookPage& page(int index) { return *pages_[size_t(index)]; }
 
     // Turn spreads: +1 forward, -1 back; the start and the end of the book.
