@@ -17,7 +17,9 @@
 #include <QTextCursor>
 #include <QTextDocument>
 
+#include <cmath>
 #include <memory>
+#include <string>
 #include <string>
 
 namespace {
@@ -68,7 +70,8 @@ void checkOwnStyle() {
 // of it. Take the role away — the book turns into an ordinary note (the check
 // that catches a removed chooser in ZNote::load).
 void checkReadingLookByRole() {
-    const std::string body = "# Title\n\nFirst paragraph.\n\nSecond paragraph.\n\n## Chapter\n\nText.\n";
+    const std::string body =
+        "# Title\n\nFirst paragraph.\n\nSecond paragraph.\n\n## Chapter\n\nText.\n\n```\ncode\n```\n";
     zametti::ZNote book;
     const std::string header = "<!-- zametti\nrole: book\n-->\n\n";
     book.load(header + body);
@@ -81,6 +84,15 @@ void checkReadingLookByRole() {
     ZT_EQ("книга собрана шрифтом чтения", s(expected->fontFamily()), s(reading.fontFamily()));
     ZT_TRUE("и с интерлиньяжем чтения",
             qFuzzyCompare(reading.lineHeightFactor(), zametti::settings().reading().lineHeightFactor()));
+    // Code in a book (books2): its own step under the prose and the editor's
+    // line height, not the book's airy one.
+    ZT_EQ("ступень кода в книге — из reading.codeStep",
+          std::to_string(zametti::settings().reading().codeStep()), std::to_string(reading.codeStep()));
+    ZT_TRUE("интерлиньяж кода в книге — редакторский",
+            qFuzzyCompare(reading.codeLineHeight(), zametti::settings().style().lineHeightFactor()));
+    ZT_TRUE("у стиля редактора кода свой интерлиньяж не задан",
+            ordinary.codeLineHeightFactor() < 0.0 &&
+                qFuzzyCompare(ordinary.codeLineHeight(), ordinary.lineHeightFactor()));
     ZT_TRUE("обычная заметка — стиль настроек",
             ordinary.fontFamily() == zametti::settings().style().fontFamily() &&
                 plain.doc().stylePtr() == nullptr);
@@ -96,6 +108,24 @@ void checkReadingLookByRole() {
     ZT_TRUE("абзац книги — с красной строкой", para.textIndent() > 0.0);
     ZT_TRUE("абзац книги — по ширине", para.alignment() == Qt::AlignJustify);
     ZT_TRUE("заголовок книги — по центру", fmt(book, 6).alignment() == Qt::AlignHCenter);
+    // Air around a heading (books2): every level, the editor's style has none.
+    ZT_TRUE("заголовок книги — с воздухом сверху и снизу",
+            fmt(book, 6).topMargin() > 0.0 && fmt(book, 6).bottomMargin() > 0.0);
+    ZT_TRUE("заголовок заметки — без воздуха",
+            qFuzzyIsNull(fmt(plain, 6).topMargin()) && qFuzzyIsNull(fmt(plain, 6).bottomMargin()));
+    // blocks 9 empty, 10 code: the step and the line height are baked.
+    const QTextBlockFormat code = fmt(book, 10);
+    ZT_EQ("блок кода книги — интерлиньяж редактора, %",
+          std::to_string(int(std::lround(zametti::settings().style().lineHeightFactor() * 100.0))),
+          std::to_string(int(std::lround(code.lineHeight()))));
+    ZT_EQ("блок кода книги — на ступень ниже текста",
+          std::to_string(zametti::settings().reading().codeStep()),
+          std::to_string(book.doc().caretAtBlock(10).blockCharFormat().intProperty(
+              QTextFormat::FontSizeAdjustment)));
+    ZT_EQ("блок кода заметки — вровень с текстом",
+          std::to_string(zametti::settings().style().codeStep()),
+          std::to_string(plain.doc().caretAtBlock(10).blockCharFormat().intProperty(
+              QTextFormat::FontSizeAdjustment)));
     const QTextBlockFormat gap = fmt(book, 3);
     ZT_TRUE("пустая строка книги схлопнута до пикселя",
             gap.lineHeightType() == QTextBlockFormat::FixedHeight && gap.lineHeight() <= 1.0);

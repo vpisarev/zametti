@@ -68,6 +68,10 @@ void checkDefaultsAreEmbedded() {
             embedded.contains(def.style().fontFamily()));
     ZT_TRUE("шрифт панелей из умолчаний влинкован: " + s(def.ui().appFamily()),
             embedded.contains(def.ui().appFamily()));
+    // The book font (books2): a book must look the same on every machine, so
+    // the default reading family is embedded like the text and panel ones.
+    ZT_TRUE("шрифт книги из умолчаний влинкован: " + s(def.reading().fontFamily()),
+            embedded.contains(def.reading().fontFamily()));
 }
 
 // Строка из таблицы name шрифта: nameID 1 — семейство, 2 — начертание. Берём
