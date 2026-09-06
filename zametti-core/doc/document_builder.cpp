@@ -276,13 +276,18 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first,
     // строк перестала бы быть n высотами строки.
     if (!raw && kind == Kind::VSpace)
         return previousIsVSpace ? 0.0 : style.separatorSpacingBefore();
-    if (previousIsVSpace) return style.separatorSpacingAfter();
+    const qreal afterRun = previousIsVSpace ? style.separatorSpacingAfter() : 0.0;
 
     // Своего воздуха у заголовка нет. Он был — «заголовок отделяет куски текста»,
     // — но выглядел ровно как пустая строка, которой в файле нет, и читался как
     // ошибка: в редакторе строка есть, в markdown её нет. Отбивку задаёт только
     // сам файл.
-    return 0.0;
+    //
+    // THE READING LOOK IS THE EXCEPTION (books2): a book collapses its blank
+    // lines, so the page gives every heading air of its own; the editor's
+    // style keeps headingSpacingBefore at zero and this stays as it was.
+    if (!raw && kind == Kind::Heading) return afterRun + style.headingSpacingBefore();
+    return afterRun;
 }
 
 qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
@@ -754,7 +759,10 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // Первому блоку документа отбивка не нужна (над ним поле страницы), а вот
     // воздух над плашкой нужен и ему — это и делает blockTopMarginPx.
     blockFmt.setTopMargin(blockTopMarginPx(b.kind, raw, prevVSpace, first, ctx.lineUnit, style));
-    blockFmt.setBottomMargin(0);
+    // Air under a heading belongs to the heading (books2; zero in the editor).
+    blockFmt.setBottomMargin(!raw && b.kind == Kind::Heading
+                                 ? style.headingSpacingAfter() * ctx.lineUnit
+                                 : 0.0);
 
 
     // ВЫСОТА СТРОКИ — ДОЛЕЙ, А НЕ ПИКСЕЛЯМИ. Пиксели были бы абсолютными и на
@@ -774,7 +782,8 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     const qreal lineFactor = (imageObject || formulaObject || tableObject)
                                  ? 1.0
                                  : (list ? listLineHeightFactorFor(b.marker, ctx.base, style)
-                                         : style.lineHeightFactor());
+                                         : (b.kind == Kind::Code ? style.codeLineHeight()
+                                                                 : style.lineHeightFactor()));
     if (!raw && b.kind == Kind::VSpace)
         applyEmptyLineHeight(blockFmt, ctx.basePoint, ctx.base, style);
     else

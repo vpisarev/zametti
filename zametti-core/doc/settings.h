@@ -152,6 +152,14 @@ struct ZDocStyle {
     // а не интерлиньяж — иначе, ужимая строки, мы бы сплющили и абзацы.
     ZM_SETTING(qreal, lineHeightFactor, LineHeightFactor, 1.15, 0.5, 4.0)
     ZM_SETTING(qreal, listLineHeightFactor, ListLineHeightFactor, 1.05, 0.5, 4.0)
+    // Line height of a code block; negative = lineHeightFactor. The reading
+    // look (books2) keeps the editor's rhythm for code: a book's airy 1.5 made
+    // the listings look bloated next to the prose.
+    ZM_SETTING(qreal, codeLineHeightFactor, CodeLineHeightFactor, -1.0, -1.0, 4.0)
+public:
+    qreal codeLineHeight() const {
+        return codeLineHeightFactor_ < 0.0 ? lineHeightFactor_ : codeLineHeightFactor_;
+    }
     // ЧЕМ ЗАДАЁТСЯ ВЫСОТА СТРОКИ. Развилка, которую владелец смотрит глазами
     // (см. zametti-peek): доля едет за шрифтом и потому переживает зум, но Qt
     // не красит выделением просвет, который сам же и отвёл; пиксели красятся
@@ -217,6 +225,13 @@ public:
     // Justified paragraphs and centred headings — the classic book page.
     ZM_SETTING_PLAIN(bool, justify, Justify, false)
     ZM_SETTING_PLAIN(bool, centerHeadings, CenterHeadings, false)
+    // Air above and below a heading, in line heights, on top of what the
+    // file's blank lines give. The editor keeps zero (a heading's air there is
+    // the file's own blank line); a book collapses its blank lines, so the
+    // page needs air of its own around every heading, down to the fourth
+    // level (owner's wish, 06.09.2026).
+    ZM_SETTING(qreal, headingSpacingBefore, HeadingSpacingBefore, 0.0, 0.0, 10.0)
+    ZM_SETTING(qreal, headingSpacingAfter, HeadingSpacingAfter, 0.0, 0.0, 10.0)
 
     // --- цвета ---
     ZM_SETTING_PLAIN(QColor, pageBackground, PageBackground, 0xfe, 0xfe, 0xfb)
@@ -1258,11 +1273,19 @@ struct ZSettings {
     // build time; the rest (pages per spread, gaps) is read by the book view.
     // ================================================================
     struct Reading {
-        // "serif" is a generic family: Qt resolves it to the system serif
+        // Source Serif 4 is embedded (resources/fonts, books2): the book looks
+        // the same on every machine. "serif" would ask for the system serif
         // (Times New Roman on macOS, DejaVu Serif on Linux). Empty = the note font.
-        ZM_SETTING_PLAIN(QString, fontFamily, FontFamily, QStringLiteral("serif"))
+        ZM_SETTING_PLAIN(QString, fontFamily, FontFamily, QStringLiteral("Source Serif 4"))
         // Zero = the note font's size.
         ZM_SETTING(qreal, fontPoint, FontPoint, 0.0, 0.0, 96.0)
+        // The step of code relative to the book text (the same ladder as
+        // fonts.codeStep). A monospace has a taller x-height than a serif
+        // (IBM Plex Mono 0.516 em, Source Serif 4 0.475, Times 0.447), so at
+        // the same step the code looks larger than the prose; one step under
+        // (0.8×) is the owner's default. Qt gives no finer ratio: the step is
+        // what lets a zoom stay one setDefaultFont.
+        ZM_SETTING(int, codeStep, CodeStep, -1, -20, 20)
         ZM_SETTING(qreal, lineHeightFactor, LineHeightFactor, 1.5, 1.0, 3.0)
         // Column width in widths of "A" (50 ≈ 34 em) and the side margin of a page.
         ZM_SETTING(qreal, maxContentWidth, MaxContentWidth, 50.0, 20.0, 400.0)
@@ -1273,6 +1296,10 @@ struct ZSettings {
         ZM_SETTING(qreal, paragraphSpacing, ParagraphSpacing, 0.0, 0.0, 3.0)
         ZM_SETTING_PLAIN(bool, justify, Justify, true)
         ZM_SETTING_PLAIN(bool, centerHeadings, CenterHeadings, true)
+        // Air around a heading on the page, in line heights (see
+        // ZDocStyle::headingSpacingBefore).
+        ZM_SETTING(qreal, headingSpacingBefore, HeadingSpacingBefore, 1.0, 0.0, 10.0)
+        ZM_SETTING(qreal, headingSpacingAfter, HeadingSpacingAfter, 0.5, 0.0, 10.0)
         // Pages side by side: 0 = as many as fit (two when the window is wide
         // enough for two columns of minPageWidth), 1 or 2 to force.
         ZM_SETTING(int, pagesPerSpread, PagesPerSpread, 0, 0, 2)

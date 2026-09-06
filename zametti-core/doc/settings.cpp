@@ -342,10 +342,14 @@ const std::vector<Key>& keys() {
                    maxExportedImageSize, MaxExportedImageSize),
 
         // --- READING (brief 18) ----------------------------------------------
-        ZM_KEY_STR("reading", "fontFamily", "font of a book; \"serif\" = the system serif",
+        ZM_KEY_STR("reading", "fontFamily",
+                   "font of a book; \"Source Serif 4\" is embedded, \"serif\" = the system serif",
                    reading(), fontFamily, FontFamily),
         ZM_KEY_REAL("reading", "fontSize", "size of the book font, in points; 0 = the note font",
                     reading(), fontPoint, FontPoint),
+        ZM_KEY_INT("reading", "codeStep",
+                   "size of code in a book, as a step from the book text; -1 = one step under",
+                   reading(), codeStep, CodeStep),
         ZM_KEY_REAL("reading", "lineHeightFactor", "line height of a book, as a factor of the font height",
                     reading(), lineHeightFactor, LineHeightFactor),
         ZM_KEY_REAL("reading", "maxContentWidth", "column width of a page, in widths of 'A'",
@@ -360,6 +364,10 @@ const std::vector<Key>& keys() {
         ZM_KEY_BOOL("reading", "justify", "justified paragraphs", reading(), justify, Justify),
         ZM_KEY_BOOL("reading", "centerHeadings", "centred headings", reading(), centerHeadings,
                     CenterHeadings),
+        ZM_KEY_REAL("reading", "headingSpacingBefore", "air above a heading, in line heights",
+                    reading(), headingSpacingBefore, HeadingSpacingBefore),
+        ZM_KEY_REAL("reading", "headingSpacingAfter", "air below a heading, in line heights",
+                    reading(), headingSpacingAfter, HeadingSpacingAfter),
         ZM_KEY_INT("reading", "pagesPerSpread", "pages side by side: 0 = as many as fit, 1 or 2",
                    reading(), pagesPerSpread, PagesPerSpread),
         ZM_KEY_REAL("reading", "minPageWidth",
@@ -415,6 +423,9 @@ std::shared_ptr<const ZDocStyle> ZSettings::readingStyle() const {
     const Reading& r = reading_;
     if (!r.fontFamily().isEmpty()) look->setFontFamily(r.fontFamily());
     if (r.fontPoint() > 0.0) look->setBaseFontPoint(r.fontPoint());
+    look->setCodeStep(r.codeStep());
+    // Code keeps the editor's line height: the reading rhythm is for prose.
+    look->setCodeLineHeightFactor(style_.lineHeightFactor());
     look->setLineHeightFactor(r.lineHeightFactor());
     look->setMaxContentWidth(r.maxContentWidth());
     look->setSideMargin(r.sideMargin());
@@ -422,6 +433,8 @@ std::shared_ptr<const ZDocStyle> ZSettings::readingStyle() const {
     look->setEmptyLineFactor(r.paragraphSpacing());
     look->setJustify(r.justify());
     look->setCenterHeadings(r.centerHeadings());
+    look->setHeadingSpacingBefore(r.headingSpacingBefore());
+    look->setHeadingSpacingAfter(r.headingSpacingAfter());
     return look;
 }
 
@@ -447,7 +460,7 @@ CodePlate codePlate(const ZDocStyle& look, qreal scale) {
     QFont codeLine = base;
     codeLine.setPointSizeF(look.baseFontPoint() * scale * fontStepFactor(look.codeStep()));
     const qreal lineUnit =
-        std::round(QFontMetricsF(codeLine).height() * look.lineHeightFactor());
+        std::round(QFontMetricsF(codeLine).height() * look.codeLineHeight());
 
     // The strip and the icon follow the CAPTION FONT (see codeStripHeight in
     // settings.h): one knob — the caption size.
