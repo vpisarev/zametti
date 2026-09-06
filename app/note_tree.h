@@ -39,6 +39,9 @@ struct NoteRow {
     // Дата создания — единственная неподвижная хронология заметки: правка
     // старой записи её не двигает. Ради неё и затевался этап 13 (дневник).
     QString created;
+    // The cover's file name next to the note (a book, `cover:`); the card
+    // shows it as a thumbnail (books2). Empty — no cover.
+    QString cover;
 };
 
 // Показать строку в дереве, не трогая её собственную раскрытость: раскрываются

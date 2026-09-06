@@ -1,17 +1,23 @@
 #include "note_list.h"
 
 #include "settings.h"
+#include "zapp.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
 #include <QFontMetrics>
+#include <QPaintDevice>
+#include <QPixmap>
 #include <QLocale>
 #include <QMimeData>
 #include <QPainter>
 #include <QTextOption>
 
 #include <algorithm>
+#include <cmath>
 
 namespace zametti {
 
@@ -123,6 +129,10 @@ QVariant NoteListModel::data(const QModelIndex& index, int role) const {
         case DateRole: return shortDate(row.modified);
         case PathRole: return row.path;
         case IdRole: return row.id;
+        case CoverRole:
+            // The cover lies next to the note, in the store's flat directory.
+            return row.cover.isEmpty() ? QString()
+                                       : QFileInfo(row.path).dir().filePath(row.cover);
         case Qt::ToolTipRole: return row.title;
         default: return {};
     }
@@ -179,7 +189,20 @@ void NoteListDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
     const int gap = int(metrics.height() * kGapFactor);
     const bool selected = (option.state & QStyle::State_Selected) != 0;
 
-    const QRect body = option.rect.adjusted(padding, padding, -padding, -padding);
+    QRect body = option.rect.adjusted(padding, padding, -padding, -padding);
+
+    // THE COVER OF A BOOK (books2): a thumbnail as tall as the card's body on
+    // the left; the title, the date and the author line move right of it.
+    const QString coverPath = index.data(NoteListModel::CoverRole).toString();
+    if (!coverPath.isEmpty()) {
+        const qreal dpr = painter->device() != nullptr ? painter->device()->devicePixelRatioF() : 1.0;
+        const QPixmap thumb = coverThumbnail(coverPath, body.height(), dpr);
+        if (!thumb.isNull()) {
+            const int shown = int(std::lround(thumb.width() / thumb.devicePixelRatio()));
+            painter->drawPixmap(body.left(), body.top(), thumb);
+            body.setLeft(body.left() + shown + gap * 2);
+        }
+    }
 
     QFont titleFont = option.font;
     titleFont.setBold(true);
@@ -227,6 +250,27 @@ void NoteListDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
     }
 
     painter->restore();
+}
+
+QPixmap NoteListDelegate::coverThumbnail(const QString& absPath, int height, qreal dpr) const {
+    if (absPath.isEmpty() || height <= 0) return {};
+    const QString key = absPath + QLatin1Char('@') + QString::number(height) + QLatin1Char('@') +
+                        QString::number(dpr);
+    const auto known = thumbs_.constFind(key);
+    if (known != thumbs_.constEnd()) return *known;
+    // Decoded through the application's image cache (the store's covers are
+    // .jxl, which Qt's readers do not know), scaled once to the card.
+    QPixmap out;
+    ZImageCache& images = ZApp::instance().images();   // info() registers, pixels() decodes
+    if (images.info(absPath) != nullptr) {
+        if (const QImage* image = images.pixels(absPath); image != nullptr && !image->isNull()) {
+            out = QPixmap::fromImage(
+                image->scaledToHeight(int(std::lround(height * dpr)), Qt::SmoothTransformation));
+            out.setDevicePixelRatio(dpr);
+        }
+    }
+    thumbs_.insert(key, out);
+    return out;
 }
 
 QSize NoteListDelegate::sizeHint(const QStyleOptionViewItem& option,

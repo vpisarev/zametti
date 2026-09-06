@@ -150,6 +150,8 @@ public:
         bool book() const { return book_; }
         const QString& author() const { return author_; }
         const QString& year() const { return year_; }
+        // The cover's file name next to the note (`cover:`), empty when none.
+        const QString& cover() const { return cover_; }
         bool folder() const { return folder_; }
         bool lostFound() const { return lostFound_; }
         // Корневая заметка хранилища: она же его имя и его настройки показа.
@@ -175,6 +177,7 @@ public:
         bool book_ = false;
         QString author_;
         QString year_;
+        QString cover_;
         bool folder_ = false;
         bool lostFound_ = false;
         bool root_ = false;
@@ -212,6 +215,8 @@ public:
     bool isBook() const;
     QString bookAuthor() const;
     QString bookYear() const;
+    // The cover's file name next to the note (`cover:`), empty when none.
+    QString bookCover() const;
     QString created() const;
     QString modified() const;
     void stampModified();

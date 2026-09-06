@@ -35,6 +35,7 @@ struct NoteTreeModel::Node {
     QString id;      // id заметки в хранилище; вне хранилища пусто
     QString badge;   // пометка починки («сирота», «цикл») — подпись и подсказка
     QString snippet; // начало текста для средней колонки
+    QString cover;   // the cover's file name of a book (NoteRow::cover)
     QString modified;   // ISO из меты — для сортировки свежие сверху
     QString effectiveModified;   // максимум по поддереву: живые каталоги вперёд
     // Дата создания из шапки. У папки берётся её собственная, а не максимум по
@@ -207,6 +208,7 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
             if (!meta->year().isEmpty()) card.append(meta->year());
             if (!card.isEmpty()) node->snippet = card.join(QStringLiteral(" · "));
             node->iconName = QStringLiteral("book-open-text");
+            node->cover = meta->cover();
         }
         node->path = meta->path();
         node->modified = meta->modified();
@@ -806,7 +808,7 @@ std::vector<NoteRow> NoteTreeModel::notesInSubtree(const QModelIndex& index) con
         for (const auto& child : node->children)
             if (!child->isDir())
                 out.push_back(NoteRow{child->id, child->path, child->title, child->snippet,
-                                      child->modified, child->created});
+                                      child->modified, child->created, child->cover});
         return out;
     }
     struct Walk {
@@ -817,8 +819,8 @@ std::vector<NoteRow> NoteTreeModel::notesInSubtree(const QModelIndex& index) con
                 // Папка — структура, а не заметка: в списке ей делать нечего,
                 // и открыть её тело редактором нельзя вовсе.
                 if (!child->isDir())
-                    out.push_back(NoteRow{child->id, child->path, child->title,
-                                          child->snippet, child->modified, child->created});
+                    out.push_back(NoteRow{child->id, child->path, child->title, child->snippet,
+                                          child->modified, child->created, child->cover});
                 run(child.get(), insideTrash, out);
             }
         }
@@ -1059,8 +1061,8 @@ void NoteTreeModel::refreshRow(const QString& id) {
 NoteRow NoteTreeModel::rowOf(const QString& id) const {
     const Node* node = nodeById(id);
     if (node == nullptr) return {};
-    return NoteRow{node->id,      node->path,     node->title,
-                   node->snippet, node->modified, node->created};
+    return NoteRow{node->id,       node->path,     node->title,   node->snippet,
+                   node->modified, node->created,  node->cover};
 }
 
 QString NoteTreeModel::folderIdFor(const QModelIndex& index) const {

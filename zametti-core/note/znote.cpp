@@ -22,6 +22,10 @@ constexpr char kSort[] = "sort";
 constexpr char kBook[] = "book";
 constexpr char kAuthor[] = "author";
 constexpr char kYear[] = "year";
+// The cover of a book: the attachment's file name next to the note (the fb2
+// import writes it; the body does not show it — the list and the reading
+// mode do, books2).
+constexpr char kCover[] = "cover";
 // Сколько знаков сниппета держим в метаданных: две-три строки списка при
 // любой разумной ширине панели.
 constexpr int kSnippetChars = 200;
@@ -132,6 +136,7 @@ ZNote::Metadata ZNote::metadata() const {
     if (m.book_) {
         m.author_ = bookAuthor();
         m.year_ = bookYear();
+        m.cover_ = bookCover();
     }
     m.folder_ = isFolder() || isLost();
     m.root_ = isRoot();
@@ -182,6 +187,7 @@ void ZNote::setLocked(bool locked) { header_.setLocked(locked); }
 bool ZNote::isBook() const { return header_.get(kRole) == kBook; }
 QString ZNote::bookAuthor() const { return QString::fromStdString(header_.get(kAuthor)); }
 QString ZNote::bookYear() const { return QString::fromStdString(header_.get(kYear)); }
+QString ZNote::bookCover() const { return QString::fromStdString(header_.get(kCover)); }
 QString ZNote::created() const { return QString::fromStdString(header_.get(kCreated)); }
 QString ZNote::modified() const { return QString::fromStdString(header_.get(kModified)); }
 void ZNote::stampModified() { header_.set(kModified, store::isoNow().toStdString()); }

@@ -15,7 +15,9 @@
 
 #include <QAbstractListModel>
 #include <QCollator>
+#include <QHash>
 #include <QListView>
+#include <QPixmap>
 #include <QStyledItemDelegate>
 
 #include <vector>
@@ -34,6 +36,8 @@ public:
         DateRole,
         PathRole,
         IdRole,
+        // The absolute path of a book's cover (books2); empty — no cover.
+        CoverRole,
     };
 
     explicit NoteListModel(QObject* parent = nullptr);
@@ -93,8 +97,16 @@ public:
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option,
                const QModelIndex& index) const override;
+    // The cover of a book as the card shows it: scaled once to the card's
+    // height (device pixels by dpr) and kept; null — no picture to show.
+    QPixmap coverThumbnail(const QString& absPath, int height, qreal dpr) const;
     QSize sizeHint(const QStyleOptionViewItem& option,
                    const QModelIndex& index) const override;
+
+protected:
+    // Thumbnails by path, height and dpr: a cover is decoded and scaled once
+    // per session, not on every repaint of the list.
+    mutable QHash<QString, QPixmap> thumbs_;
 };
 
 // Дата в короткой записи: сегодня — время, в этом году — «14 мар», раньше —
