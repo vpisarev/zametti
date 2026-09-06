@@ -71,7 +71,8 @@ void checkOwnStyle() {
 // that catches a removed chooser in ZNote::load).
 void checkReadingLookByRole() {
     const std::string body =
-        "# Title\n\nFirst paragraph.\n\nSecond paragraph.\n\n## Chapter\n\nText.\n\n```\ncode\n```\n";
+        "# Title\n\nFirst paragraph.\n\nSecond paragraph.\n\n## Chapter\n\nText.\n\n```\ncode\n```\n\n"
+        "> A quote.\n\nAfter the quote.\n";
     zametti::ZNote book;
     const std::string header = "<!-- zametti\nrole: book\n-->\n\n";
     book.load(header + body);
@@ -122,6 +123,23 @@ void checkReadingLookByRole() {
           std::to_string(zametti::settings().reading().codeStep()),
           std::to_string(book.doc().caretAtBlock(10).blockCharFormat().intProperty(
               QTextFormat::FontSizeAdjustment)));
+    // blocks 11 empty, 12 quote, 13 empty, 14 paragraph: the quote of a book
+    // is italic, indented on the right too, with air before and after the
+    // run (the blank line after it carries the air); the editor's is not.
+    {
+        const QTextBlockFormat quote = fmt(book, 12);
+        ZT_TRUE("цитата книги — курсивом",
+                book.doc().caretAtBlock(12).blockCharFormat().fontItalic());
+        ZT_TRUE("цитата книги — с правым полем", quote.rightMargin() > 0.0);
+        ZT_TRUE("перед цитатой книги — воздух", quote.topMargin() > 0.0);
+        ZT_TRUE("после цитаты книги — воздух", fmt(book, 13).topMargin() > 0.0);
+        ZT_TRUE("а перед обычным абзацем книги воздуха нет",
+                qFuzzyIsNull(fmt(book, 4).topMargin()));
+        ZT_TRUE("цитата заметки — не курсивом, без правого поля и воздуха",
+                !plain.doc().caretAtBlock(12).blockCharFormat().fontItalic() &&
+                    qFuzzyIsNull(fmt(plain, 12).rightMargin()) &&
+                    qFuzzyIsNull(fmt(plain, 12).topMargin()));
+    }
     ZT_EQ("блок кода заметки — вровень с текстом",
           std::to_string(zametti::settings().style().codeStep()),
           std::to_string(plain.doc().caretAtBlock(10).blockCharFormat().intProperty(
