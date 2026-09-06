@@ -152,7 +152,8 @@ void checkMatchesBuild(const std::vector<Piece>& to, const QTextDocument& target
 // столько и на экране. Живёт отдельной функцией, потому что то же поле
 // приходится ставить и операциям, правящим документ на месте, — иначе
 // собранный документ и поправленный расходились бы в ритме.
-qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first);
+qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first,
+                     const ZDocStyle& style, bool previousIsQuote = false);
 
 // Единицы, которыми меряется ГЕОМЕТРИЯ документа: высота строки и ширина "A"
 // базового шрифта облика.
@@ -189,13 +190,15 @@ qreal layoutCharUnit(const ZDocStyle& style = settings().style());
 // Поймала матрица краёв, а до неё — сверка заплатки с полной сборкой в
 // отладочной сборке.
 qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
-                       qreal lineUnit, const ZDocStyle& style = settings().style());
+                       qreal lineUnit, const ZDocStyle& style = settings().style(),
+                       bool previousIsQuote = false);
 
 // Формат блока пустой строки — ровно такой, каким его собрал бы сборщик. Нужен
 // операциям: пустую строку они заводят на живом документе, и отличаться от
 // собранной она не имеет права.
 QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first,
-                                   const ZDocStyle& style = settings().style());
+                                   const ZDocStyle& style = settings().style(),
+                                   bool previousIsQuote = false);
 
 }  // namespace zametti
 

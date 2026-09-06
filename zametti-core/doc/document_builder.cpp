@@ -276,16 +276,22 @@ bool pieceIsTableObject(const Piece& piece) {
 }
 
 qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first,
-                     const ZDocStyle& style) {
+                     const ZDocStyle& style, bool previousIsQuote) {
     // У первого блока отбивке сверху взяться неоткуда: над ним поле страницы.
     if (first) return 0.0;
+
+    // AIR AROUND A QUOTE (books2, zero in the editor): before the first block
+    // of a run of quotes and after its last — the block after the run takes
+    // it, be it the blank line or the text itself. Inside the run, nothing.
+    const bool quote = !raw && kind == Kind::Quote;
+    const qreal quoteAir = (quote != previousIsQuote) ? style.quoteSpacing() : 0.0;
 
     // Прогон пустых строк обрамляется своими полями: сверху перед первой, снизу
     // после последней. Внутри прогона — ничего, иначе высота разделителя из n
     // строк перестала бы быть n высотами строки.
     if (!raw && kind == Kind::VSpace)
-        return previousIsVSpace ? 0.0 : style.separatorSpacingBefore();
-    const qreal afterRun = previousIsVSpace ? style.separatorSpacingAfter() : 0.0;
+        return (previousIsVSpace ? 0.0 : style.separatorSpacingBefore()) + quoteAir;
+    const qreal afterRun = (previousIsVSpace ? style.separatorSpacingAfter() : 0.0) + quoteAir;
 
     // Своего воздуха у заголовка нет. Он был — «заголовок отделяет куски текста»,
     // — но выглядел ровно как пустая строка, которой в файле нет, и читался как
@@ -300,15 +306,17 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first,
 }
 
 qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
-                       qreal lineUnit, const ZDocStyle& style) {
-    qreal margin = blockTopMargin(kind, raw, previousIsVSpace, first, style) * lineUnit;
+                       qreal lineUnit, const ZDocStyle& style, bool previousIsQuote) {
+    qreal margin =
+        blockTopMargin(kind, raw, previousIsVSpace, first, style, previousIsQuote) * lineUnit;
     // Сверху у плашки только воздух под скругление: полоска с языком и кнопкой
     // висит снизу, в нижнем поле последней строки блока.
     if (!raw && kind == Kind::Code) margin += codePlate(style).padTop;
     return margin;
 }
 
-QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first, const ZDocStyle& style) {
+QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first, const ZDocStyle& style,
+                                   bool previousIsQuote) {
     // МЕРА — БАЗОВЫЙ ШРИФТ ОБЛИКА, а не шрифт документа.
     //
     // Раньше здесь стоял doc.defaultFont(), и разницы не было: его никто не
@@ -319,8 +327,9 @@ QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first, const ZDoc
     const QFont base = layoutBaseFont(style);
     QTextBlockFormat format;
     format.setProperty(KindProperty, int(Kind::VSpace));
-    format.setTopMargin(blockTopMargin(Kind::VSpace, false, previousIsVSpace, first, style) *
-                        layoutLineUnit(style));
+    format.setTopMargin(
+        blockTopMargin(Kind::VSpace, false, previousIsVSpace, first, style, previousIsQuote) *
+        layoutLineUnit(style));
     format.setBottomMargin(0);
     applyEmptyLineHeight(format, base.pointSizeF(), base, style);
     return format;
@@ -545,7 +554,8 @@ const Piece& withFootnoteLabels(const Piece& piece, Piece& storage) {
 }
 
 void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& ctx,
-               const Piece& piece, bool documentStart, bool& reuse, bool& prevVSpace) {
+               const Piece& piece, bool documentStart, bool& reuse, bool& prevVSpace,
+               bool& prevQuote) {
     Piece named;
     const Piece& withImages = withNamedBareImages(piece, named);
     Piece mathed;
@@ -643,7 +653,16 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
             case Kind::Quote:
                 // Курсивом цитату не выделяем: тогда настоящий _курсив_
                 // внутри неё стал бы неотличим от остального текста.
+                // THE READING LOOK IS THE EXCEPTION (books2): a book sets its
+                // epigraphs in italic whole, narrower than the page, and
+                // justified like the prose (owner's wish).
                 blockFmt.setLeftMargin(style.quoteIndent() * ctx.charUnit);
+                if (style.quoteRightIndent() > 0.0)
+                    blockFmt.setRightMargin(style.quoteRightIndent() * ctx.charUnit);
+                if (style.quoteItalic()) {
+                    charFmt.setFontItalic(true);
+                    if (style.justify()) blockFmt.setAlignment(Qt::AlignJustify);
+                }
                 charFmt.setForeground(style.quoteColor());
                 break;
 
@@ -770,7 +789,8 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     const bool code = !raw && b.kind == Kind::Code;
     // Первому блоку документа отбивка не нужна (над ним поле страницы), а вот
     // воздух над плашкой нужен и ему — это и делает blockTopMarginPx.
-    blockFmt.setTopMargin(blockTopMarginPx(b.kind, raw, prevVSpace, first, ctx.lineUnit, style));
+    blockFmt.setTopMargin(
+        blockTopMarginPx(b.kind, raw, prevVSpace, first, ctx.lineUnit, style, prevQuote));
     // Air under a heading belongs to the heading (books2; zero in the editor).
     blockFmt.setBottomMargin(!raw && b.kind == Kind::Heading
                                  ? style.headingSpacingAfter() * ctx.lineUnit
@@ -839,6 +859,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     if (!object)
         enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont, style);
     prevVSpace = vspace;
+    prevQuote = !raw && b.kind == Kind::Quote;
 }
 
 }  // namespace
@@ -934,9 +955,10 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
     // формат ставится на него, иначе сверху появится пустой абзац.
     bool first = true;
     bool prevVSpace = false;
+    bool prevQuote = false;
 
     for (const Piece& b : blocks)
-        emitBlock(cursor, target, ctx, b, true, first, prevVSpace);
+        emitBlock(cursor, target, ctx, b, true, first, prevVSpace, prevQuote);
 
     // Пустой документ: блоков не было, и единственный блок остался без формата
     // вовсе. Каретка в нём выходила кеглем по умолчанию и в самом углу окна —
@@ -1122,8 +1144,10 @@ bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& no
     bool reuse = true;
     bool prevVSpace = head > 0 && !to[size_t(head - 1)].raw &&
                       to[size_t(head - 1)].kind == Kind::VSpace;
+    bool prevQuote = head > 0 && !to[size_t(head - 1)].raw &&
+                     to[size_t(head - 1)].kind == Kind::Quote;
     for (int i = head; i <= newCount - 1 - tail; ++i)
-        emitBlock(cursor, target, ctx, to[size_t(i)], head == 0, reuse, prevVSpace);
+        emitBlock(cursor, target, ctx, to[size_t(i)], head == 0, reuse, prevVSpace, prevQuote);
 
     // Геометрия списка считается по прогону целиком, а не по блоку: ширину
     // колонки задаёт самый широкий маркер прогона. Диапазон до прогонов

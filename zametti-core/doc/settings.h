@@ -202,6 +202,13 @@ public:
     // У цитаты отступ, наоборот, крупный: он и есть её опознавательный знак,
     // цветом и полосой дело не ограничивается.
     ZM_SETTING(qreal, quoteIndent, QuoteIndent, 3.0, 0.0, 20.0)
+    // The reading look of a quote (books2): italic, a right indent to match
+    // the left one (an epigraph set narrower than the page), and air before
+    // and after a run of quote blocks, in line heights. The editor keeps all
+    // three off: italic would hide the real _italic_ inside a quote there.
+    ZM_SETTING_PLAIN(bool, quoteItalic, QuoteItalic, false)
+    ZM_SETTING(qreal, quoteRightIndent, QuoteRightIndent, 0.0, 0.0, 20.0)
+    ZM_SETTING(qreal, quoteSpacing, QuoteSpacing, 0.0, 0.0, 10.0)
     // Боковые поля (в ширинах "A") заметно больше вертикальных (в высотах
     // строки): строка не должна упираться в край окна, читать так тяжело.
     ZM_SETTING(qreal, sideMargin, SideMargin, 6.222, 0.0, 60.0)
@@ -1300,6 +1307,11 @@ struct ZSettings {
         // ZDocStyle::headingSpacingBefore).
         ZM_SETTING(qreal, headingSpacingBefore, HeadingSpacingBefore, 1.0, 0.0, 10.0)
         ZM_SETTING(qreal, headingSpacingAfter, HeadingSpacingAfter, 0.5, 0.0, 10.0)
+        // Quotes on the page: italic (an epigraph is set in italic whole),
+        // and air between the text and a quote, in line heights. The right
+        // indent of a quote follows the left one (quoteIndent) — no knob.
+        ZM_SETTING_PLAIN(bool, quoteItalic, QuoteItalic, true)
+        ZM_SETTING(qreal, quoteSpacing, QuoteSpacing, 0.75, 0.0, 10.0)
         // Pages side by side: 0 = as many as fit (two when the window is wide
         // enough for two columns of minPageWidth), 1 or 2 to force.
         ZM_SETTING(int, pagesPerSpread, PagesPerSpread, 0, 0, 2)

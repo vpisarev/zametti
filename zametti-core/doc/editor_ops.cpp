@@ -3074,9 +3074,12 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
             // Поле спрашиваем у сборщика целиком, в пикселях: кроме отбивки в
             // нём живёт резерв под полоску блока кода, и считать его тут
             // заново значило бы стирать резерв на каждой операции.
+            const QTextBlock previous = block.previous();
+            const bool previousIsQuote =
+                previous.isValid() && !isRawBlock(previous) && kindOf(previous) == Kind::Quote;
             const qreal want = blockTopMarginPx(kindOf(block), isRawBlock(block),
-                                                isVSpaceBlock(block.previous()), i == 0,
-                                                lineUnit, style);
+                                                isVSpaceBlock(previous), i == 0, lineUnit, style,
+                                                previousIsQuote);
             QTextBlockFormat format = block.blockFormat();
             // Не трогаем формат, если поле и так верное: любая запись помечает
             // документ изменённым и тянет за собой автосохранение.

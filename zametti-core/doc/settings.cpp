@@ -368,6 +368,9 @@ const std::vector<Key>& keys() {
                     reading(), headingSpacingBefore, HeadingSpacingBefore),
         ZM_KEY_REAL("reading", "headingSpacingAfter", "air below a heading, in line heights",
                     reading(), headingSpacingAfter, HeadingSpacingAfter),
+        ZM_KEY_BOOL("reading", "quoteItalic", "quotes in italic", reading(), quoteItalic, QuoteItalic),
+        ZM_KEY_REAL("reading", "quoteSpacing", "air between the text and a quote, in line heights",
+                    reading(), quoteSpacing, QuoteSpacing),
         ZM_KEY_INT("reading", "pagesPerSpread", "pages side by side: 0 = as many as fit, 1 or 2",
                    reading(), pagesPerSpread, PagesPerSpread),
         ZM_KEY_REAL("reading", "minPageWidth",
@@ -435,6 +438,9 @@ std::shared_ptr<const ZDocStyle> ZSettings::readingStyle() const {
     look->setCenterHeadings(r.centerHeadings());
     look->setHeadingSpacingBefore(r.headingSpacingBefore());
     look->setHeadingSpacingAfter(r.headingSpacingAfter());
+    look->setQuoteItalic(r.quoteItalic());
+    look->setQuoteRightIndent(style_.quoteIndent());
+    look->setQuoteSpacing(r.quoteSpacing());
     return look;
 }
 
