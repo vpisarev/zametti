@@ -15,6 +15,7 @@
 #include "editor_widget.h"
 #include "reading_controller.h"
 #include "settings.h"
+#include "settings_hook.h"
 #include "test_util.h"
 #include "testdata.h"
 #include "zbook_view.h"
@@ -673,6 +674,27 @@ void checkPlainNoteReadingLook() {
     QTest::qWait(60);
     ZT_TRUE("тень пересобрана после правки",
             rig.left().document()->toPlainText().contains(QStringLiteral("again")));
+    // A CHANGED LOOK WHILE READING (the crash of 07.09.2026): the shadow must
+    // not be freed under the pages. The window refreshes the editor first,
+    // then the spread — the same order here. (A look change resets the
+    // editor's undo by the editor's own rule, so this comes last.)
+    {
+        const int was = zametti::settings().reading().codeStep();
+        zametti::mutableSettingsForTests().reading().setCodeStep(was - 1);
+        rig.editor->refreshAppearance();
+        rig.book->refreshAppearance();
+        QTest::qWait(60);
+        const QTextDocument* after = rig.left().document();
+        ZT_TRUE("страницы живы и показывают заметку", after != nullptr && after->blockCount() > 1);
+        if (codeBlock >= 0)
+            ZT_EQ("новая ступень кода дошла до страниц", std::to_string(was - 1),
+                  std::to_string(after->findBlockByNumber(codeBlock).charFormat().intProperty(
+                      QTextFormat::FontSizeAdjustment)));
+        zametti::mutableSettingsForTests().reading().setCodeStep(was);
+        rig.editor->refreshAppearance();
+        rig.book->refreshAppearance();
+        QTest::qWait(60);
+    }
     rig.controller.leave();
 }
 
