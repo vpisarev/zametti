@@ -1125,6 +1125,10 @@ void NoteEditor::refreshAppearance() {
     // своей цепочки отмены, и потому смене облика приходилось сперва сбрасывать
     // отложенный снимок — иначе набранное и не попавшее в цепочку пропадало бы.
     // Снимков нет, вопрос снят: живой документ и есть единственное содержимое.
+    //
+    // THE ROLE CHOOSES THE STYLE AGAIN (books2): a book's document carries a
+    // copy of the reading style from its load; the rebuild must not reuse it.
+    note_->refreshStyle();
     rebuild(piecesOf(*document()), textCursor().position(), viewAnchor());
 }
 

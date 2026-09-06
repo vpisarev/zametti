@@ -305,8 +305,17 @@ public:
     }
     void setBuiltBlocks(std::vector<Piece> blocks) { built_.set(std::move(blocks), doc_.revision()); }
     void invalidateBuilt() { built_.invalidate(); }
+    // The look changed (config): choose the document's style by the role
+    // again before the rebuild — a book keeps a copy of the reading style
+    // from its load, and the rebuild would otherwise reuse the stale copy.
+    void refreshStyle();
 
 protected:
+    // The style the document is built with, by the header's role: the
+    // reading style for a book, null (the editor's) for the rest. Used by
+    // load() and refreshStyle() — one chooser.
+    std::shared_ptr<const ZDocStyle> styleFor(const NoteHeader& header) const;
+
     QString path_;
     ZDocument doc_;
     NoteHeader header_;
