@@ -309,6 +309,15 @@ public:
     // again before the rebuild — a book keeps a copy of the reading style
     // from its load, and the rebuild would otherwise reuse the stale copy.
     void refreshStyle();
+    // THE DOCUMENT THE READING MODE SHOWS. A book's own document — it is built
+    // with the reading style already. An ordinary note gets a SHADOW: a copy
+    // built from the same markdown with the reading style, so that the pages
+    // show the book look (the code step, the red line, the air) while the
+    // editor's document and its undo stack stay untouched — reading edits
+    // nothing (owner's point, 07.09.2026). Same blocks, same positions: the
+    // bookmarks, footnotes, search and outline of the note apply to it by
+    // number. Rebuilt when the note's revision moved or the look changed.
+    ZDocument& readingDocument();
 
 protected:
     // The style the document is built with, by the header's role: the
@@ -318,6 +327,10 @@ protected:
 
     QString path_;
     ZDocument doc_;
+    // The shadow of readingDocument() for an ordinary note, with the
+    // revision of doc_ it was built from; null until first asked for.
+    std::shared_ptr<ZDocument> readingDoc_;
+    int readingRevision_ = -1;
     NoteHeader header_;
     NoteHeader lostMeta_;
     Digest digest_;

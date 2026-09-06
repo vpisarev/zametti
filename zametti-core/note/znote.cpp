@@ -60,6 +60,20 @@ void ZNote::refreshStyle() {
     // nothing"): the document carried the reading style copied at load, and a
     // rebuild for the new look reused that copy. The role chooses again.
     doc_.setStyle(styleFor(header_));
+    readingDoc_.reset();
+}
+
+ZDocument& ZNote::readingDocument() {
+    if (isBook()) return doc_;
+    if (readingDoc_ == nullptr || readingRevision_ != doc_.revision()) {
+        auto shadow = std::make_shared<ZDocument>();
+        const std::string bytes = toMarkdown();
+        shadow->loadMarkdown(bytes, nullptr, nullptr,
+                             [](const NoteHeader&) { return settings().readingStyle(); });
+        readingDoc_ = shadow;
+        readingRevision_ = doc_.revision();
+    }
+    return *readingDoc_;
 }
 
 bool ZNote::load(std::string_view bytes) {

@@ -69,9 +69,11 @@ void BookPage::showNote(std::shared_ptr<ZNote> note, bool lead) {
         return;
     }
     adoptNoteAt(note_->path());
-    // THE ONE PERMITTED USE of the hatch: the live document goes to the view
-    // to be shown, and nothing else is ever done with it here.
-    setDocument(note_->doc().getDocument());
+    // THE ONE PERMITTED USE of the hatch: the document goes to the view to be
+    // shown, and nothing else is ever done with it here. A book's own
+    // document; an ordinary note's shadow built with the reading look
+    // (ZNote::readingDocument) — the editor's document stays untouched.
+    setDocument(note_->readingDocument().getDocument());
     if (lead_) takeOverDocument();
     else restoreScale();
 }
@@ -342,9 +344,10 @@ QString BookPage::footnoteAt(const QPointF& viewportPos) const {
     if (inDocument.y() < startTopY()) return {};
     const QAbstractTextDocumentLayout& layout = *document()->documentLayout();
     const int exact = layout.hitTest(inDocument, Qt::ExactHit);
+    ZDocument& shown = note_->readingDocument();
     if (exact >= 0) {
-        const QString id = note_->doc().footnoteRefAt(exact);
-        if (!id.isEmpty()) return note_->doc().footnoteText(id);
+        const QString id = shown.footnoteRefAt(exact);
+        if (!id.isEmpty()) return shown.footnoteText(id);
     }
     // THE LABEL IS SMALL — a superscript at two thirds of the text — and an
     // exact hit wanted the pointer on the glyph itself (owner's report,
@@ -372,8 +375,7 @@ QString BookPage::footnoteAt(const QPointF& viewportPos) const {
             const QRectF box(tl->position().x() + std::min(x1, x2), tl->position().y() + line.y(),
                              std::abs(x2 - x1), line.height());
             if (box.adjusted(-slack, -slack, slack, slack).contains(inDocument))
-                return note_->doc().footnoteText(
-                    fragment.charFormat().stringProperty(FootnoteIdProperty));
+                return shown.footnoteText(fragment.charFormat().stringProperty(FootnoteIdProperty));
         }
     }
     return {};
