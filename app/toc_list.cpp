@@ -8,6 +8,8 @@
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QListWidget>
+#include <QPaintEvent>
+#include <QPainter>
 #include <QVBoxLayout>
 #include <algorithm>
 
@@ -39,6 +41,11 @@ void TocList::refreshAppearance() {
     const ZSettings& a = settings();
     setFont(ZApp::instance().uiStyle().appFont());
     list_->setFont(font());
+    // The line and the inset follow the shell font: one hairline, then
+    // three quarters of a letter of air before the entries.
+    edge_ = 1;
+    inset_ = edge_ + int(QFontMetrics(font()).horizontalAdvance(QLatin1Char('A')) * 0.75);
+    if (auto* box = layout(); box != nullptr) box->setContentsMargins(inset_, 0, 0, 0);
     QPalette pal = list_->palette();
     pal.setColor(QPalette::Base, a.ui().sidebarBackground());
     pal.setColor(QPalette::Window, a.ui().sidebarBackground());
@@ -50,6 +57,14 @@ void TocList::refreshAppearance() {
     }
     list_->setPalette(pal);
     setPalette(pal);
+}
+
+void TocList::paintEvent(QPaintEvent* event) {
+    QWidget::paintEvent(event);
+    // The dark-grey line down the left edge: the colour of the status bar's
+    // text — the same grey the shell already speaks in.
+    QPainter painter(this);
+    painter.fillRect(QRect(0, 0, edge_, height()), settings().ui().statusTextColor());
 }
 
 void TocList::place() {

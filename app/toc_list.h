@@ -34,6 +34,11 @@ public:
     void close();
     bool isOpen() const { return isVisible(); }
     void refreshAppearance();
+    // THE LIST IS SET OFF FROM THE TEXT (owner's wish, 06.09.2026): a thin
+    // dark-grey line down its left edge and a small inset before the entries.
+    // The inset in pixels, line included.
+    int leftInset() const { return inset_; }
+    int edgeWidth() const { return edge_; }
 
 signals:
     // A heading was picked: its block number.
@@ -44,6 +49,7 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     bool event(QEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
 
 private:
     void place();
@@ -51,6 +57,8 @@ private:
 
     QListWidget* list_ = nullptr;
     QWidget* anchor_ = nullptr;
+    int inset_ = 0;
+    int edge_ = 1;
     std::shared_ptr<ZNote> note_;
     bool closing_ = false;
 };
