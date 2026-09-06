@@ -389,7 +389,11 @@ void checkSearchAndUndo() {
     QTest::keyClicks(rig.editor, QStringLiteral(" typed"));
     ZT_TRUE("набор прошёл", rig.editor->document()->toPlainText().contains(QStringLiteral("typed")));
     ZT_TRUE("вход в чтение обычной заметки", rig.controller.enter());
-    ZT_TRUE("страница показывает тот же документ", rig.left().document() == rig.editor->document());
+    // An ordinary note is shown by its shadow built with the reading look
+    // (books2): the same text, another document — the editor's stays as is.
+    ZT_TRUE("страница показывает тень заметки с набранным текстом",
+            rig.left().document() != rig.editor->document() &&
+                rig.left().document()->toPlainText().contains(QStringLiteral("typed")));
     ZT_TRUE("шрифт страницы — шрифт чтения",
             rig.left().document()->defaultFont().family() != settings().style().fontFamily() ||
                 settings().reading().fontFamily().isEmpty());
@@ -612,6 +616,66 @@ void checkCover() {
             rig.book->currentPage() >= 0 && rig.left().start() == place);
 }
 
+// AN ORDINARY NOTE READ AS A BOOK (owner's report, 07.09.2026: the code in
+// the reading mode could not be made smaller than the prose): the pages show
+// a shadow of the note built with the reading look — the code a step under,
+// the red line — while the editor's document and its undo stack stay as they
+// were. Same blocks: the outline and the bookmarks apply by number.
+void checkPlainNoteReadingLook() {
+    Rig rig;
+    QString error;
+    const QString id = rig.storage->createNote(QString(), false, &error);
+    const QString path = rig.storage->pathOf(id);
+    writeFile(path, QStringLiteral("<!-- zametti\n-->\n\n# Plain\n\nA paragraph of text.\n\n```\ncode\n```\n\nMore.\n"));
+    rig.storage->reload();
+    rig.open(path);
+    ZT_TRUE("обычная заметка — в редакторе", !rig.controller.active());
+    // Type something: the undo stack must survive the reading mode.
+    rig.editor->setFocus();
+    QTextCursor at = rig.editor->textCursor();
+    at.movePosition(QTextCursor::End);
+    rig.editor->setTextCursor(at);
+    QTest::keyClicks(rig.editor, QStringLiteral(" typed"));
+    ZT_TRUE("есть что отменять", rig.editor->document()->isUndoAvailable());
+    const int revision = rig.editor->document()->revision();
+
+    ZT_TRUE("вошли в чтение", rig.controller.enter());
+    QTest::qWait(60);
+    const QTextDocument* shown = rig.left().document();
+    ZT_TRUE("страницы показывают тень, не документ редактора", shown != rig.editor->document());
+    ZT_TRUE("блоков столько же", shown->blockCount() == rig.editor->document()->blockCount());
+    ZT_TRUE("документ редактора не тронут", rig.editor->document()->revision() == revision);
+    int codeBlock = -1;
+    for (QTextBlock b = shown->begin(); b.isValid(); b = b.next())
+        if (kindOf(b) == Kind::Code) { codeBlock = b.blockNumber(); break; }
+    ZT_TRUE("блок кода найден", codeBlock >= 0);
+    if (codeBlock >= 0) {
+        const QTextBlock code = shown->findBlockByNumber(codeBlock);
+        ZT_EQ("код в тени — на ступени чтения",
+              std::to_string(zametti::settings().reading().codeStep()),
+              std::to_string(code.charFormat().intProperty(QTextFormat::FontSizeAdjustment)));
+        ZT_TRUE("а в редакторе — на ступени заметки",
+                rig.editor->document()->findBlockByNumber(codeBlock).charFormat().intProperty(
+                    QTextFormat::FontSizeAdjustment) == zametti::settings().style().codeStep());
+        ZT_TRUE("абзац тени — с красной строкой",
+                shown->findBlockByNumber(2).blockFormat().textIndent() > 0.0);
+    }
+    rig.controller.leave();
+    QTest::qWait(30);
+    ZT_TRUE("после чтения отмена жива", rig.editor->document()->isUndoAvailable());
+    rig.editor->undo();
+    ZT_TRUE("и отменяет набранное",
+            !rig.editor->document()->toPlainText().contains(QStringLiteral("typed")));
+    // The shadow follows the note: back in the reading mode after an edit,
+    // the pages show the edited text.
+    QTest::keyClicks(rig.editor, QStringLiteral(" again"));
+    rig.controller.enter();
+    QTest::qWait(60);
+    ZT_TRUE("тень пересобрана после правки",
+            rig.left().document()->toPlainText().contains(QStringLiteral("again")));
+    rig.controller.leave();
+}
+
 void checkFootnote() {
     Rig rig;
     rig.open(rig.bookPath);
@@ -755,6 +819,11 @@ TEST(BookView, ChapterPages) {
 TEST(BookView, Cover) {
     checkCover();
     EXPECT_EQ(0, zt::report("book-cover"));
+}
+
+TEST(BookView, PlainNoteLook) {
+    checkPlainNoteReadingLook();
+    EXPECT_EQ(0, zt::report("book-plain-note"));
 }
 
 TEST(BookView, Footnote) {
