@@ -562,6 +562,13 @@ void checkFootnote() {
     ZT_EQ("под точкой — текст сноски", std::string("The footnote's own text."),
           page.footnoteAt(where).toStdString());
     ZT_TRUE("а рядом с текстом сноски нет", page.footnoteAt(QPointF(where.x() - 60, where.y())).isEmpty());
+    // The label is a small superscript: a pointer a little above or below
+    // the glyph, still within the line, finds the note too (owner's report:
+    // the plate showed "sometimes").
+    ZT_TRUE("чуть выше ярлыка — та же сноска",
+            page.footnoteAt(QPointF(where.x(), rect.top() - 2)) == page.footnoteAt(where));
+    ZT_TRUE("чуть ниже ярлыка — та же сноска",
+            page.footnoteAt(QPointF(where.x(), rect.bottom() + 2)) == page.footnoteAt(where));
     // The reference reads as a number (books2): the label of `[^n1]` is «1»,
     // the id stays in the format for the file.
     {

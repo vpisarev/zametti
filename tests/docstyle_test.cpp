@@ -10,6 +10,7 @@
 #include "document_builder.h"
 #include "pieces.h"
 #include "settings.h"
+#include "settings_hook.h"
 #include "znote.h"
 #include "test_util.h"
 
@@ -109,6 +110,19 @@ void checkReadingLookByRole() {
     ZT_TRUE("абзац книги — с красной строкой", para.textIndent() > 0.0);
     ZT_TRUE("абзац книги — по ширине", para.alignment() == Qt::AlignJustify);
     ZT_TRUE("заголовок книги — по центру", fmt(book, 6).alignment() == Qt::AlignHCenter);
+    // A changed config chooses the style again (books2, owner's report:
+    // reading.codeStep "does nothing"): the document carried the copy from
+    // its load. After refreshStyle() the book's style is the new reading one.
+    {
+        const int was = zametti::settings().reading().codeStep();
+        zametti::mutableSettingsForTests().reading().setCodeStep(was - 1);
+        book.refreshStyle();
+        ZT_EQ("после смены облика книга берёт новую ступень кода", std::to_string(was - 1),
+              std::to_string(book.doc().style().codeStep()));
+        zametti::mutableSettingsForTests().reading().setCodeStep(was);
+        book.refreshStyle();
+        ZT_EQ("и обратно", std::to_string(was), std::to_string(book.doc().style().codeStep()));
+    }
     // Air around a heading (books2): every level, the editor's style has none.
     ZT_TRUE("заголовок книги — с воздухом сверху и снизу",
             fmt(book, 6).topMargin() > 0.0 && fmt(book, 6).bottomMargin() > 0.0);
