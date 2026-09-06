@@ -35,6 +35,11 @@ MarkdownController::MarkdownController(NoteEditor& editor, MarkdownEditView& vie
     // А после подмены — залить вид новой заметкой. Режим не гаснет: он
     // принадлежит приложению, а не заметке.
     connect(&editor_, &NoteEditor::fileChanged, this, [this](const QString&) { refill(); });
+    // The lock button in the source mode: locked back or unlocked until the
+    // next note — the view follows at once.
+    connect(&editor_, &NoteEditor::lockChanged, this, [this] {
+        if (active_) view_.setReadOnly(editor_.isEffectivelyLocked());
+    });
 }
 
 void MarkdownController::attachHistory(HistoryController& history) {
@@ -86,7 +91,10 @@ bool MarkdownController::enter() {
     // АРХИВНУЮ ПОКАЗЫВАЕМ, НО НЕ ПРАВИМ. Посмотреть её markdown человек вправе;
     // править — нет, пока не вернёт из архива. Флаг ставится здесь, а не в
     // виде: только контроллер знает, чья заметка сейчас на экране.
-    view_.setReadOnly(editor_.isArchivedNote());
+    // THE LOCK AND access: read-only HOLD HERE TOO (owner's report,
+    // 07.09.2026: a locked book was freely edited as source) — the same
+    // answer the editor gives to typed input, isEffectivelyLocked().
+    view_.setReadOnly(editor_.isEffectivelyLocked());
 
     active_ = true;
     emit modeChanged(true);
@@ -148,7 +156,7 @@ void MarkdownController::refill() {
     const SourcePos caret = note.sourcePosOf(editor_.textCursor());
     view_.showSource(note.liveMarkdown(), caret);
     note.setSourceEditing(true);
-    view_.setReadOnly(editor_.isArchivedNote());
+    view_.setReadOnly(editor_.isEffectivelyLocked());
     view_.setFocus();
 }
 
