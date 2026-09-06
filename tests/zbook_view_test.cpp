@@ -217,10 +217,12 @@ void checkPagesAndKeys() {
         boundary = rig.left().start();
         rig.book->pageStep(-1);
         const int named = boundary.line > 0 ? boundary.block : boundary.block - 1;
-        ZT_EQ("глава над второй страницей — последняя, начавшаяся до её низа",
-              rig.left().note()->doc().headingAbove(named).toStdString(),
+        // The status names the path: the book's title, then the chapter
+        // (books2: up to two ancestors, « · » between).
+        ZT_EQ("глава над второй страницей — последняя, начавшаяся до её низа, с путём",
+              (QStringLiteral("The Book · ") + rig.left().note()->doc().headingAbove(named)).toStdString(),
               last.at(0).toString().toStdString());
-        ZT_TRUE("и это глава", last.at(0).toString().startsWith(QStringLiteral("Chapter")));
+        ZT_TRUE("и это глава", last.at(0).toString().contains(QStringLiteral("· Chapter")));
         ZT_TRUE("номер страницы — 2", last.at(1).toInt() == 2);
         ZT_TRUE("число страниц известно", last.at(2).toInt() > 2);
         ZT_TRUE("процент между нулём и сотней", last.at(3).toInt() >= 0 && last.at(3).toInt() <= 100);
@@ -326,6 +328,31 @@ void checkSpread() {
     }
     rig.book->jump(false);
     QTest::qWait(30);
+    // FULL SCREEN (books2): the side margins grow by reading.fullscreenSideFactor,
+    // the air above the first line by fullscreenTopFactor.
+    {
+        const int viewportTop = rig.left().viewport()->geometry().top();
+        const int viewportWidth = rig.left().viewport()->width();
+        const int pageWidth = rig.left().width();
+        rig.window.showFullScreen();
+        QTest::qWait(120);
+        ZT_TRUE("окно во весь экран", rig.window.isFullScreen() && rig.left().fullscreen());
+        const zametti::ZSettings::Reading& reading = zametti::settings().reading();
+        ZT_EQ("воздух сверху — вдвое", std::to_string(int(viewportTop * reading.fullscreenTopFactor())),
+              std::to_string(rig.left().viewport()->geometry().top()));
+        // The pages hug the gutter, so the page itself is wider by the extra
+        // margins and the column keeps its width.
+        const qreal unit = QFontMetricsF(rig.left().font()).horizontalAdvance(QLatin1Char('A'));
+        const int extra = int((reading.sideMargin() * reading.fullscreenSideFactor() - reading.sideMargin()) * unit);
+        ZT_TRUE("боковые поля шире на треть",
+                std::abs((rig.left().width() - rig.left().viewport()->width()) -
+                         (pageWidth - viewportWidth) - 2 * extra) <= 4 ||
+                    rig.left().width() - rig.left().viewport()->width() >= pageWidth - viewportWidth + 2 * extra - 4);
+        rig.window.showNormal();
+        rig.window.resize(1600, 900);
+        QTest::qWait(120);
+        ZT_TRUE("вернулись — воздух прежний", rig.left().viewport()->geometry().top() == viewportTop);
+    }
     // Narrow the window: one page, the place kept.
     rig.window.resize(900, 700);
     QTest::qWait(80);
