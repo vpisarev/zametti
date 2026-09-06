@@ -23,6 +23,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QFontMetricsF>
+#include <QHelpEvent>
 #include <QImage>
 #include <QRect>
 #include <QScrollBar>
@@ -31,6 +32,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
+#include <QToolTip>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextFragment>
@@ -471,6 +473,39 @@ void checkFootnote() {
     ZT_EQ("под точкой — текст сноски", std::string("The footnote's own text."),
           page.footnoteAt(where).toStdString());
     ZT_TRUE("а рядом с текстом сноски нет", page.footnoteAt(QPointF(where.x() - 60, where.y())).isEmpty());
+    // The reference reads as a number (books2): the label of `[^n1]` is «1»,
+    // the id stays in the format for the file.
+    {
+        const QTextBlock block = doc.findBlock(position);
+        QString label;
+        QString id;
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it)
+            if (it.fragment().charFormat().hasProperty(zametti::FootnoteIdProperty)) {
+                label = it.fragment().text();
+                id = it.fragment().charFormat().stringProperty(zametti::FootnoteIdProperty);
+                break;
+            }
+        ZT_EQ("ярлык ссылки — номер", std::string("1"), label.toStdString());
+        ZT_EQ("id в формате — целиком", std::string("n1"), id.toStdString());
+        // And the file gets the id, not the label.
+        const std::string written = page.note()->toMarkdown();
+        ZT_TRUE("в файл уходит [^n1], а не ярлык",
+                written.find("with a note.[^n1]") != std::string::npos &&
+                    written.find("[^1]") == std::string::npos);
+    }
+    // Hover: the tooltip event on the viewport shows the note, escaped and
+    // wrapped as a paragraph; off the reference it shows nothing.
+    {
+        QHelpEvent hover(QEvent::ToolTip, where.toPoint(), page.viewport()->mapToGlobal(where.toPoint()));
+        QApplication::sendEvent(page.viewport(), &hover);
+        ZT_TRUE("наведение показало плашку со сноской",
+                hover.isAccepted() && QToolTip::text().contains(QStringLiteral("The footnote's own text.")));
+        ZT_TRUE("в плашке нет id", !QToolTip::text().contains(QStringLiteral("n1")));
+        const QPoint away(int(where.x()) - 60, int(where.y()));
+        QHelpEvent none(QEvent::ToolTip, away, page.viewport()->mapToGlobal(away));
+        QApplication::sendEvent(page.viewport(), &none);
+        ZT_TRUE("рядом с текстом плашки нет", !none.isAccepted());
+    }
 }
 
 // BOOKMARKS ON THE PAGE (brief 18): a double click in the left margin sets
