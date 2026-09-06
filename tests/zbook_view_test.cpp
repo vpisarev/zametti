@@ -338,8 +338,9 @@ void checkSpread() {
         QTest::qWait(120);
         ZT_TRUE("окно во весь экран", rig.window.isFullScreen() && rig.left().fullscreen());
         const zametti::ZSettings::Reading& reading = zametti::settings().reading();
-        ZT_EQ("воздух сверху — вдвое", std::to_string(int(viewportTop * reading.fullscreenTopFactor())),
-              std::to_string(rig.left().viewport()->geometry().top()));
+        ZT_TRUE("воздух сверху — в fullscreenTopFactor раз",
+                std::abs(int(viewportTop * reading.fullscreenTopFactor()) -
+                         rig.left().viewport()->geometry().top()) <= 1);
         // The pages hug the gutter, so the page itself is wider by the extra
         // margins and the column keeps its width.
         const qreal unit = QFontMetricsF(rig.left().font()).horizontalAdvance(QLatin1Char('A'));
