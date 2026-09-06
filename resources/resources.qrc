@@ -103,6 +103,7 @@
     <qresource prefix="/licenses">
         <file alias="zametti.txt">../LICENSE</file>
         <file alias="ibm-plex.txt">fonts/LICENSE</file>
+        <file alias="source-serif-4.txt">fonts/LICENSE-SourceSerif4</file>
         <file alias="lucide.txt">icons/LICENSE</file>
         <file alias="md4c.txt">../3rdparty/md4c/LICENSE.md</file>
         <file alias="blake3.txt">../3rdparty/blake3/LICENSE</file>
@@ -135,6 +136,10 @@
         <file alias="IBMPlexSans_SemiCondensed-Italic.ttf">fonts/IBMPlexSans_SemiCondensed-Italic.ttf</file>
         <file alias="IBMPlexSans_SemiCondensed-Bold.ttf">fonts/IBMPlexSans_SemiCondensed-Bold.ttf</file>
         <file alias="IBMPlexSans_SemiCondensed-BoldItalic.ttf">fonts/IBMPlexSans_SemiCondensed-BoldItalic.ttf</file>
+        <file alias="SourceSerif4-Regular.ttf">fonts/SourceSerif4-Regular.ttf</file>
+        <file alias="SourceSerif4-Italic.ttf">fonts/SourceSerif4-Italic.ttf</file>
+        <file alias="SourceSerif4-Bold.ttf">fonts/SourceSerif4-Bold.ttf</file>
+        <file alias="SourceSerif4-BoldItalic.ttf">fonts/SourceSerif4-BoldItalic.ttf</file>
     </qresource>
 
     <!-- Шрифты формул: математический Euler Math 0.75 (выбор владельца —

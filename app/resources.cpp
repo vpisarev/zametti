@@ -42,6 +42,12 @@ constexpr zametti::EmbeddedFace kFaces[] = {
     {":/fonts/IBMPlexSans_SemiCondensed-Bold.ttf", "IBM Plex Sans SemiCondensed", "Bold"},
     {":/fonts/IBMPlexSans_SemiCondensed-BoldItalic.ttf", "IBM Plex Sans SemiCondensed",
      "Bold Italic"},
+    // The book face (brief 18, books2): a serif of its own instead of the
+    // system's "serif", so that a book looks the same on every machine.
+    {":/fonts/SourceSerif4-Regular.ttf", "Source Serif 4", "Regular"},
+    {":/fonts/SourceSerif4-Italic.ttf", "Source Serif 4", "Italic"},
+    {":/fonts/SourceSerif4-Bold.ttf", "Source Serif 4", "Bold"},
+    {":/fonts/SourceSerif4-BoldItalic.ttf", "Source Serif 4", "Bold Italic"},
 };
 
 constexpr const char* kIcons[] = {
@@ -82,6 +88,7 @@ namespace {
 constexpr zametti::EmbeddedLicense kLicenses[] = {
     {":/licenses/zametti.txt", "zametti", "the program itself", "GPL-3.0"},
     {":/licenses/ibm-plex.txt", "IBM Plex", "UI and text fonts", "OFL 1.1"},
+    {":/licenses/source-serif-4.txt", "Source Serif 4", "the book font", "OFL 1.1"},
     {":/licenses/lucide.txt", "Lucide", "toolbar and tree icons", "ISC"},
     {":/licenses/md4c.txt", "md4c", "markdown parsing", "MIT"},
     {":/licenses/blake3.txt", "BLAKE3", "hashes of notes and attachments", "CC0 / Apache-2.0"},
