@@ -179,10 +179,11 @@ QFont BookPage::zoomedBaseFont(qreal zoom) const {
 }
 
 int BookPage::pagePadding() const {
-    // Air above the first line of a page: three quarters of a line; on a
+    // Air above the first line of a page: reading.topPadding lines; on a
     // full screen — reading.fullscreenTopFactor times that.
-    const qreal factor = fullscreen() ? settings().reading().fullscreenTopFactor() : 1.0;
-    return int(QFontMetricsF(zoomedBaseFont(zoom())).height() * 0.75 * factor);
+    const ZSettings::Reading& reading = settings().reading();
+    const qreal factor = fullscreen() ? reading.fullscreenTopFactor() : 1.0;
+    return int(QFontMetricsF(zoomedBaseFont(zoom())).height() * reading.topPadding() * factor);
 }
 
 NoteSearch& BookPage::searchCache() {

@@ -1322,7 +1322,10 @@ struct ZSettings {
         // grow by a third and the air above the first line doubles — the
         // spread on a whole screen wants more paper around the text.
         ZM_SETTING(qreal, fullscreenSideFactor, FullscreenSideFactor, 1.3, 1.0, 3.0)
-        ZM_SETTING(qreal, fullscreenTopFactor, FullscreenTopFactor, 2.0, 1.0, 4.0)
+        ZM_SETTING(qreal, fullscreenTopFactor, FullscreenTopFactor, 1.5, 1.0, 4.0)
+        // Air above the first line of a page, in line heights of the book
+        // font. Three quarters of a line was "cramped" (owner, 07.09.2026).
+        ZM_SETTING(qreal, topPadding, TopPadding, 1.5, 0.0, 6.0)
         // Pages side by side: 0 = as many as fit (two when the window is wide
         // enough for two columns of minPageWidth), 1 or 2 to force.
         ZM_SETTING(int, pagesPerSpread, PagesPerSpread, 0, 0, 2)
