@@ -56,6 +56,12 @@ public:
     // showStart() turns back to the text.
     void showCover(const QImage& cover);
     bool coverShown() const { return !cover_.isNull(); }
+    // The leaf past the end of the book — the right page of the last spread
+    // when the book ends on the left: paper alone, nothing under it.
+    bool blankLeaf() const;
+    // Document y of the page's first line (0 when unknown): the page paints
+    // paper above it — the last page cannot scroll that far.
+    qreal startTopY() const;
     // The line under the top edge right now (after a mouse drag the view may
     // have drifted; the spread snaps it back).
     PageStart topLine() const;

@@ -108,7 +108,14 @@ void BookPage::showStart(const PageStart& start) {
     snapping_ = true;
     const auto done = qScopeGuard([this] { snapping_ = false; });
     const QTextBlock block = document()->findBlockByNumber(start.block);
-    if (!block.isValid()) return;
+    if (!block.isValid()) {
+        // THE BLANK LEAF past the end of the book (the right page of the last
+        // spread): nothing to scroll to, but the page must repaint as paper
+        // — it kept showing the previous right page (owner's report,
+        // 07.09.2026).
+        viewport()->update();
+        return;
+    }
     const qreal y = lineSpanOf(*document()->documentLayout(), block, start.line).top;
     verticalScrollBar()->setValue(int(y));
     viewport()->update();
@@ -306,9 +313,11 @@ void BookPage::wheelEvent(QWheelEvent* event) {
 }
 
 QString BookPage::footnoteAt(const QPointF& viewportPos) const {
-    if (note_ == nullptr || document() == nullptr || coverShown()) return {};
+    if (note_ == nullptr || document() == nullptr || coverShown() || blankLeaf()) return {};
     const QPointF inDocument(viewportPos.x() + horizontalScrollBar()->value(),
                              viewportPos.y() + verticalScrollBar()->value());
+    // Above the page's start there is paper, not text (paintEvent).
+    if (inDocument.y() < startTopY()) return {};
     const QAbstractTextDocumentLayout& layout = *document()->documentLayout();
     const int exact = layout.hitTest(inDocument, Qt::ExactHit);
     if (exact >= 0) {
@@ -378,8 +387,9 @@ bool BookPage::viewportEvent(QEvent* event) {
 
 void BookPage::mousePressEvent(QMouseEvent* event) {
     emit activated();
-    // The cover leaf has no text to select under the picture.
-    if (coverShown()) {
+    // The cover leaf has no text to select under the picture; the blank
+    // leaf past the end has none at all.
+    if (coverShown() || blankLeaf()) {
         event->accept();
         return;
     }
@@ -403,7 +413,18 @@ void BookPage::mouseReleaseEvent(QMouseEvent* event) {
     if (note_ != nullptr && topLine() != start_) showStart(start_);
 }
 
+bool BookPage::blankLeaf() const {
+    return note_ != nullptr && document() != nullptr && cover_.isNull() &&
+           start_.block >= document()->blockCount();
+}
+
 void BookPage::paintEvent(QPaintEvent* event) {
+    if (blankLeaf()) {
+        // The leaf past the end of the book: paper alone.
+        QPainter painter(viewport());
+        painter.fillRect(viewport()->rect(), pageColour());
+        return;
+    }
     if (coverShown()) {
         // THE COVER LEAF: paper and the picture, fitted within the page's
         // padding, centred; the text under it is not drawn.
@@ -450,11 +471,27 @@ void BookPage::paintEvent(QPaintEvent* event) {
             }
         }
     }
-    if (maskTop >= bottom) return;
     QPainter painter(viewport());
-    painter.fillRect(QRectF(0.0, maskTop - scroll, viewport()->width(),
-                            viewport()->height() - (maskTop - scroll)),
-                     pageColour());
+    if (maskTop < bottom)
+        painter.fillRect(QRectF(0.0, maskTop - scroll, viewport()->width(),
+                                viewport()->height() - (maskTop - scroll)),
+                         pageColour());
+    // AND THE PAGE BEGINS WHERE IT BEGINS. The last page of a book cannot
+    // scroll to its start — the scroll range ends with the document — and
+    // showed the tail of the page before above its own first line (owner's
+    // report, 07.09.2026: the picture twice, on both pages of the spread).
+    // Whatever lies above the start is paper too.
+    const qreal startTop = startTopY();
+    if (startTop - scroll > 0.5)
+        painter.fillRect(QRectF(0.0, 0.0, viewport()->width(), startTop - scroll), pageColour());
+}
+
+qreal BookPage::startTopY() const {
+    if (document() == nullptr) return 0.0;
+    const QTextBlock block = document()->findBlockByNumber(start_.block);
+    const QTextLayout* tl = block.isValid() ? block.layout() : nullptr;
+    if (tl == nullptr || start_.line >= tl->lineCount()) return 0.0;
+    return lineSpanOf(*document()->documentLayout(), block, start_.line).top;
 }
 
 }  // namespace zametti
