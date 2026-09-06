@@ -117,6 +117,13 @@ void BookPage::showStart(const PageStart& start) {
         return;
     }
     const qreal y = lineSpanOf(*document()->documentLayout(), block, start.line).top;
+    // THE LAST PAGE BEGINS AT THE TOP TOO (owner's report, 07.09.2026: the
+    // heading of the last page sat at the foot of the leaf). The scroll range
+    // ends with the document, so a start near the end could not be reached;
+    // the range is widened to the start, and below the document there is
+    // paper — nothing is drawn there. QTextEdit narrows the range again on
+    // every layout step, and rangeChanged brings us back here.
+    if (int(y) > verticalScrollBar()->maximum()) verticalScrollBar()->setMaximum(int(y));
     verticalScrollBar()->setValue(int(y));
     viewport()->update();
 }
