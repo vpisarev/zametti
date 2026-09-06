@@ -1,5 +1,6 @@
 #include "book_page.h"
 
+#include "doc_model.h"
 #include "key_binding.h"
 #include "settings.h"
 
@@ -13,8 +14,11 @@
 #include <QScrollBar>
 #include <QToolTip>
 #include <QTextBlock>
+#include <QTextFragment>
 #include <QTextLayout>
 #include <QWheelEvent>
+#include <algorithm>
+#include <cmath>
 
 namespace zametti {
 
@@ -305,9 +309,43 @@ QString BookPage::footnoteAt(const QPointF& viewportPos) const {
     if (note_ == nullptr || document() == nullptr || coverShown()) return {};
     const QPointF inDocument(viewportPos.x() + horizontalScrollBar()->value(),
                              viewportPos.y() + verticalScrollBar()->value());
-    const int position = document()->documentLayout()->hitTest(inDocument, Qt::ExactHit);
-    if (position < 0) return {};
-    return note_->doc().footnoteText(note_->doc().footnoteRefAt(position));
+    const QAbstractTextDocumentLayout& layout = *document()->documentLayout();
+    const int exact = layout.hitTest(inDocument, Qt::ExactHit);
+    if (exact >= 0) {
+        const QString id = note_->doc().footnoteRefAt(exact);
+        if (!id.isEmpty()) return note_->doc().footnoteText(id);
+    }
+    // THE LABEL IS SMALL — a superscript at two thirds of the text — and an
+    // exact hit wanted the pointer on the glyph itself (owner's report,
+    // 07.09.2026: the plate showed "sometimes"). So the labels of the blocks
+    // under the pointer are measured themselves, and half a letter of slack
+    // around a label's box counts as a hit. Local: the block or two at the
+    // pointer, not the document.
+    const qreal slack = QFontMetricsF(font()).horizontalAdvance(QLatin1Char('A')) / 2.0;
+    const qreal yEnd = inDocument.y() + slack;
+    for (QTextBlock block = blockAtHeight(inDocument.y() - slack); block.isValid();
+         block = block.next()) {
+        const QRectF blockRect = layout.blockBoundingRect(block);
+        if (blockRect.top() > yEnd) break;
+        const QTextLayout* tl = block.layout();
+        if (tl == nullptr) continue;
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || !fragment.charFormat().hasProperty(FootnoteIdProperty)) continue;
+            const int from = fragment.position() - block.position();
+            const int to = from + fragment.length();
+            const QTextLine line = tl->lineForTextPosition(from);
+            if (!line.isValid()) continue;
+            const qreal x1 = line.cursorToX(from);
+            const qreal x2 = line.cursorToX(to);
+            const QRectF box(tl->position().x() + std::min(x1, x2), tl->position().y() + line.y(),
+                             std::abs(x2 - x1), line.height());
+            if (box.adjusted(-slack, -slack, slack, slack).contains(inDocument))
+                return note_->doc().footnoteText(
+                    fragment.charFormat().stringProperty(FootnoteIdProperty));
+        }
+    }
+    return {};
 }
 
 namespace {
