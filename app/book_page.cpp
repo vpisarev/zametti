@@ -46,7 +46,8 @@ BookPage::BookPage(QWidget* parent)
     // page would show a line cut at its top for good. Every growth of the
     // range puts the start back where it belongs.
     connect(verticalScrollBar(), &QScrollBar::rangeChanged, this, [this](int, int) {
-        if (note_ == nullptr || snapping_) return;
+        // The cover leaf has no start to snap to: the text under it is not shown.
+        if (note_ == nullptr || snapping_ || coverShown()) return;
         showStart(start_);
     });
 }
@@ -74,13 +75,31 @@ void BookPage::showNote(std::shared_ptr<ZNote> note, bool lead) {
 void BookPage::clear() {
     note_.reset();
     start_ = {};
+    cover_ = QImage();
     setDocument(blank_.getDocument());
+}
+
+void BookPage::showCover(const QImage& cover) {
+    cover_ = cover;
+    start_ = {};
+    end_.reset();
+    viewport()->update();
+}
+
+void BookPage::setEnd(std::optional<PageStart> end) {
+    if (end_ == end) return;
+    end_ = end;
+    viewport()->update();
 }
 
 qreal BookPage::pageHeight() const { return viewport()->height(); }
 
 void BookPage::showStart(const PageStart& start) {
     start_ = start;
+    if (!cover_.isNull()) {
+        cover_ = QImage();
+        viewport()->update();
+    }
     if (document() == nullptr || snapping_) return;
     snapping_ = true;
     const auto done = qScopeGuard([this] { snapping_ = false; });
@@ -283,7 +302,7 @@ void BookPage::wheelEvent(QWheelEvent* event) {
 }
 
 QString BookPage::footnoteAt(const QPointF& viewportPos) const {
-    if (note_ == nullptr || document() == nullptr) return {};
+    if (note_ == nullptr || document() == nullptr || coverShown()) return {};
     const QPointF inDocument(viewportPos.x() + horizontalScrollBar()->value(),
                              viewportPos.y() + verticalScrollBar()->value());
     const int position = document()->documentLayout()->hitTest(inDocument, Qt::ExactHit);
@@ -321,6 +340,11 @@ bool BookPage::viewportEvent(QEvent* event) {
 
 void BookPage::mousePressEvent(QMouseEvent* event) {
     emit activated();
+    // The cover leaf has no text to select under the picture.
+    if (coverShown()) {
+        event->accept();
+        return;
+    }
     // A CLICK ON A FOOTNOTE REFERENCE shows the note itself too (brief 18
     // §4): on a touch screen there is no hover.
     if (event->button() == Qt::LeftButton) {
@@ -342,28 +366,57 @@ void BookPage::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void BookPage::paintEvent(QPaintEvent* event) {
+    if (coverShown()) {
+        // THE COVER LEAF: paper and the picture, fitted within the page's
+        // padding, centred; the text under it is not drawn.
+        QPainter painter(viewport());
+        painter.fillRect(viewport()->rect(), pageColour());
+        const int pad = pagePadding();
+        const QRect area = viewport()->rect().adjusted(pad, pad, -pad, -pad);
+        if (area.isEmpty()) return;
+        QSize size = cover_.size();
+        size.scale(area.size(), Qt::KeepAspectRatio);
+        QRect target(QPoint(0, 0), size);
+        target.moveCenter(area.center());
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawImage(target, cover_);
+        return;
+    }
     NoteView::paintEvent(event);
     if (document() == nullptr || note_ == nullptr) return;
-    // THE CUT LINE IS HIDDEN. The last line that does not fit whole is the
-    // first line of the next page (BookPages); showing its top half here
-    // would read as a torn page.
+    // THE PAGE ENDS WHERE THE NEXT ONE BEGINS. Everything from the next
+    // page's first line down is covered with paper: the cut line (the line
+    // that did not fit whole — showing its top half would read as a torn
+    // page) and, when a chapter turns the page early, the heading and the
+    // text that would otherwise still fit at the foot of this one.
     const int scroll = verticalScrollBar()->value();
     const qreal bottom = scroll + viewport()->height();
-    QTextBlock block = blockAtHeight(bottom);
-    if (!block.isValid()) return;
-    const QTextLayout* tl = block.layout();
-    if (tl == nullptr) return;
     const QAbstractTextDocumentLayout& layout = *document()->documentLayout();
-    for (int i = 0; i < tl->lineCount(); ++i) {
-        const LineSpan span = lineSpanOf(layout, block, i);
-        if (span.top < bottom && span.bottom > bottom) {
-            QPainter painter(viewport());
-            painter.fillRect(QRectF(0.0, span.top - scroll, viewport()->width(),
-                                    viewport()->height() - (span.top - scroll)),
-                             pageColour());
-            return;
+    qreal maskTop = bottom;
+    if (end_.has_value()) {
+        const QTextBlock endBlock = document()->findBlockByNumber(end_->block);
+        if (endBlock.isValid() && endBlock.layout() != nullptr &&
+            end_->line < endBlock.layout()->lineCount())
+            maskTop = std::min(maskTop, lineSpanOf(layout, endBlock, end_->line).top);
+    }
+    if (maskTop >= bottom) {
+        QTextBlock block = blockAtHeight(bottom);
+        if (block.isValid() && block.layout() != nullptr) {
+            const QTextLayout* tl = block.layout();
+            for (int i = 0; i < tl->lineCount(); ++i) {
+                const LineSpan span = lineSpanOf(layout, block, i);
+                if (span.top < bottom && span.bottom > bottom) {
+                    maskTop = span.top;
+                    break;
+                }
+            }
         }
     }
+    if (maskTop >= bottom) return;
+    QPainter painter(viewport());
+    painter.fillRect(QRectF(0.0, maskTop - scroll, viewport()->width(),
+                            viewport()->height() - (maskTop - scroll)),
+                     pageColour());
 }
 
 }  // namespace zametti

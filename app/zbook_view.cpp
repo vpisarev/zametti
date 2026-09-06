@@ -3,6 +3,8 @@
 #include "settings.h"
 #include "zapp.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QFontMetricsF>
 #include <QPalette>
 #include <QResizeEvent>
@@ -34,7 +36,7 @@ ZBookView::ZBookView(QWidget* parent) : QWidget(parent) {
     edited_.setInterval(300);
     connect(&edited_, &QTimer::timeout, this, [this] {
         resetTable();
-        showSpread(table_.pageOf(anchor_));
+        showSpread(spreadOfPlace());
     });
     connect(&table_, &BookPages::countKnown, this, [this](int) { announce(); });
 }
@@ -64,7 +66,31 @@ void ZBookView::showNote(std::shared_ptr<ZNote> note) {
     const CaretSpot spot = ZApp::instance().state().caretOf(note_->id());
     anchor_ = PageStart{spot.readingBlock, spot.readingLine};
     active_ = 0;
+    // The cover (books2): the picture named by the header, decoded through
+    // the application's cache; a fresh book opens on it.
+    cover_ = QImage();
+    const QString coverName = note_->bookCover();
+    if (!coverName.isEmpty()) {
+        const QString path = QFileInfo(note_->path()).dir().filePath(coverName);
+        // info() registers the file (header only), pixels() decodes it.
+        ZImageCache& images = ZApp::instance().images();
+        if (images.info(path) != nullptr)
+            if (const QImage* image = images.pixels(path); image != nullptr && !image->isNull())
+                cover_ = *image;
+    }
+    first_ = hasCover() && anchor_ == PageStart{} ? -1 : 0;
     relayoutPages();
+}
+
+int ZBookView::alignedSpread(int page) const {
+    if (shown_ != 2) return page;
+    const int base = lowestSpread();
+    return page - (page - base) % 2;
+}
+
+int ZBookView::spreadOfPlace() {
+    if (first_ == -1 && hasCover()) return -1;
+    return alignedSpread(table_.pageOf(anchor_));
 }
 
 void ZBookView::rememberPlace() {
@@ -84,6 +110,8 @@ void ZBookView::clear() {
     pages_[0]->clear();
     pages_[1]->clear();
     note_.reset();
+    cover_ = QImage();
+    first_ = 0;
 }
 
 BookPage& ZBookView::activePage() {
@@ -133,7 +161,7 @@ void ZBookView::relayoutPages() {
         x += pageWidth + gap;
     }
     resetTable();
-    if (note_ != nullptr) showSpread(table_.pageOf(anchor_));
+    if (note_ != nullptr) showSpread(spreadOfPlace());
 }
 
 int ZBookView::chapterLevel() const {
@@ -154,12 +182,37 @@ int ZBookView::chapterLevel() const {
 void ZBookView::resetTable() {
     // The height the layout settled on: the pages are laid out by now, and
     // both have the same one.
-    table_.setBreakLevel(chapterLevel());
+    // Headings down to reading.pageBreakLevel turn the page, and the book's
+    // chapters do in any case (a level deeper than that is rare, not wrong).
+    table_.setBreakLevel(std::max(chapterLevel(), settings().reading().pageBreakLevel()));
     table_.reset(pages_[0]->pageHeight());
 }
 
 void ZBookView::showSpread(int first) {
     if (note_ == nullptr) return;
+    if (first < lowestSpread()) first = lowestSpread();
+    // A page shows its text up to the next page's start (BookPage::setEnd).
+    const auto endOf = [this](int page) {
+        PageStart next;
+        std::optional<PageStart> end;
+        if (table_.startOf(page + 1, &next)) end = next;
+        return end;
+    };
+    if (first == -1) {
+        // The cover leaf: the picture on the left, page 0 on the right.
+        first_ = -1;
+        anchor_ = PageStart{};
+        pages_[0]->showCover(cover_);
+        if (shown_ == 2) {
+            PageStart start;
+            if (table_.startOf(0, &start)) {
+                pages_[1]->showStart(start);
+                pages_[1]->setEnd(endOf(0));
+            }
+        }
+        announce();
+        return;
+    }
     PageStart start;
     if (!table_.startOf(first, &start)) {
         // Past the end: the last spread.
@@ -169,14 +222,17 @@ void ZBookView::showSpread(int first) {
     first_ = first;
     anchor_ = start;
     pages_[0]->showStart(start);
+    pages_[0]->setEnd(endOf(first));
     if (shown_ == 2) {
         PageStart next;
         if (table_.startOf(first + 1, &next)) {
             pages_[1]->showStart(next);
+            pages_[1]->setEnd(endOf(first + 1));
         } else {
             // The book ends on the left page: the right one is a blank leaf,
             // shown past the end so that no text repeats.
             pages_[1]->showStart(PageStart{pages_[0]->document()->blockCount(), 0});
+            pages_[1]->setEnd(std::nullopt);
         }
     }
     announce();
@@ -185,30 +241,30 @@ void ZBookView::showSpread(int first) {
 void ZBookView::pageStep(int delta) {
     if (note_ == nullptr) return;
     int next = first_ + delta * shown_;
-    if (next < 0) next = 0;
-    PageStart probe;
-    if (!table_.startOf(next, &probe)) return;   // already on the last spread
+    if (next < lowestSpread()) next = lowestSpread();
+    if (next >= 0) {
+        PageStart probe;
+        if (!table_.startOf(next, &probe)) return;   // already on the last spread
+    }
     showSpread(next);
 }
 
 void ZBookView::jump(bool toEnd) {
     if (note_ == nullptr) return;
     if (!toEnd) {
-        showSpread(0);
+        showSpread(lowestSpread());
         return;
     }
     // The end is known only once the table is: count it now, on demand.
     PageStart probe;
-    int last = first_;
+    int last = std::max(first_, 0);
     while (table_.startOf(last + 1, &probe)) ++last;
-    if (shown_ == 2) last -= last % 2;
-    showSpread(last);
+    showSpread(alignedSpread(last));
 }
 
 void ZBookView::showLine(const PageStart& line) {
     if (note_ == nullptr) return;
-    int page = table_.pageOf(line);
-    if (shown_ == 2) page -= page % 2;
+    const int page = alignedSpread(table_.pageOf(line));
     // Already on view — the pages stay put (as the editor keeps its place
     // when the hit is on screen).
     if (page == first_) {
@@ -222,16 +278,14 @@ void ZBookView::showBlock(int block) { showLine(PageStart{block, 0}); }
 
 bool ZBookView::blockOnSpread(int block) {
     if (note_ == nullptr) return false;
-    int page = table_.pageOf(PageStart{block, 0});
-    if (shown_ == 2) page -= page % 2;
-    return page == first_;
+    return alignedSpread(table_.pageOf(PageStart{block, 0})) == first_;
 }
 
 void ZBookView::reclaim() {
     if (note_ == nullptr) return;
     pages_[0]->showNote(note_, /*lead=*/true);
     resetTable();
-    showSpread(table_.pageOf(anchor_));
+    showSpread(spreadOfPlace());
 }
 
 void ZBookView::paintCanvas() {
@@ -269,7 +323,8 @@ void ZBookView::clearMatches() {
 
 void ZBookView::restorePlace(const PageStart& place) {
     anchor_ = place;
-    if (note_ != nullptr) showSpread(table_.pageOf(anchor_));
+    first_ = 0;
+    if (note_ != nullptr) showSpread(spreadOfPlace());
 }
 
 void ZBookView::resizeEvent(QResizeEvent* event) {
@@ -281,6 +336,11 @@ void ZBookView::resizeEvent(QResizeEvent* event) {
 
 void ZBookView::announce() {
     if (note_ == nullptr) return;
+    if (first_ == -1) {
+        // The cover leaf: page 0 in the status line means the cover.
+        emit positionChanged(QString(), 0, table_.count(), 0);
+        return;
+    }
     const QTextDocument* doc = pages_[0]->document();
     const QTextBlock top = doc->findBlockByNumber(anchor_.block);
     const int chars = std::max(1, doc->characterCount() - 1);

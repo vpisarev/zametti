@@ -1509,9 +1509,13 @@ int main(int argc, char** argv) {
                          // small font of the line; a spread names both its
                          // pages, «pages 5–6/108» (owner's wishes).
                          const QString total = count > 0 ? QString::number(count) : QStringLiteral("…");
-                         QString pages = QStringLiteral("page %1").arg(page);
+                         // Page 0 is the cover leaf (books2): not a page of the
+                         // text, the first page stands next to it on a spread.
+                         QString pages = page == 0 ? QStringLiteral("cover")
+                                                   : QStringLiteral("page %1").arg(page);
                          if (bookView.pagesShown() == 2 && (count < 0 || page < count))
-                             pages = QStringLiteral("pages %1–%2").arg(page).arg(page + 1);
+                             pages = page == 0 ? QStringLiteral("cover · page 1")
+                                               : QStringLiteral("pages %1–%2").arg(page).arg(page + 1);
                          statusBar.setReading(chapter.toUpper(),
                                               QStringLiteral("%1/%2 · %3%").arg(pages, total).arg(percent));
                      });

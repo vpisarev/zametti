@@ -15,6 +15,7 @@
 #include "book_pages.h"
 #include "znote.h"
 
+#include <QImage>
 #include <QTimer>
 #include <QWidget>
 #include <memory>
@@ -42,6 +43,9 @@ public:
     // the selection, takes the focus and is the search target.
     BookPage& activePage();
     int pagesShown() const { return shown_; }
+    // The book has a cover picture (`cover:` in the header): currentPage()
+    // is -1 while the cover leaf is on view.
+    bool hasCover() const { return !cover_.isNull(); }
     // The heading level whose headings turn the page (BookPages::setBreakLevel):
     // the shallowest level that occurs more than once in the outline, else 1.
     int chapterLevel() const;
@@ -97,9 +101,22 @@ private:
     void paintCanvas();
     qreal charUnit() const;
 
+    // THE COVER LEAF (books2): spread -1, before page 0, when the book has a
+    // cover (`cover:` in the header). The left page shows the picture, the
+    // right one page 0; with one page shown the cover stands alone. A fresh
+    // book opens on it; a remembered place does not.
+    int lowestSpread() const { return hasCover() ? -1 : 0; }
+    // The left page of the spread that holds the page: pairs count from the
+    // lowest spread (−1,0 / 1,2 … with a cover; 0,1 / 2,3 … without).
+    int alignedSpread(int page) const;
+    // The spread to show for the current place: the cover if it is on view,
+    // else the one that holds the anchor.
+    int spreadOfPlace();
+
     std::shared_ptr<ZNote> note_;
     std::vector<BookPage*> pages_;
     BookPages table_;
+    QImage cover_;
     int shown_ = 1;
     int first_ = 0;
     int active_ = 0;

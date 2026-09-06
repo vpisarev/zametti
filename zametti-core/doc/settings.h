@@ -1312,6 +1312,12 @@ struct ZSettings {
         // indent of a quote follows the left one (quoteIndent) — no knob.
         ZM_SETTING_PLAIN(bool, quoteItalic, QuoteItalic, true)
         ZM_SETTING(qreal, quoteSpacing, QuoteSpacing, 0.75, 0.0, 10.0)
+        // HEADINGS THAT TURN THE PAGE: every heading of this level or
+        // shallower begins a page of its own (owner's rule, 07.09.2026: the
+        // third level too — a novel's parts inside chapters are H4 and stay).
+        // The level of the book's chapters (the shallowest level that
+        // repeats in the outline) turns the page as well when it is deeper.
+        ZM_SETTING(int, pageBreakLevel, PageBreakLevel, 3, 0, 6)
         // Pages side by side: 0 = as many as fit (two when the window is wide
         // enough for two columns of minPageWidth), 1 or 2 to force.
         ZM_SETTING(int, pagesPerSpread, PagesPerSpread, 0, 0, 2)

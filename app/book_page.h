@@ -17,7 +17,9 @@
 #include "note_view.h"
 #include "znote.h"
 
+#include <QImage>
 #include <memory>
+#include <optional>
 
 namespace zametti {
 
@@ -42,6 +44,18 @@ public:
     // its start: the scroll range ends where the document does.
     void showStart(const PageStart& start);
     const PageStart& start() const { return start_; }
+    // Where the page ends: the start of the next page, when known. Everything
+    // from that line down is covered with paper — a chapter that begins a
+    // page of its own must not also show at the foot of the page before
+    // (owner's report, 06.09.2026: the heading at the foot of the right page
+    // and again at the top of the next left one). Empty — the last page.
+    const std::optional<PageStart>& end() const { return end_; }
+    void setEnd(std::optional<PageStart> end);
+    // THE COVER LEAF (books2): the page shows the picture alone on the paper,
+    // the document stays attached (both pages share it) but is not drawn;
+    // showStart() turns back to the text.
+    void showCover(const QImage& cover);
+    bool coverShown() const { return !cover_.isNull(); }
     // The line under the top edge right now (after a mouse drag the view may
     // have drifted; the spread snaps it back).
     PageStart topLine() const;
@@ -101,6 +115,8 @@ private:
     ZDocument blank_;
     std::shared_ptr<const ZDocStyle> reading_;
     PageStart start_;
+    std::optional<PageStart> end_;
+    QImage cover_;
     bool lead_ = false;
     bool snapping_ = false;
     int wheelAccumulated_ = 0;
