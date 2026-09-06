@@ -12,7 +12,10 @@
 #include "zstorage.h"
 
 #include <QApplication>
+#include <QColor>
 #include <QFile>
+#include <QImage>
+#include <QListWidget>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -109,6 +112,19 @@ void checkList() {
                 rig.toc->geometry().top() == rig.editor->geometry().top());
     ZT_TRUE("список уже трети текста", rig.toc->width() <= rig.editor->width() / 3);
     ZT_TRUE("фокус у списка", rig.toc->isAncestorOf(QApplication::focusWidget()));
+    // Set off from the text (books2): a dark line down the left edge and an
+    // inset before the entries; the list widget starts after the inset.
+    {
+        ZT_TRUE("отступ слева больше линии", rig.toc->leftInset() > rig.toc->edgeWidth() &&
+                                              rig.toc->edgeWidth() >= 1);
+        const QListWidget* inner = rig.toc->findChild<QListWidget*>();
+        ZT_TRUE("список начинается после отступа",
+                inner != nullptr && inner->geometry().left() == rig.toc->leftInset());
+        const QImage shot = rig.toc->grab().toImage();
+        const QColor edge = shot.pixelColor(0, shot.height() / 2);
+        const QColor paper = shot.pixelColor(rig.toc->leftInset() - 1, shot.height() / 2);
+        ZT_TRUE("линия по левому краю темнее фона", edge.lightness() < paper.lightness() - 40);
+    }
     // Esc: gone, the text where it was.
     QTest::keyClick(QApplication::focusWidget(), Qt::Key_Escape);
     QTest::qWait(20);
