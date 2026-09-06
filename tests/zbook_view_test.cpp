@@ -22,6 +22,7 @@
 
 #include <QApplication>
 #include <QFile>
+#include <QFontMetricsF>
 #include <QImage>
 #include <QRect>
 #include <QScrollBar>
@@ -37,6 +38,7 @@
 #include <QTextLayout>
 #include <QVBoxLayout>
 #include <memory>
+#include <cstdlib>
 #include <string>
 
 using namespace zametti;
@@ -218,6 +220,35 @@ void checkSpread() {
     ZT_TRUE("широкое окно — две страницы", rig.book->pagesShown() == 2);
     ZT_TRUE("правая страница видна", rig.book->page(1).isVisible());
     ZT_TRUE("обе над одним документом", rig.book->page(1).document() == rig.left().document());
+    // The spread hugs the gutter (books2): the pages stand pageGap apart, no
+    // wider than the column with its margins, and the spare width of the
+    // window lies outside the spread, split evenly.
+    {
+        const zametti::ZSettings::Reading& reading = zametti::settings().reading();
+        const qreal unit = QFontMetricsF(rig.left().font()).horizontalAdvance(QLatin1Char('A'));
+        const auto check = [&](const char* when, bool expectSpare) {
+            const QRect l = rig.left().geometry();
+            const QRect r = rig.book->page(1).geometry();
+            ZT_EQ(std::string(when) + ": между страницами — ровно pageGap",
+                  std::to_string(int(reading.pageGap() * unit)),
+                  std::to_string(r.left() - l.right() - 1));
+            const int hugged = int((reading.maxContentWidth() + 2.0 * reading.sideMargin()) * unit);
+            ZT_TRUE(std::string(when) + ": страница не шире колонки с полями",
+                    l.width() <= hugged && r.width() == l.width());
+            ZT_TRUE(std::string(when) + ": лишнее — снаружи разворота, поровну",
+                    std::abs(l.left() - (rig.book->width() - r.right() - 1)) <= 1);
+            if (expectSpare)
+                ZT_TRUE(std::string(when) + ": страницы прижаты к корешку, а не растянуты",
+                        l.width() == hugged && l.left() > 0);
+        };
+        check("1600", false);
+        // Wider than two hugged pages: the spare goes outside.
+        rig.window.resize(2400, 900);
+        QTest::qWait(80);
+        check("2400", true);
+        rig.window.resize(1600, 900);
+        QTest::qWait(80);
+    }
     const PageStart left0 = rig.left().start();
     const PageStart right0 = rig.book->page(1).start();
     ZT_TRUE("правая идёт за левой", left0 < right0);
