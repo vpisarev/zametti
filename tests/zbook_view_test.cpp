@@ -287,6 +287,42 @@ void checkSpread() {
                 top <= first + rig.left().pageHeight() && top > first);
     }
     (void)left1;
+    // The end of the book on the left page: the right one is a blank leaf and
+    // repaints as paper (owner's report, 07.09.2026: it kept the previous
+    // right page).
+    rig.book->jump(true);
+    QTest::qWait(60);
+    // The last page cannot scroll to its start (the range ends with the
+    // document): what lies above the start is paper, not the page before
+    // (owner's report: the picture on both pages).
+    for (int i = 0; i < 2; ++i) {
+        BookPage& page = rig.book->page(i);
+        if (page.blankLeaf()) continue;
+        const int above = int(page.startTopY()) - page.verticalScrollBar()->value();
+        if (above <= 2) continue;
+        const QImage shot = page.viewport()->grab().toImage();
+        const QRgb paper = page.palette().color(QPalette::Base).rgb();
+        bool ink = false;
+        for (int y = 0; y < std::min(above - 1, shot.height()) && !ink; y += 2)
+            for (int x = 0; x < shot.width(); x += 2)
+                if (shot.pixel(x, y) != paper) { ink = true; break; }
+        ZT_TRUE(std::string("над началом страницы ") + std::to_string(i) + " — бумага, не хвост предыдущей",
+                !ink);
+    }
+    if (rig.book->page(1).blankLeaf()) {
+        const QImage leaf = rig.book->page(1).viewport()->grab().toImage();
+        const QRgb paper = rig.book->page(1).palette().color(QPalette::Base).rgb();
+        bool ink = false;
+        for (int y = 0; y < leaf.height() && !ink; y += 3)
+            for (int x = 0; x < leaf.width(); x += 3)
+                if (leaf.pixel(x, y) != paper) { ink = true; break; }
+        ZT_TRUE("пустой лист за концом книги — чистая бумага", !ink);
+    } else {
+        ZT_TRUE("книга кончилась на правой странице — пустого листа нет",
+                rig.book->page(1).start().block < rig.left().document()->blockCount());
+    }
+    rig.book->jump(false);
+    QTest::qWait(30);
     // Narrow the window: one page, the place kept.
     rig.window.resize(900, 700);
     QTest::qWait(80);
