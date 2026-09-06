@@ -130,28 +130,44 @@ void checkPagesAndKeys() {
     ZT_TRUE("начало — первая строка", rig.left().start() == PageStart{});
 
     const QTextDocument& doc = *rig.left().document();
-    // Turn forward: the new start is the first line that did not fit whole.
+    // Turn forward: the second page is the first chapter — a heading of the
+    // chapters' level turns the page (books2), so the title stays alone on
+    // the first one.
     rig.book->pageStep(+1);
     const PageStart second = rig.left().start();
     ZT_TRUE("вторая страница дальше первой", PageStart{} < second);
+    {
+        int chapter = -1;
+        for (const ZDocument::OutlineEntry& entry : rig.left().note()->outline())
+            if (entry.level == 2) { chapter = entry.block; break; }
+        const PageStart chapterStart{chapter, 0};
+        ZT_TRUE("вторая страница начинается первой главой", second == chapterStart);
+    }
+    // One more: the third page starts by the geometric rule — the first line
+    // that did not fit whole on the chapter's page.
+    rig.book->pageStep(+1);
+    const PageStart third = rig.left().start();
+    ZT_TRUE("третья страница дальше второй", second < third);
     const qreal height = rig.left().pageHeight();
-    const qreal first = lineTopOf(doc, PageStart{});
-    const qreal top = lineTopOf(doc, second);
+    const qreal first = lineTopOf(doc, second);
+    const qreal top = lineTopOf(doc, third);
     // The line before it fitted whole (checked below); this one begins within
     // a line of the page's bottom — right at it when the previous line ended
     // exactly there.
-    ZT_TRUE("начало второй — строка, не влезшая на первую (её верх у нижней кромки)",
+    ZT_TRUE("начало третьей — строка, не влезшая на вторую (её верх у нижней кромки)",
             top <= first + height + QFontMetricsF(rig.left().font()).height() &&
                 top > first + height - 4 * QFontMetricsF(rig.left().font()).height());
-    // The line before it fits whole on page one.
+    // The line before it fits whole on the page before.
     {
-        PageStart before = second;
+        PageStart before = third;
         if (before.line > 0) --before.line;
         else --before.block;
         const qreal bottom =
             lineSpanOf(*doc.documentLayout(), doc.findBlockByNumber(before.block), before.line).bottom;
         ZT_TRUE("строка перед ней влезла целиком", bottom <= first + height + 0.5);
     }
+    rig.book->pageStep(-1);
+    ZT_TRUE("назад — та же вторая страница", rig.left().start() == second);
     rig.book->pageStep(+1);
     rig.book->pageStep(-1);
     ZT_TRUE("вперёд-назад — та же вторая страница", rig.left().start() == second);
@@ -384,6 +400,56 @@ void checkSymmetry() {
 }
 
 // A click on a footnote reference shows the note's text.
+// CHAPTERS BEGIN A PAGE (books2): the shallowest heading level that repeats
+// is the level of the chapters, and every heading down to it turns the page —
+// unless it is the page's first line already. An fb2 book (one H1, chapters as
+// H2) turns at both; a manual with many H1 parts turns at the parts alone.
+void checkChapterPages() {
+    Rig rig;
+    QString error;
+    const auto note = [&](const QString& text) {
+        const QString id = rig.storage->createNote(QString(), false, &error);
+        const QString path = rig.storage->pathOf(id);
+        writeFile(path, QStringLiteral("<!-- zametti\nrole: book\n-->\n\n") + text);
+        rig.storage->reload();
+        return path;
+    };
+    const auto startsOwnPage = [&](int block) {
+        rig.book->showBlock(block);
+        return rig.left().start() == PageStart{block, 0};
+    };
+    // One H1, three short H2 chapters: each chapter on a page of its own.
+    rig.open(note(QStringLiteral("# Title\n\nIntro.\n\n## One\n\nA.\n\n## Two\n\nB.\n\n## Three\n\nC.\n")));
+    ZT_TRUE("книга открылась в чтении", rig.controller.active());
+    ZT_TRUE("уровень глав — второй (H1 один, H2 повторяется)", rig.book->chapterLevel() == 2);
+    int chapters = 0;
+    for (const ZDocument::OutlineEntry& entry : rig.left().note()->outline()) {
+        if (entry.level != 2) continue;
+        ++chapters;
+        ZT_TRUE("глава «" + entry.text.toStdString() + "» начинает страницу", startsOwnPage(entry.block));
+    }
+    ZT_TRUE("три главы найдены", chapters == 3);
+    ZT_TRUE("первая страница по-прежнему с начала", startsOwnPage(0));
+    // Many H1 parts with H2 sections inside: the parts turn the page, the
+    // first section of a part shares the part's page.
+    rig.open(note(QStringLiteral("# Part A\n\nText.\n\n## Sec 1\n\nText.\n\n## Sec 2\n\nText.\n\n"
+                                 "# Part B\n\nText.\n\n## Sec 3\n\nText.\n")));
+    ZT_TRUE("уровень глав — первый (H1 повторяется)", rig.book->chapterLevel() == 1);
+    int parts = 0;
+    int firstSection = -1;
+    for (const ZDocument::OutlineEntry& entry : rig.left().note()->outline()) {
+        if (entry.level == 1) {
+            ++parts;
+            ZT_TRUE("часть «" + entry.text.toStdString() + "» начинает страницу", startsOwnPage(entry.block));
+        } else if (firstSection < 0) {
+            firstSection = entry.block;
+        }
+    }
+    ZT_TRUE("две части найдены", parts == 2);
+    ZT_TRUE("раздел внутри части страницу не начинает",
+            firstSection > 0 && !startsOwnPage(firstSection));
+}
+
 void checkFootnote() {
     Rig rig;
     rig.open(rig.bookPath);
@@ -478,6 +544,11 @@ void checkBookmarks() {
 }
 
 }  // namespace
+
+TEST(BookView, ChapterPages) {
+    checkChapterPages();
+    EXPECT_EQ(0, zt::report("book-chapter-pages"));
+}
 
 TEST(BookView, Footnote) {
     checkFootnote();
