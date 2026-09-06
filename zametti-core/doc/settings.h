@@ -1318,6 +1318,11 @@ struct ZSettings {
         // The level of the book's chapters (the shallowest level that
         // repeats in the outline) turns the page as well when it is deeper.
         ZM_SETTING(int, pageBreakLevel, PageBreakLevel, 3, 0, 6)
+        // FULL SCREEN (owner's wish, 07.09.2026): the side margins of a page
+        // grow by a third and the air above the first line doubles — the
+        // spread on a whole screen wants more paper around the text.
+        ZM_SETTING(qreal, fullscreenSideFactor, FullscreenSideFactor, 1.3, 1.0, 3.0)
+        ZM_SETTING(qreal, fullscreenTopFactor, FullscreenTopFactor, 2.0, 1.0, 4.0)
         // Pages side by side: 0 = as many as fit (two when the window is wide
         // enough for two columns of minPageWidth), 1 or 2 to force.
         ZM_SETTING(int, pagesPerSpread, PagesPerSpread, 0, 0, 2)

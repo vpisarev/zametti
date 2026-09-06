@@ -355,8 +355,32 @@ void ZBookView::announce() {
     PageStart boundary;
     if (table_.startOf(first_ + 1, &boundary))
         named = boundary.line > 0 ? boundary.block : std::max(anchor_.block, boundary.block - 1);
-    emit positionChanged(note_->doc().headingAbove(named), first_ + 1, table_.count(),
+    emit positionChanged(chapterPath(named), first_ + 1, table_.count(),
                          std::clamp(percent, 0, 100));
+}
+
+QString ZBookView::chapterPath(int block) {
+    // THE PATH OF HEADINGS (owner's wish, 07.09.2026): the chapter and up to
+    // two of its ancestors — «Книга первая · Часть первая · VI», not «VI»
+    // alone. From the outline cache, by a binary search over the blocks: the
+    // walk back over the document (headingAbove) is gone from the status.
+    const std::vector<ZDocument::OutlineEntry>& outline = note_->outline();
+    auto it = std::upper_bound(outline.begin(), outline.end(), block,
+                               [](int b, const ZDocument::OutlineEntry& e) { return b < e.block; });
+    if (it == outline.begin()) return {};
+    --it;
+    QStringList parts{it->text};
+    int level = it->level;
+    int up = 0;
+    for (auto j = it; j != outline.begin() && up < kChapterPathUp;) {
+        --j;
+        if (j->level < level) {
+            parts.prepend(j->text);
+            level = j->level;
+            ++up;
+        }
+    }
+    return parts.join(QStringLiteral(" · "));
 }
 
 }  // namespace zametti

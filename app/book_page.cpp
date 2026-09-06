@@ -32,7 +32,7 @@ QFont baseFontOf(qreal zoom, const ZDocStyle& style) {
 }  // namespace
 
 BookPage::BookPage(QWidget* parent)
-    : NoteView(parent), reading_(settings().readingStyle()) {
+    : NoteView(parent), reading_(settings().readingStyle()), wide_(widenedLook(*reading_)) {
     setReadOnly(true);
     // Keys turn pages, Ctrl+C copies, Ctrl+F searches: the page takes focus.
     setFocusPolicy(Qt::StrongFocus);
@@ -154,8 +154,20 @@ PageStart BookPage::lineAt(qreal y) const {
 
 void BookPage::refreshAppearance() {
     reading_ = settings().readingStyle();
+    wide_ = widenedLook(*reading_);
     applyPalette(*this, /*history=*/false);
     restoreScale();
+}
+
+std::shared_ptr<const ZDocStyle> BookPage::widenedLook(const ZDocStyle& look) {
+    auto wide = std::make_shared<ZDocStyle>(look);
+    wide->setSideMargin(look.sideMargin() * settings().reading().fullscreenSideFactor());
+    return wide;
+}
+
+bool BookPage::fullscreen() const {
+    const QWidget* top = window();
+    return top != nullptr && top->isFullScreen();
 }
 
 QFont BookPage::zoomedBaseFont(qreal zoom) const {
@@ -167,8 +179,10 @@ QFont BookPage::zoomedBaseFont(qreal zoom) const {
 }
 
 int BookPage::pagePadding() const {
-    // Air above the first line of a page: three quarters of a line.
-    return int(QFontMetricsF(zoomedBaseFont(zoom())).height() * 0.75);
+    // Air above the first line of a page: three quarters of a line; on a
+    // full screen — reading.fullscreenTopFactor times that.
+    const qreal factor = fullscreen() ? settings().reading().fullscreenTopFactor() : 1.0;
+    return int(QFontMetricsF(zoomedBaseFont(zoom())).height() * 0.75 * factor);
 }
 
 NoteSearch& BookPage::searchCache() {

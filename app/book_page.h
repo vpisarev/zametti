@@ -94,12 +94,17 @@ signals:
 public:
     // The look the page lays its column out with: the spread sizes the pages
     // by its column width and margins (ZBookView::relayoutPages).
-    const ZDocStyle& readingLook() const { return *reading_; }
+    const ZDocStyle& readingLook() const { return fullscreen() ? *wide_ : *reading_; }
+    // The window is full screen: wider side margins and more air above the
+    // first line (reading.fullscreenSideFactor / fullscreenTopFactor).
+    bool fullscreen() const;
+    // The same look with the full-screen side margins (a copy).
+    std::shared_ptr<const ZDocStyle> widenedLook(const ZDocStyle& look);
 
 protected:
     QFont zoomedBaseFont(qreal zoom) const override;
     int pagePadding() const override;
-    const ZDocStyle& columnStyle() const override { return *reading_; }
+    const ZDocStyle& columnStyle() const override { return readingLook(); }
     bool blockBookmarked(int block) const override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     NoteSearch& searchCache() override;
@@ -120,6 +125,8 @@ private:
     // The page's own document while nothing is shown.
     ZDocument blank_;
     std::shared_ptr<const ZDocStyle> reading_;
+    // The reading look with the full-screen side margins (a copy, made with reading_).
+    std::shared_ptr<const ZDocStyle> wide_;
     PageStart start_;
     std::optional<PageStart> end_;
     QImage cover_;
