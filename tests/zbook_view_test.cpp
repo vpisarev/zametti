@@ -21,7 +21,10 @@
 #include "zstorage.h"
 
 #include <QApplication>
+#include <QColor>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QFontMetricsF>
 #include <QHelpEvent>
 #include <QImage>
@@ -432,24 +435,110 @@ void checkChapterPages() {
     }
     ZT_TRUE("три главы найдены", chapters == 3);
     ZT_TRUE("первая страница по-прежнему с начала", startsOwnPage(0));
-    // Many H1 parts with H2 sections inside: the parts turn the page, the
-    // first section of a part shares the part's page.
-    rig.open(note(QStringLiteral("# Part A\n\nText.\n\n## Sec 1\n\nText.\n\n## Sec 2\n\nText.\n\n"
-                                 "# Part B\n\nText.\n\n## Sec 3\n\nText.\n")));
+    // THE PAGE BEFORE A CHAPTER ENDS AT THE CHAPTER (owner's report,
+    // 06.09.2026): the heading that turns the page must not show at the
+    // foot of the page before it as well. The page knows its end, and the
+    // band of the heading's line on it is blank paper.
+    {
+        int chapter = -1;
+        for (const ZDocument::OutlineEntry& entry : rig.left().note()->outline())
+            if (entry.level == 2 && entry.text == QStringLiteral("Two")) chapter = entry.block;
+        rig.book->showBlock(chapter);
+        rig.book->pageStep(-1);
+        QTest::qWait(30);
+        BookPage& page = rig.left();
+        const PageStart chapterStart{chapter, 0};
+        ZT_TRUE("страница перед главой кончается на главе",
+                page.end().has_value() && *page.end() == chapterStart);
+        const QTextDocument& doc = *page.document();
+        const LineSpan span = lineSpanOf(*doc.documentLayout(), doc.findBlockByNumber(chapter), 0);
+        const int scroll = page.verticalScrollBar()->value();
+        const QImage shot = page.viewport()->grab().toImage();
+        const QRgb paper = page.palette().color(QPalette::Base).rgb();
+        const auto inkIn = [&](qreal top, qreal bottom) {
+            for (int y = int(top) - scroll; y < int(bottom) - scroll; ++y) {
+                if (y < 0 || y >= shot.height()) continue;
+                for (int x = 0; x < shot.width(); ++x)
+                    if (shot.pixel(x, y) != paper) return true;
+            }
+            return false;
+        };
+        ZT_TRUE("заголовок главы влез бы на эту страницу (иначе проверка пуста)",
+                span.top - scroll < page.viewport()->height());
+        ZT_TRUE("но полоса его строки закрыта бумагой", !inkIn(span.top, span.bottom));
+        // And the page's own text above it is there.
+        const LineSpan own = lineSpanOf(*doc.documentLayout(), doc.findBlockByNumber(page.start().block), 0);
+        ZT_TRUE("собственный текст страницы на месте", inkIn(own.top, own.bottom));
+    }
+    // Many H1 parts with H3 sections and H4 parts inside: headings down to
+    // reading.pageBreakLevel (3) turn the page, the H4 right after an H3
+    // shares its page (a novel's parts inside chapters).
+    rig.open(note(QStringLiteral("# Part A\n\nText.\n\n### Sec 1\n\nText.\n\n#### Small 1\n\nText.\n\n"
+                                 "### Sec 2\n\nText.\n\n# Part B\n\nText.\n\n### Sec 3\n\nText.\n")));
     ZT_TRUE("уровень глав — первый (H1 повторяется)", rig.book->chapterLevel() == 1);
+    ZT_TRUE("порог разрыва по умолчанию — третий уровень",
+            zametti::settings().reading().pageBreakLevel() == 3);
     int parts = 0;
-    int firstSection = -1;
+    int sections = 0;
+    int small = -1;
     for (const ZDocument::OutlineEntry& entry : rig.left().note()->outline()) {
         if (entry.level == 1) {
             ++parts;
             ZT_TRUE("часть «" + entry.text.toStdString() + "» начинает страницу", startsOwnPage(entry.block));
-        } else if (firstSection < 0) {
-            firstSection = entry.block;
+        } else if (entry.level == 3) {
+            ++sections;
+            ZT_TRUE("раздел «" + entry.text.toStdString() + "» начинает страницу", startsOwnPage(entry.block));
+        } else if (entry.level == 4 && small < 0) {
+            small = entry.block;
         }
     }
-    ZT_TRUE("две части найдены", parts == 2);
-    ZT_TRUE("раздел внутри части страницу не начинает",
-            firstSection > 0 && !startsOwnPage(firstSection));
+    ZT_TRUE("две части и три раздела найдены", parts == 2 && sections == 3);
+    ZT_TRUE("часть внутри раздела (H4) страницу не начинает", small > 0 && !startsOwnPage(small));
+}
+
+// THE COVER LEAF (books2): a book with `cover:` opens on its cover — the
+// picture alone on the page (one page shown), page 1 next to it on a spread;
+// turning forward shows page 1, back again the cover, Home the cover; a
+// remembered place away from the start opens without the cover.
+void checkCover() {
+    Rig rig;
+    QString error;
+    const QString id = rig.storage->createNote(QString(), false, &error);
+    const QString path = rig.storage->pathOf(id);
+    const QString coverName = QStringLiteral("cover-test.png");
+    QImage picture(40, 60, QImage::Format_RGB32);
+    picture.fill(QColor(200, 30, 30));
+    ZT_TRUE("картинка обложки записана",
+            picture.save(QFileInfo(path).dir().filePath(coverName)));
+    writeFile(path, QStringLiteral("<!-- zametti\nrole: book\ncover: %1\n-->\n\n").arg(coverName) +
+                        bookText(40).mid(int(QStringLiteral("<!-- zametti\nrole: book\nlock: yes\n-->\n\n").size())));
+    rig.storage->reload();
+    rig.open(path);
+    ZT_TRUE("книга открылась в чтении", rig.controller.active());
+    ZT_TRUE("у книги есть обложка", rig.book->hasCover());
+    ZT_TRUE("свежая книга открыта на обложке", rig.book->currentPage() == -1 && rig.left().coverShown());
+    {
+        const QImage shot = rig.left().viewport()->grab().toImage();
+        const QColor mid = shot.pixelColor(shot.width() / 2, shot.height() / 2);
+        ZT_TRUE("в середине листа — картинка", mid.red() > 150 && mid.green() < 80);
+    }
+    rig.book->pageStep(+1);
+    ZT_TRUE("вперёд — первая страница текста", rig.book->currentPage() == 0 && !rig.left().coverShown());
+    ZT_TRUE("и она с начала", rig.left().start() == PageStart{});
+    rig.book->pageStep(-1);
+    ZT_TRUE("назад — снова обложка", rig.book->currentPage() == -1 && rig.left().coverShown());
+    rig.book->jump(true);
+    ZT_TRUE("End — не обложка", rig.book->currentPage() > 0);
+    rig.book->jump(false);
+    ZT_TRUE("Home — обложка", rig.book->currentPage() == -1);
+    // Read on, leave, come back: the place is remembered, not the cover.
+    rig.book->pageStep(+1);
+    rig.book->pageStep(+1);
+    const PageStart place = rig.left().start();
+    rig.open(rig.plainPath);
+    rig.open(path);
+    ZT_TRUE("возврат к книге — на место чтения, не на обложку",
+            rig.book->currentPage() >= 0 && rig.left().start() == place);
 }
 
 void checkFootnote() {
@@ -583,6 +672,11 @@ void checkBookmarks() {
 TEST(BookView, ChapterPages) {
     checkChapterPages();
     EXPECT_EQ(0, zt::report("book-chapter-pages"));
+}
+
+TEST(BookView, Cover) {
+    checkCover();
+    EXPECT_EQ(0, zt::report("book-cover"));
 }
 
 TEST(BookView, Footnote) {
