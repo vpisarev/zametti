@@ -301,8 +301,13 @@ void ZBookView::refreshAppearance() {
     for (BookPage* page : pages_) page->refreshAppearance();
     paintCanvas();
     if (note_ == nullptr) return;
-    pages_[0]->takeOverDocument();
-    relayoutPages();
+    // THE PAGES LET GO AND TAKE THE NOTE AGAIN: the look changed, and an
+    // ordinary note's shadow (ZNote::readingDocument) is built anew for it —
+    // the old one must not be freed under a page that still shows it. The
+    // place is remembered by clear() and read back by showNote().
+    const std::shared_ptr<ZNote> note = note_;
+    clear();
+    showNote(note);
 }
 
 void ZBookView::applyZoom(qreal zoom) {

@@ -60,7 +60,11 @@ void ZNote::refreshStyle() {
     // nothing"): the document carried the reading style copied at load, and a
     // rebuild for the new look reused that copy. The role chooses again.
     doc_.setStyle(styleFor(header_));
-    readingDoc_.reset();
+    // The shadow goes stale, NOT away: the pages may be showing it this very
+    // moment (a config edited in the reading mode crashed here, owner's
+    // report 07.09.2026). The next readingDocument() builds a new one, and the
+    // old is freed once nobody holds it — the views detach first.
+    readingRevision_ = -1;
 }
 
 ZDocument& ZNote::readingDocument() {
