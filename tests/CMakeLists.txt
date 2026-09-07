@@ -60,6 +60,7 @@ add_executable(zametti-tests
     history_compress_test.cpp
     fuzz_journal_test.cpp
     archive_test.cpp
+    catalog_test.cpp
     times_test.cpp
     sort_test.cpp
     tree_test.cpp
@@ -230,6 +231,7 @@ add_executable(zametti-bench
     display_scale_probe.cpp
     matrix_probe.cpp
     open_probe.cpp
+    start_bench.cpp
     zoom_probe.cpp
     md4c_spaces_probe.cpp
     ui_metrics_probe.cpp
@@ -318,6 +320,14 @@ add_test(NAME file-ops-only-through-guard
          COMMAND ${CMAKE_COMMAND}
                  "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_SOURCE_DIR}/tools;${CMAKE_CURRENT_SOURCE_DIR}"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/file_ops_check.cmake)
+
+# The program never thins journals on its own (the owner, 07.09.2026): the
+# only door is `zametti store thin`. The pass that used to run at start is
+# gone, and the guard keeps it from coming back.
+add_test(NAME thinning-only-by-hand
+         COMMAND ${CMAKE_COMMAND}
+                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app"
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/thin_check.cmake)
 
 # ПАДЕНИЙ НЕ БЫВАЕТ. НИКОГДА (правило владельца в CLAUDE.md).
 #

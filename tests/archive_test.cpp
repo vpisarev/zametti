@@ -347,7 +347,7 @@ void checkUnfoldStubs() {
     // СТАБ, СОХРАНЁННЫЙ ПОВЕРХ СЕБЯ. Так выглядит заметка, которую после
     // архивации ещё раз записали прежней сборкой: в журнале за стабом лежит
     // настоящее тело, но ГОЛОВА журнала — стаб. По голове тело не нашлось бы.
-    const QString twiceSaved = QStringLiteral("01ff0000twice0");
+    const QString twiceSaved = QStringLiteral("01ff0000tw1ce0");
     const QByteArray realBody(kBody);
     ZT_TRUE("тело записано",
             zametti::ZStorage(g_root).appendToJournal(
@@ -465,6 +465,36 @@ void checkTrashMigration() {
     ZT_EQ("и ничего не переписывает", after, read(QStringLiteral("0000000000000v")));
 }
 
+// THE STEPS OF migrate() COMPOSE THROUGH THE CATALOGUE (07.09.2026): a note
+// leaving the old trash for a parent that no longer exists is an orphan for
+// the lost & found step that follows — and that step must see the rewritten
+// header, not the one the catalogue had before the move.
+void checkTrashThenLostFound() {
+    freshStore();
+    write(QStringLiteral("0000000000000t"),
+          "<!-- zametti\nrole: trash\ncreated: 2020-01-01T00:00:00+03:00\n-->\n\n# Корзина\n");
+    write(QStringLiteral("0000000000000v"),
+          "<!-- zametti\nparent: 0000000000000t\ntrash-parent: 00000000000zzz\n"
+          "created: 2020-01-01T00:00:00+03:00\nmodified: 2020-02-02T00:00:00+03:00\n-->\n\n"
+          "# Выброшенная без дома\n\nТело цело.\n");
+    const QStringList said = zametti::ZStorage(g_root).migrate();
+    ZT_TRUE("миграция назвала корзину: " + said.join(QLatin1Char('|')).toStdString(),
+            said.join(QLatin1Char('|')).contains(QStringLiteral("old trash migrated")));
+    ZT_TRUE("и бюро находок", said.join(QLatin1Char('|')).contains(QStringLiteral("lost & found: 1")));
+    const std::string moved = read(QStringLiteral("0000000000000v"));
+    ZT_TRUE("пометка архивности стоит", moved.find("archived: yes") != std::string::npos);
+    // The bureau is the note with role: lost; the orphan's parent points at it.
+    QString bureau;
+    for (const QFileInfo& info : QDir(g_root).entryInfoList({QStringLiteral("*.md")}, QDir::Files))
+        if (read(info.completeBaseName()).find("role: lost") != std::string::npos)
+            bureau = info.completeBaseName();
+    ZT_TRUE("бюро заведено", !bureau.isEmpty());
+    ZT_TRUE("сирота прописана в бюро",
+            moved.find("parent: " + bureau.toStdString() + "\n") != std::string::npos);
+    ZT_TRUE("прежний адрес запомнен", moved.find("00000000000zzz") != std::string::npos);
+    ZT_TRUE("тело осталось на месте", moved.find("Тело цело.") != std::string::npos);
+}
+
 // Старый вид пометки читается как архивный и без миграции: хранилище могло
 // приехать с чужой машины или от прежней сборки.
 void checkOldRoleIsRead() {
@@ -572,6 +602,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkForget();
     checkResurrect();
     checkTrashMigration();
+    checkTrashThenLostFound();
     checkOldRoleIsRead();
     checkLostFound();
     checkCleanStoreIsNotTouched();

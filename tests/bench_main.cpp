@@ -50,6 +50,7 @@ int ztCmykProbe(int argc, char** argv);
 int ztDisplayScaleProbe(int argc, char** argv);
 int ztMatrixProbe(int argc, char** argv);
 int ztOpenProbe(int argc, char** argv);
+int ztStartBench(int argc, char** argv);
 int ztZoomProbe(int argc, char** argv);
 int ztMdSpacesProbe(int argc, char** argv);
 int ztUiMetricsProbe(int argc, char** argv);
@@ -85,6 +86,7 @@ const Bench kBenches[] = {
     {"display-scale", ztDisplayScaleProbe},
     {"matrix", ztMatrixProbe},
     {"open", ztOpenProbe},
+    {"start", ztStartBench},
     {"zoom", ztZoomProbe},
     {"md-spaces", ztMdSpacesProbe},
     {"ui-metrics", ztUiMetricsProbe},

@@ -22,6 +22,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QMap>
 #include <QTemporaryDir>
 
 #include <atomic>
@@ -568,11 +569,63 @@ void checkConcurrency(const QString& dir) {
 
 }  // namespace
 
+// The corpus-wide pass behind `zametti store thin`: a dry run changes no
+// byte and only counts; the real run keeps exactly survivors(now) in every
+// journal; a second run is byte-identical. Its own directory: the pass walks
+// all of history/, and the other checks leave journals of their own around.
+void checkThinAll() {
+    QTemporaryDir home;
+    QDir().mkpath(QDir(home.path()).filePath(QStringLiteral("history")));
+    ZStorage h(home.path());
+    const QStringList ids{QStringLiteral("thin-a"), QStringLiteral("thin-b"), QStringLiteral("thin-c")};
+    for (const QString& id : ids)
+        for (int i = 0; i < 12; ++i)
+            append(h, id, ZJournal::Kind::Save, kNow - 300 * kDay + i * kMinute, noteBody(i + 1, "т"));
+
+    const auto bytesOf = [&](const QString& id) {
+        QFile f(h.journalPath(id));
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    };
+    QMap<QString, QByteArray> before;
+    QMap<QString, int> expect;
+    for (const QString& id : ids) {
+        before.insert(id, bytesOf(id));
+        ZJournal read;
+        QString error;
+        ZT_TRUE("журнал читается", h.readJournal(id, &read, &error));
+        expect.insert(id, read.survivors(kNow).size());
+        ZT_TRUE("прореживанию есть что выбросить", expect[id] < read.size());
+    }
+
+    const ZJournal::ThinReport dry = h.thinAllJournals(kNow, /*dryRun=*/true);
+    ZT_EQ("сухой прогон: журналов", num(3), num(dry.journals));
+    ZT_EQ("сухой прогон: записей до", num(36), num(dry.recordsBefore));
+    ZT_EQ("сухой прогон: записей после — ровно выжившие", num(expect[ids[0]] + expect[ids[1]] + expect[ids[2]]),
+          num(dry.recordsAfter));
+    for (const QString& id : ids) ZT_TRUE("сухой прогон не тронул байт", bytesOf(id) == before[id]);
+
+    const ZJournal::ThinReport real = h.thinAllJournals(kNow, /*dryRun=*/false);
+    ZT_TRUE("прогон без бед", real.problems.isEmpty());
+    ZT_EQ("после прогона записей столько, сколько обещано", num(dry.recordsAfter), num(real.recordsAfter));
+    QMap<QString, QByteArray> after;
+    for (const QString& id : ids) {
+        ZJournal read;
+        QString error;
+        ZT_TRUE("журнал читается после прореживания", h.readJournal(id, &read, &error));
+        ZT_EQ("выжившие в " + id.toStdString(), num(expect[id]), num(read.size()));
+        after.insert(id, bytesOf(id));
+        ZT_TRUE("файл стал короче", after[id].size() < before[id].size());
+    }
+    h.thinAllJournals(kNow, false);
+    for (const QString& id : ids) ZT_TRUE("повтор — байт в байт", bytesOf(id) == after[id]);
+}
+
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
     QTemporaryDir dir;
     QDir().mkpath(QDir(dir.path()).filePath(QStringLiteral("history")));
+    checkThinAll();
 
     checkRoundTrip(dir.path());
     checkRevisionsSurviveThinning(dir.path());

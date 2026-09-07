@@ -19,6 +19,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QMap>
 #include <QTemporaryDir>
 
 #include <string>
@@ -523,6 +524,64 @@ void checkJournalsRenameToZm() {
     }
 }
 
+// OPENING A STORE NEVER REWRITES A JOURNAL (the owner, 07.09.2026): the
+// startup sequence of the window — reload, lock, migrate, the root note — is
+// run over journals old enough for thinning to have something to drop, and
+// every byte of history/ stays. The pass that used to thin at start is
+// guarded out of main.cpp by tests/thin_check.cmake; this pins the store.
+void checkOpeningLeavesHistoryAlone() {
+    QTemporaryDir home;
+    QString error;
+    QStringList ids;
+    {
+        ZStorage s(home.path());
+        ZT_TRUE("хранилище завелось", s.init(&error));
+        for (int k = 0; k < 2; ++k) {
+            const QString id = s.createNote(QString(), false, &error);
+            ZT_TRUE("заметка завелась", !id.isEmpty());
+            ids << id;
+            // Twelve records, a year old and a minute apart: the thinning
+            // scale keeps one per month of these.
+            for (int i = 0; i < 12; ++i)
+                ZT_TRUE("запись легла",
+                        s.appendToJournal(
+                            id,
+                            zametti::ZJournal::NewRecord::save(
+                                QByteArray("<!-- zametti\nversion: 1\n-->\n# ") + QByteArray::number(i) + "\n",
+                                zametti::ZJournal::Stamp::at(1'660'000'000'000LL + i * 60'000LL)),
+                            &error));
+        }
+    }
+    const auto historyBytes = [&] {
+        QMap<QString, QByteArray> out;
+        const QDir history(home.path() + QStringLiteral("/history"));
+        for (const QString& name : history.entryList({QStringLiteral("*.zm")}, QDir::Files)) {
+            QFile f(history.filePath(name));
+            if (f.open(QIODevice::ReadOnly)) out.insert(name, f.readAll());
+        }
+        return out;
+    };
+    const QMap<QString, QByteArray> before = historyBytes();
+    ZT_EQ("журналов два", "2", std::to_string(before.size()));
+    {
+        // The window's start, verb by verb (app/main.cpp attachStore).
+        ZStorage s(home.path());
+        s.reload();
+        ZT_TRUE("замок взят", s.lock().locked);
+        s.migrate();
+        ZT_TRUE("корневая на месте", !s.ensureRootNote(&error).isEmpty());
+        s.rootId();
+        zametti::ZJournal read;
+        ZT_TRUE("журнал читается и полон", s.readJournal(ids.first(), &read, &error) && read.size() == 12);
+    }
+    // The root note made by ensureRootNote brings a journal of its own; the
+    // journals that were there must stay byte for byte.
+    const QMap<QString, QByteArray> after = historyBytes();
+    for (auto it = before.constBegin(); it != before.constEnd(); ++it)
+        ZT_TRUE("после открытия журнал байт в байт прежний: " + it.key().toStdString(),
+                after.value(it.key()) == it.value());
+}
+
 }  // namespace
 
 TEST(ZStorage, All) {
@@ -533,5 +592,6 @@ TEST(ZStorage, All) {
     checkSharedAttachmentSurvives();
     checkSignals();
     checkJournalsRenameToZm();
+    checkOpeningLeavesHistoryAlone();
     EXPECT_EQ(0, zt::freshFailures());
 }
