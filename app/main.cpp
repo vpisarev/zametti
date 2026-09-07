@@ -27,6 +27,7 @@
 #include "markdown_edit_view.h"
 #include "note_list.h"
 #include "note_panels.h"
+#include "note_commands.h"
 #include "panel_memory.h"
 #include "note_tree.h"
 #include "search.h"
@@ -660,6 +661,9 @@ int main(int argc, char** argv) {
     // вместе с режимом «открой одну заметку» он и ушёл.
     zametti::NotePanels panels(zapp.openStorage(absRoot));
     zametti::NoteTreeModel& model = panels.model();
+    // Window commands that need both the panels and the editor (deletion,
+    // archiving); a suite calls the same object the window calls.
+    zametti::NoteCommands noteCommands(panels, editor);
     // Синхронизация: контроллер живёт при окне, движок бегает в рабочем
     // потоке; каталог заметок обновляют сторожа хранилища и external-путь
     // редактора, поэтому окну от синка ничего не нужно, кроме статуса.
@@ -1696,81 +1700,14 @@ int main(int argc, char** argv) {
         return true;
     };
 
+    // The flow itself lives in NoteCommands (app/note_commands.h): the
+    // question is non-blocking and its continuation must not touch this frame.
+    // The read-only refusal stays here — it shares the status bar with
+    // createNote and importNotes.
     const auto deleteNote = [&](const QString& noteId) {
         if (!model.isStore() || noteId.isEmpty()) return;
         if (refuseLocked(noteId)) return;
-        // Сама строка «Архив» ничему не подлежит: файла за ней нет. Так же и
-        // виртуальные папки: hasNote отвечает про каталог, а их в нём нет.
-        if (!model.hasNote(noteId)) return;
-        const QString file = model.pathOfId(noteId);
-        const bool wasOpen = file == editor.filePath();
-
-        // Сосед по папке — будущий выделенный.
-        const QString fallback = model.pathOfId(model.neighbourOf(noteId));
-
-        const auto settleAfter = [&] {
-            panels.selectNote(fallback);
-            if (!wasOpen) return;
-            QString open = fallback;
-            if (open.isEmpty()) open = model.pathOfId(model.firstNoteId());
-            if (!open.isEmpty()) editor.openFile(open);
-        };
-
-        // Пустое — в корзину ОС без разговоров. Пустая папка — без детей;
-        // пустая заметка — без содержательного текста: открытая меряется по
-        // документу (набранное могло ещё не сохраниться), закрытая — по
-        // хранилищу.
-        const bool empty = wasOpen && !model.isFolderId(noteId)
-                               ? editor.toPlainText().trimmed().isEmpty()
-                               : zapp.storage()->isEmptyNote(noteId);
-        if (empty || model.inArchiveId(noteId)) {
-            // Единственный вопрос про удаление в программе (исключение
-            // владельца из правила «без диалогов»); через ту же дверь и в том
-            // же облике, что вопрос истории. Ответ приходит сигналом, и само
-            // удаление — в нём.
-            const auto deleteForGood = [&, noteId, file, wasOpen] {
-                // Если заметка открыта, сначала сохраняем: иначе последним
-                // слепком в истории осталось бы состояние до последних правок,
-                // а человек удаляет то, что видит. Само удаление — дело
-                // хранилища: надгробие или журнал вместе с архивной, картинки
-                // следом.
-                if (wasOpen) editor.save(false);
-                QString deleteError;
-                if (!zapp.storage()->remove(
-                        noteId, zametti::deletedImageLimitsFrom(zametti::settings().images()),
-                        &deleteError)) {
-                    zapp.warn(&window, deleteError);
-                    return;
-                }
-                settleAfter();
-            };
-            if (empty) {
-                deleteForGood();
-                return;
-            }
-            zapp.ask(&window, QStringLiteral("Delete \"%1\" permanently?").arg(model.titleOfId(noteId)),
-                     [deleteForGood](bool yes) {
-                         if (yes) deleteForGood();
-                     });
-            return;
-        }
-
-        // АРХИВАЦИЯ. Никакого переноса: `parent` у заметки остаётся прежним, в
-        // шапке появляется пометка, а тело уезжает в журнал — файл становится
-        // стабом (store/archive.h). Открытую заметку сперва сохраняем: человек
-        // убирает то, что видит, и последние правки обязаны попасть в историю
-        // раньше среза.
-        if (wasOpen) editor.save(false);
-        // Папка уезжает вместе с содержимым — это знает хранилище.
-        QStringList failed;
-        zapp.storage()->archive(noteId, zametti::NoteEditor::historyRules(), &failed);
-        if (!failed.isEmpty())
-            zapp.warn(&window, QStringLiteral("Not everything could be archived:\n%1")
-                                   .arg(failed.join(QLatin1Char('\n'))));
-        // Открытую заметку перечитываем с диска: на её месте теперь стаб, и
-        // редактор обязан показать то, что в файле, а не то, что помнит.
-        if (wasOpen) editor.openFile(file);
-        settleAfter();
+        noteCommands.deleteNote(noteId);
     };
 
     // «Вернуть из архива»: пометка снимается, тело приезжает из головы журнала,

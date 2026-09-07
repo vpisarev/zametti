@@ -92,6 +92,8 @@ add_library(zametti-ui STATIC
     note_list.cpp
     note_panels.h
     note_panels.cpp
+    note_commands.h
+    note_commands.cpp
     panel_memory.h
     panel_memory.cpp
     search_results.h
