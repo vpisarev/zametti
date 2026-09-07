@@ -12,6 +12,8 @@
 #include "book_page.h"
 #include "book_pages.h"
 #include "doc_model.h"
+#include "document_builder.h"
+#include "settings.h"
 #include "settings_hook.h"
 #include "resources.h"
 #include "zbook_view.h"
@@ -195,6 +197,17 @@ int ztPagesProbe(int argc, char** argv) {
     book.showNote(note);
     QTest::qWait(200);
     for (int i = 0; i < 400 && book.pageCount() < 0; ++i) QTest::qWait(25);
+    {
+        BookPage& p0 = book.page(0);
+        const zametti::ZDocStyle& look = zametti::styleOf(*p0.document());
+        std::printf("scales: zoom %.3f displayScale %.3f plateScale %.3f | caption %.2f pt (family %s) -> label %.2f pt; "
+                    "base %.2f pt, code step %d -> code %.2f pt; strip %.0f px, icon %.0f px\n",
+                    book.zoom(), p0.displayScale(), p0.plateScale(), look.imageCaptionPoints(),
+                    look.imageCaptionFamily().toUtf8().constData(), look.captionFont(p0.plateScale()).pointSizeF(),
+                    p0.document()->defaultFont().pointSizeF(), look.codeStep(),
+                    p0.document()->defaultFont().pointSizeF() * zametti::fontStepFactor(look.codeStep()),
+                    zametti::codePlate(look).strip, zametti::codePlate(look).iconSide);
+    }
     std::printf("%s: %d pages at %dx%d, page height %.0f\n", QFileInfo(path).fileName().toUtf8().constData(),
                 book.pageCount(), width, height, book.page(0).pageHeight());
 

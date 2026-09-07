@@ -146,6 +146,11 @@ const char* kInline = R"(# Типы
 |---|---|
 | `float` | `1.0f` |
 | `double` | `1.0` |
+
+```bash
+$ cd ~/myprojects   # enter some directory
+$ git clone https://github.com/vpisarev/ficus.git
+```
 )";
 
 Peek* open(Peek& editor, int width, int height, const QString& name) {

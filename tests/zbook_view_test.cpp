@@ -18,6 +18,8 @@
 #include "settings_hook.h"
 #include "test_util.h"
 #include "testdata.h"
+#include "document_builder.h"
+#include "resources.h"
 #include "zbook_view.h"
 #include "zstorage.h"
 
@@ -901,7 +903,37 @@ void checkTallPictureFitsPage() {
     ZT_TRUE("страница с картинкой не пустая: чернил " + std::to_string(share), share > 0.01);
 }
 
+// THE LANGUAGE LABEL AND THE COPY ICON FOLLOW THE CODE (the owner, 07.09.2026:
+// with the code a step under the prose they stood out huge in a book): the
+// label's x-height never exceeds the code's.
+void checkCodeLabelFollowsCode() {
+    zametti::loadEmbeddedFonts();   // x-heights of the embedded faces, not of a stand-in
+    const int stepWas = zametti::settings().reading().codeStep();
+    zametti::mutableSettingsForTests().reading().setCodeStep(-1);
+    Rig rig;
+    QString error;
+    const QString id = rig.storage->createNote(QString(), false, &error);
+    const QString path = rig.storage->pathOf(id);
+    writeFile(path, QStringLiteral("<!-- zametti\nrole: book\n-->\n\n# Code\n\nText.\n\n```bash\n$ ls\n```\n\nMore.\n"));
+    rig.storage->reload();
+    rig.open(path);
+    ZT_TRUE("книга открылась", rig.controller.active());
+    BookPage& page = rig.left();
+    const zametti::ZDocStyle& look = zametti::styleOf(*page.document());
+    QFont code = page.document()->defaultFont();
+    code.setPointSizeF(code.pointSizeF() * zametti::fontStepFactor(look.codeStep()));
+    code.setFamilies({look.codeFamily()});
+    const qreal codeX = QFontMetricsF(code).xHeight();
+    const qreal labelX = QFontMetricsF(look.captionFont(page.plateScale())).xHeight();
+    ZT_TRUE("подпись языка не выше строчных кода: " + std::to_string(labelX) + " против " + std::to_string(codeX),
+            labelX <= 0.95 * codeX + 0.01);
+    ZT_TRUE("а без ограничения была бы выше (иначе проверка пуста)",
+            QFontMetricsF(look.captionFont(1.0)).xHeight() > 0.95 * codeX);
+    zametti::mutableSettingsForTests().reading().setCodeStep(stepWas);
+}
+
 TEST(BookView, TallPicture) { checkTallPictureFitsPage(); }
+TEST(BookView, CodeLabel) { checkCodeLabelFollowsCode(); }
 
 TEST(BookView, ChapterPages) {
     checkChapterPages();
