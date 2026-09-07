@@ -231,6 +231,21 @@ public:
     void setTitle(const QString& title);
     // Первые строки после заголовка — для списка заметок.
     QString snippet(int limit = 200) const;
+    // What the catalogue knows about a note WITHOUT building it: the header,
+    // the title and the snippet, read off the parsed blocks — no QTextDocument,
+    // no fonts, the same rule as title()/snippet() above. `truncated` says the
+    // bytes are a prefix of the file: the last block may be cut short and is
+    // left out. `complete` says more bytes could not change the answer — the
+    // title is found and the snippet has reached its limit. The catalogue reads
+    // a bounded prefix of every note (ZNote::Metadata::fromFile): a store of
+    // multi-megabyte books opens as fast as a store of short notes.
+    struct Summary {
+        NoteHeader header;
+        QString title;
+        QString snippet;
+        bool complete = false;
+    };
+    static Summary summarise(std::string_view bytes, bool truncated, int snippetChars);
     // Пуста ли заметка по существу: ни одного блока, кроме пустых строк.
     bool isEmpty() const;
 

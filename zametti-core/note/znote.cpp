@@ -29,6 +29,12 @@ constexpr char kCover[] = "cover";
 // Сколько знаков сниппета держим в метаданных: две-три строки списка при
 // любой разумной ширине панели.
 constexpr int kSnippetChars = 200;
+
+// A note without a body is still called something — the same word in the
+// editor and in the catalogue.
+QString titleOrUntitled(const QString& own) {
+    return own.isEmpty() ? QStringLiteral("Untitled") : own;
+}
 }  // namespace
 }  // namespace zametti
 
@@ -169,18 +175,47 @@ ZNote::Metadata ZNote::metadata() const {
     m.folder_ = isFolder() || isLost();
     m.root_ = isRoot();
     m.lostFound_ = isLost();
+    m.role_ = role();
     m.title_ = title();
     m.snippet_ = doc_.snippet(kSnippetChars);
     return m;
 }
 
-ZNote::Metadata ZNote::Metadata::fromFile(const QString& path) {
+ZNote::Metadata ZNote::Metadata::fromFile(const QString& path, qint64* bytesRead) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return {};
-    const QByteArray bytes = f.readAll();
-    ZNote note(path, bytes, Digest{}, nullptr);
-    if (!note.load(std::string_view(bytes.constData(), size_t(bytes.size())))) return {};
+    QByteArray bytes;
+    qint64 want = kPrefixBytes;
+    ZDocument::Summary summary;
+    for (;;) {
+        bytes += f.read(want - bytes.size());
+        const bool whole = f.atEnd();
+        qsizetype cut = bytes.size();
+        if (!whole) {
+            // Never split a line, and never a UTF-8 sequence: the cut goes back
+            // to the last line break, or — one giant line — off the trailing
+            // continuation bytes.
+            const qsizetype eol = bytes.lastIndexOf('\n');
+            if (eol > 0) {
+                cut = eol + 1;
+            } else {
+                while (cut > 0 && (uchar(bytes.at(cut - 1)) & 0xC0) == 0x80) --cut;
+            }
+        }
+        summary = ZDocument::summarise(std::string_view(bytes.constData(), size_t(cut)), !whole,
+                                       kSnippetChars);
+        if (whole || summary.complete) break;
+        want *= 2;
+    }
+    if (bytesRead != nullptr) *bytesRead = bytes.size();
+
+    // The header's fields — through the same map as metadata(): one place
+    // knows which key means what.
+    ZNote note(path, QByteArray(), Digest{}, nullptr);
+    note.setHeader(std::move(summary.header));
     Metadata m = note.metadata();
+    m.title_ = titleOrUntitled(summary.title);
+    m.snippet_ = summary.snippet;
     // Времени в шапке нет — берём у файла (а созданию — время правки: лучше,
     // чем «в начале времён»).
     if (m.modified_.isEmpty())
@@ -229,10 +264,7 @@ QString ZNote::headerValue(const QString& key) const {
 void ZNote::setHeaderValue(const QString& key, const QString& value) {
     header_.set(key.toStdString(), value.toStdString());
 }
-QString ZNote::title() const {
-    const QString own = doc_.title();
-    return own.isEmpty() ? QStringLiteral("Untitled") : own;
-}
+QString ZNote::title() const { return titleOrUntitled(doc_.title()); }
 
 ZDocument ZNote::replaceDoc(ZDocument fresh) {
     ZDocument previous = doc_;

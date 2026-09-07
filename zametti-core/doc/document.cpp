@@ -135,19 +135,69 @@ QString firstLineOf(const QString& text) {
 
 }  // namespace
 
-// ЗАГОЛОВОК — ПЕРВАЯ СТРОКА ПЕРВОГО СОДЕРЖАТЕЛЬНОГО БЛОКА, и обход обрывается
-// на нём. Цена вопроса названа в document_pieces.h: список заметок спрашивает
-// заголовок у каждой, и платить за него размером самой большой нельзя.
-QString ZDocument::title() const {
-    QString out;
-    walkPieces(d_->text, [&](const Piece& piece) {
+// THE GIST OF A NOTE — the title and the snippet — is one rule, written once:
+// the live document walks its pieces through it (title(), snippet()), and the
+// catalogue feeds the parsed blocks of a file prefix (summarise()). Two
+// readers of the same rule would drift apart silently, and the list would
+// show one title while the editor shows another.
+//
+// The title is the first line of the first meaningful block, and the walk
+// stops there when nothing else is asked: the note list asks every note for
+// its title, and paying for that with the size of the largest note is not an
+// option (document_pieces.h). The snippet is the meaningful text after the
+// title, up to the limit.
+namespace {
+
+class Gist {
+public:
+    Gist(int snippetLimit, bool wantSnippet) : limit_(snippetLimit), wantSnippet_(wantSnippet) {}
+
+    // Feeds one piece; false — nothing more is needed.
+    bool feed(const Piece& piece) {
         if (!isMeaningful(piece)) return true;
         const QString text = piece.text.simplified();
         if (text.isEmpty()) return true;
-        out = firstLineOf(text).left(64);
-        return false;
-    });
-    return out;
+        if (!haveTitle_) {
+            haveTitle_ = true;
+            title_ = firstLineOf(text).left(64);
+            return wantSnippet_;
+        }
+        if (!snippet_.isEmpty()) snippet_ += QLatin1Char(' ');
+        snippet_ += text;
+        // Strictly beyond the limit, not at it: the pieces of a live document
+        // and the blocks of a parsed file cut the same text differently (a
+        // list is one piece there and an item per block here), and only a
+        // rule that does not depend on the cut gives both walks one answer.
+        // The ellipsis then means what it says — there was more.
+        if (snippet_.size() > limit_) {
+            full_ = true;
+            return false;
+        }
+        return true;
+    }
+    const QString& title() const { return title_; }
+    QString snippet() const {
+        if (snippet_.size() > limit_) return snippet_.left(limit_ - 1) + QChar(0x2026);
+        return snippet_;
+    }
+    // More pieces could not change the answer.
+    bool complete() const { return haveTitle_ && (!wantSnippet_ || full_); }
+
+private:
+    int limit_;
+    bool wantSnippet_;
+    bool haveTitle_ = false;
+    bool full_ = false;
+    QString title_;
+    QString snippet_;
+};
+
+}  // namespace
+
+QString ZDocument::title() const {
+    Gist gist(0, /*wantSnippet=*/false);
+    walkPieces(d_->text, [&](const Piece& piece) { return gist.feed(piece); });
+    return gist.title();
 }
 
 void ZDocument::setTitle(const QString& title) {
@@ -193,21 +243,29 @@ void ZDocument::setTitle(const QString& title) {
 }
 
 QString ZDocument::snippet(int limit) const {
-    QString out;
-    bool haveTitle = false;
-    walkPieces(d_->text, [&](const Piece& piece) {
-        if (!isMeaningful(piece)) return true;
-        const QString text = piece.text.simplified();
-        if (text.isEmpty()) return true;
-        if (!haveTitle) {
-            haveTitle = true;
-            return true;
-        }
-        if (!out.isEmpty()) out += QLatin1Char(' ');
-        out += text;
-        return out.size() < limit;
-    });
-    if (out.size() > limit) out = out.left(limit - 1) + QChar(0x2026);
+    Gist gist(limit, /*wantSnippet=*/true);
+    walkPieces(d_->text, [&](const Piece& piece) { return gist.feed(piece); });
+    return gist.snippet();
+}
+
+ZDocument::Summary ZDocument::summarise(std::string_view bytes, bool truncated, int snippetChars) {
+    Summary out;
+    std::vector<Piece> blocks;
+    // The same door as loadMarkdown: bytes become text once, spaces are
+    // normalised, md4c cuts the blocks and lifts the header.
+    parsePieces(normaliseSpaces(QString::fromUtf8(bytes.data(), qsizetype(bytes.size()))), blocks,
+                out.header);
+    // A prefix ends mid-block more often than not: the last block may be cut
+    // short — a paragraph without its tail, a fence without its close, a table
+    // without its rows — and is left out. Whatever precedes it was closed by
+    // its own bytes, before the cut.
+    if (truncated && !blocks.empty()) blocks.pop_back();
+    Gist gist(snippetChars, /*wantSnippet=*/true);
+    for (const Piece& piece : blocks)
+        if (!gist.feed(piece)) break;
+    out.title = gist.title();
+    out.snippet = gist.snippet();
+    out.complete = !truncated || gist.complete();
     return out;
 }
 

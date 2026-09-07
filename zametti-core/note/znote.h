@@ -158,8 +158,22 @@ public:
         bool root() const { return root_; }
         bool valid() const { return !id_.isEmpty(); }
 
-        // Прочитать с диска: шапка и первый блок. Ложь valid() — не читается.
-        static Metadata fromFile(const QString& path);
+        // The header's `role` as written (folder, root, lost, book, trash…):
+        // the migrations look for a role the flags above do not name.
+        const QString& role() const { return role_; }
+
+        // READ FROM DISK WITHOUT BUILDING THE NOTE: the header and the first
+        // blocks only. The catalogue reads kPrefixBytes first and doubles the
+        // prefix while the title and the snippet do not fit (a long comment
+        // before the title, a header longer than the prefix); a note is never
+        // read whole for the sake of its title. `bytesRead` (if asked) says
+        // how much was read — the O(1)-per-note promise of the catalogue is
+        // measured by it. False valid() — not readable.
+        static Metadata fromFile(const QString& path, qint64* bytesRead = nullptr);
+        // The first read of the catalogue, per note (the owner's threshold,
+        // 07.09.2026): a book's header of ~500 bytes, a title and 200 characters
+        // of Cyrillic fit with room for markdown around them.
+        static constexpr qint64 kPrefixBytes = 4 * 1024;
 
     protected:
         friend class ZNote;
@@ -178,6 +192,7 @@ public:
         QString author_;
         QString year_;
         QString cover_;
+        QString role_;
         bool folder_ = false;
         bool lostFound_ = false;
         bool root_ = false;
