@@ -605,8 +605,12 @@ A logarithmic scale from the current moment:
 | beyond | one per month, forever |
 
 **The last record is never thinned.** Thinning is idempotent: a repeated run
-at the same "now" does not change a byte. It runs in the background at
-program start and on the command `zametti store thin`.
+at the same "now" does not change a byte. It runs only on the command
+`zametti store thin` (see `--dry-run` first); opening a store never rewrites a
+journal, and the program never thins on its own (the owner, 07.09.2026): a
+thinning drops records without voiding them by address, and under sync such
+records come back by union. Lazy thinning of the note being opened returns
+once records can be voided.
 
 ---
 

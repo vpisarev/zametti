@@ -679,15 +679,18 @@ int StoreCli::cmdResurrect() {
     return 0;
 }
 
-// Прореживание журналов. Отдельной командой, а не только фоном при старте:
-// владелец должен уметь прогнать его руками и увидеть, что именно уйдёт.
+// Thinning of the journals — THE ONLY DOOR to it (the owner, 07.09.2026):
+// the program never thins at start, and a person runs this by hand and sees
+// what exactly goes away (--dry-run first). Lazy thinning of the note being
+// opened returns once records can be voided by address, so that it survives
+// sync.
 int StoreCli::cmdThin() {
     if (root_.isEmpty()) return usage();
     // Межпроцессный замок: пока открыта программа, прореживание руками не
     // запускается. Внутрипроцессный замок журнала от чужого процесса не
     // бережёт, а ставить файловый на каждую запись — 4.4 мс на ровном месте.
     ZStorage storage(root_);
-    if (!takeLock(storage, " Thinning runs in the background at app startup.")) return 1;
+    if (!takeLock(storage, " Close the program first.")) return 1;
     const ZJournal::ThinReport report =
         storage.thinAllJournals(QDateTime::currentMSecsSinceEpoch(), dryRun_);
     for (const QString& name : report.trimmed)

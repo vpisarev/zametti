@@ -76,7 +76,6 @@
 #include <QDesktopServices>
 #include <QDateTime>
 #include <QSysInfo>
-#include <QThreadPool>
 #include <QUrl>
 #include <QPushButton>
 #include <QShortcut>
@@ -336,7 +335,31 @@ QStringList commandLineArgs(int argc, char** argv) {
 
 }  // namespace
 
+namespace {
+// ZAMETTI_TRACE_START=1 — the phases of a start, in microseconds, to stderr.
+// What a store of N notes costs at start is measured, not reasoned about
+// (CLAUDE.md, O(1)): the catalogue scan, the migrations, the tree, the first
+// note. Silent without the variable.
+struct StartTrace {
+    QElapsedTimer clock;
+    qint64 last = 0;
+    bool on = false;
+    StartTrace() {
+        clock.start();
+        on = qEnvironmentVariableIsSet("ZAMETTI_TRACE_START");
+    }
+    void mark(const char* phase) {
+        if (!on) return;
+        const qint64 now = clock.nsecsElapsed() / 1000;
+        std::fprintf(stderr, "start %-12s +%9lld us   total %9lld us\n", phase,
+                     (long long)(now - last), (long long)now);
+        last = now;
+    }
+};
+}  // namespace
+
 int main(int argc, char** argv) {
+    StartTrace startTrace;
 #ifdef Q_OS_WIN
     attachParentConsole();
 #endif
@@ -513,6 +536,7 @@ int main(int argc, char** argv) {
 #endif
 
     QApplication app(argc, argv);
+    startTrace.mark("qapp");
 
     if (check) {
         if (checkFile.isEmpty()) {
@@ -659,7 +683,9 @@ int main(int argc, char** argv) {
     // Корень известен всегда: без него мы сюда не доходим. Прежде здесь стоял
     // NoteTreeModel::rootFor(), выводивший корень подъёмом от открытой заметки, —
     // вместе с режимом «открой одну заметку» он и ушёл.
+    startTrace.mark("settings");
     zametti::NotePanels panels(zapp.openStorage(absRoot));
+    startTrace.mark("panels");
     zametti::NoteTreeModel& model = panels.model();
     // Window commands that need both the panels and the editor (deletion,
     // archiving); a suite calls the same object the window calls.
@@ -2809,7 +2835,9 @@ int main(int argc, char** argv) {
             window.setWindowTitle(QStringLiteral("zametti"));
             return true;
         }
+        startTrace.mark("window");
         auto storage = zapp.openStorage(root);
+        startTrace.mark("openStorage");
         // --unlock снимает ЧУЖОЙ забытый замок — и только с того хранилища,
         // которое человек назвал ключом, то есть ровно один раз, при первом
         // прицеплении. Дальше по кнопке он не действует: человек просил снять
@@ -2898,13 +2926,17 @@ int main(int argc, char** argv) {
         // заметка заводится, если её нет (третье санкционированное исключение
         // из «загрузка не пишет»: без корня у хранилища нет ни имени, ни
         // порядка «всех заметок», и спрашивать тут не о чем).
+        startTrace.mark("lock");
         for (const QString& line : storage->migrate())
             std::fprintf(stderr, "%s\n", line.toUtf8().constData());
+        startTrace.mark("migrate");
         QString rootError;
         if (storage->ensureRootNote(&rootError).isEmpty())
             std::fprintf(stderr, "no root note: %s\n", rootError.toUtf8().constData());
+        startTrace.mark("rootNote");
 
         panels.setStorage(storage);
+        startTrace.mark("tree");
         editor.setStorage(storage);
         cloudSync.setStorage(storage);
 
@@ -2952,11 +2984,13 @@ int main(int argc, char** argv) {
         }
         if (!show.isEmpty() && !editor.openFile(show))
             std::fprintf(stderr, "unreadable: %s\n", show.toUtf8().constData());
+        startTrace.mark("openFile");
 
         // Курсор дерева — на папку открытой заметки: от него зависит СОСТАВ
         // средней колонки, и без него список остаётся пустым при полном
         // хранилище (видно глазами на первом же переключении).
         panels.showNote(editor.filePath(), /*primary=*/true);
+        startTrace.mark("showNote");
         applyStartWidths();
         if (zametti::settings().store().watchStore()) storage->setWatching(true);
         // Строка списка хранилищ устройства — освежить фактом: имя и облако
@@ -3351,31 +3385,12 @@ int main(int argc, char** argv) {
     if (zametti::settings().sync().onStart() && cloudSync.configured())
         QTimer::singleShot(0, &window, [&] { cloudSync.startFull(false); });
 
-    // Прореживание журналов — фоном и один раз за запуск. В отдельном потоке
-    // потому, что полный проход по корпусу владельца стоит 1.6 секунды, а
-    // держать окно неподвижным столько времени ради уборки истории незачем.
-    //
-    // Запирать журналы не нужно: thin перед подменой файла сверяет его размер
-    // и время правки с теми, что видел на чтении, и молча отступает, если под
-    // руками дописали запись. Поэтому поток не знает ни про окно, ни про
-    // открытую заметку — он трогает только файлы в history/.
-    if (model.isStore()) {
-        const QString storePath = model.nodePath(QModelIndex());
-        QThreadPool::globalInstance()->start([storePath] {
-            zametti::ZStorage storage(storePath);
-            const zametti::ZJournal::ThinReport report =
-                storage.thinAllJournals(QDateTime::currentMSecsSinceEpoch());
-            for (const QString& name : report.trimmed)
-                std::fprintf(stderr, "journal %s: torn tail trimmed\n",
-                             name.toUtf8().constData());
-            for (const QString& line : report.problems)
-                std::fprintf(stderr, "journal not thinned: %s\n", line.toUtf8().constData());
-            if (report.recordsBefore != report.recordsAfter)
-                std::fprintf(stderr, "journals thinned: records %lld -> %lld, bytes %lld -> %lld\n",
-                             (long long)report.recordsBefore, (long long)report.recordsAfter,
-                             (long long)report.bytesBefore, (long long)report.bytesAfter);
-        });
-    }
+    // No housekeeping of history/ at start (the owner, 07.09.2026): the
+    // thinning pass that used to run here read every journal three times
+    // and dropped records without voiding them — under sync they came back.
+    // `zametti store thin` is the only door; opening a store never rewrites
+    // a journal (tests/thin_check.cmake guards it).
+    startTrace.mark("shown");
 
     // Показать текущую заметку в дереве надо после show(): раскрытие веток
     // требует уже созданных представлений. Раскрытые ветки восстанавливаем до
