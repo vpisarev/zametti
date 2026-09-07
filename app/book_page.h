@@ -104,6 +104,9 @@ public:
 protected:
     QFont zoomedBaseFont(qreal zoom) const override;
     int pagePadding() const override;
+    // A picture fits the page: the page's height less the air above and a
+    // few lines for the caption under it.
+    qreal tallestImageHeight() const override;
     const ZDocStyle& columnStyle() const override { return readingLook(); }
     bool blockBookmarked(int block) const override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;

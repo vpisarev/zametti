@@ -463,6 +463,11 @@ protected:
     // so nothing of it reaches the document): a book page keeps a little
     // above its first line; the editor has none.
     virtual int pagePadding() const { return 0; }
+    // THE TALLEST A PICTURE MAY BE, in document units: the editor allows a
+    // few screens (a degenerate ribbon must not blow the document up), a
+    // book page fits the picture within the page (books2: a picture taller
+    // than the page was the page's only line, and the page painted blank).
+    virtual qreal tallestImageHeight() const;
     // THE COLUMN IS THE VIEW'S, NOT THE DOCUMENT'S. A book is built with the
     // reading style (a narrow column), but the editor shows it as wide as any
     // note (owner's wish: the narrow column was a nuisance to look through),

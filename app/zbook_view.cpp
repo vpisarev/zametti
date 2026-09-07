@@ -185,7 +185,13 @@ void ZBookView::resetTable() {
     // Headings down to reading.pageBreakLevel turn the page, and the book's
     // chapters do in any case (a level deeper than that is rare, not wrong).
     table_.setBreakLevel(std::max(chapterLevel(), settings().reading().pageBreakLevel()));
-    table_.reset(pages_[0]->pageHeight());
+    // A picture is laid out no taller than the page (BookPage::
+    // tallestImageHeight): a page of another height needs the pictures laid
+    // out again, and a change of the width alone would not touch them.
+    const qreal height = pages_[0]->pageHeight();
+    if (!qFuzzyCompare(table_.pageHeight() + 1.0, height + 1.0) && pages_[0]->document() != nullptr)
+        pages_[0]->document()->markContentsDirty(0, pages_[0]->document()->characterCount());
+    table_.reset(height);
 }
 
 void ZBookView::showSpread(int first) {
