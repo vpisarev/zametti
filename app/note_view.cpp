@@ -182,7 +182,7 @@ QFont NoteView::baseFont() const {
 // налезла бы на следующий абзац.
 qreal NoteView::plateScale() const {
     const qreal wanted = displayScale();
-    if (wanted <= 1.0) return wanted;
+    if (wanted <= 1.0) return labelNoTallerThanCode(wanted);
     const CodePlate base = codePlate(docStyle(), 1.0);
     if (base.strip <= 0.0) return 1.0;
     const qreal langUnit = QFontMetricsF(docStyle().captionFont(1.0)).height();
@@ -197,6 +197,28 @@ qreal NoteView::plateScale() const {
         const qreal height = QFontMetricsF(docStyle().captionFont(scale)).height();
         if (height <= base.strip) break;
         scale = qMax(1.0, scale * base.strip / height);
+    }
+    return labelNoTallerThanCode(scale);
+}
+
+qreal NoteView::labelNoTallerThanCode(qreal scale) const {
+    // THE LABEL AND THE ICON ARE NEVER TALLER THAN THE CODE'S LOWERCASE (the
+    // owner, 07.09.2026: in a book with the code a step under the prose the
+    // language name and the copy icon stood out huge). The caption size is
+    // one knob for the strip; the code's own size is the ceiling — compared
+    // by x-height, the height a reader sees, not by the point size.
+    const ZDocStyle& look = docStyle();
+    QFont code = baseFont();
+    code.setPointSizeF(qMax(1.0, code.pointSizeF() * fontStepFactor(look.codeStep())));
+    if (!look.codeFamily().isEmpty()) code.setFamilies({QString(look.codeFamily())});
+    const qreal codeX = QFontMetricsF(code).xHeight();
+    if (codeX <= 0.0) return scale;
+    // x-heights do not scale linearly with the point size (hinting rounds
+    // them), so measure again after shrinking; a few rounds always land.
+    for (int round = 0; round < 4; ++round) {
+        const qreal labelX = QFontMetricsF(look.captionFont(scale)).xHeight();
+        if (labelX <= 0.95 * codeX) break;
+        scale = qMax(0.3, scale * 0.95 * codeX / labelX * 0.98);
     }
     return scale;
 }

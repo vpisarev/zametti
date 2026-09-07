@@ -173,6 +173,9 @@ public:
     // значок увеличиваются вместе с текстом ровно до тех пор, пока в неё
     // влезают. Единица — «как собрано», больше единицы — зум.
     qreal plateScale() const;
+    // The cap of plateScale: the caption font at this scale is no taller than
+    // the code's lowercase; a smaller scale when it is.
+    qreal labelNoTallerThanCode(qreal scale) const;
 
     // Документ собран заново или подменён — вернуть ему масштаб. Сборщик ставит
     // базовый кегль и о масштабе не знает вовсе (и знать не должен: абсолютных
