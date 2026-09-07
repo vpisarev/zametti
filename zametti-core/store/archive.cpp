@@ -209,10 +209,19 @@ bool ZStorage::restoreOne(const QString& id, QString* error) {
 
 int ZStorage::unfoldArchivedStubs(QStringList* leftAlone, QString* error) {
     int unfolded = 0;
-    for (const QFileInfo& info : QDir(root_).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
-        const QString id = info.completeBaseName();
+    // BY THE CATALOGUE, NOT BY THE DISK: only an archived note can be a stub,
+    // and the catalogue knows which notes are archived without reading a byte
+    // more. A start must not grow with the size of the store (CLAUDE.md, O(1)):
+    // before 07.09.2026 this read every note whole on every start.
+    if (!loaded_) reload();
+    QStringList candidates;
+    for (auto it = notes_.constBegin(); it != notes_.constEnd(); ++it)
+        if (it->archived()) candidates << it.key();
+    candidates.sort();   // the catalogue's order is not defined; the behaviour must be
+    for (const QString& id : candidates) {
+        const QString path = pathOf(id);
         std::string bytes;
-        if (!readFileBytes(info.absoluteFilePath(), bytes)) continue;
+        if (!readFileBytes(path, bytes)) continue;
         const auto [headFrom, headTo] = headerRange(bytes);
         if (headTo == 0) continue;   // не наша заметка
         const std::string_view header = std::string_view(bytes).substr(headFrom, headTo - headFrom);
@@ -258,7 +267,7 @@ int ZStorage::unfoldArchivedStubs(QStringList* leftAlone, QString* error) {
         out += snapshot.substr(snapTo);
         if (out == bytes) continue;   // и так уже развёрнута
         QString writeError;
-        if (!writeFileBytes(info.absoluteFilePath(), out, &writeError)) {
+        if (!writeFileBytes(path, out, &writeError)) {
             if (error != nullptr) *error = writeError;
             return -1;
         }
@@ -268,32 +277,33 @@ int ZStorage::unfoldArchivedStubs(QStringList* leftAlone, QString* error) {
 }
 
 int ZStorage::migrateTrashToArchive(QString* error) {
+    // The trash and its children are found in the catalogue: a store without
+    // an old trash costs this step nothing (before 07.09.2026 every note was
+    // read and built here, on every start). Only the children are read — they
+    // are the ones rewritten.
+    if (!loaded_) reload();
     QString trashId;
-    QHash<QString, QString> parents;   // id → parent, по всему хранилищу
-    QHash<QString, std::shared_ptr<ZNote>> docs;
-    for (const QFileInfo& info : QDir(root_).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
-        std::string bytes;
-        if (!readFileBytes(info.absoluteFilePath(), bytes)) continue;
-        auto doc = std::make_shared<ZNote>();
-        doc->load(bytes);
-        const QString id = info.completeBaseName();
-        parents.insert(id, doc->parentId());
-        if (doc->headerValue(QStringLiteral("role")) == QLatin1String("trash")) trashId = id;
-        docs.insert(id, doc);
-    }
+    for (auto it = notes_.constBegin(); it != notes_.constEnd(); ++it)
+        if (it->role() == QLatin1String("trash")) trashId = it.key();
     if (trashId.isEmpty()) return 0;
 
+    QStringList children;
+    for (auto it = notes_.constBegin(); it != notes_.constEnd(); ++it)
+        if (it.key() != trashId && it->parent() == trashId) children << it.key();
+    children.sort();
+
     int moved = 0;
-    for (auto it = docs.begin(); it != docs.end(); ++it) {
-        if (it.key() == trashId) continue;
-        if (parents.value(it.key()) != trashId) continue;
-        ZNote& doc = *it.value();
+    for (const QString& id : children) {
+        std::string bytes;
+        if (!readFileBytes(pathOf(id), bytes)) continue;
+        ZNote doc;
+        doc.load(bytes);
         // Пустое значение снимает ключ — и «домой в корень» выражается ровно им.
         doc.setParentId(doc.headerValue(QStringLiteral("trash-parent")));
         doc.setHeaderValue(QStringLiteral("trash-parent"), QString());
         doc.setHeaderValue(QStringLiteral("trash-path"), QString());
         doc.setArchived(true);
-        if (!writeFileBytes(pathOf(it.key()), doc.toMarkdown(), error)) return -1;
+        if (!writeFileBytes(pathOf(id), doc.toMarkdown(), error)) return -1;
         ++moved;
     }
 

@@ -512,13 +512,14 @@ QString ZStorage::titleOf(const QString& id) const {
 QStringList ZStorage::migrate() {
     QStringList notes;
     if (!store_) return notes;
-    bool changed = false;
+    // The steps read the catalogue, not the disk, and compose through it: a
+    // step that rewrote files reloads before the next one looks.
     QString why;
     const int moved = migrateTrashToArchive(&why);
     if (moved < 0) notes << QStringLiteral("old trash did not migrate to the archive: %1").arg(why);
     else if (moved > 0) {
         notes << QStringLiteral("old trash migrated to the archive: %1 notes").arg(moved);
-        changed = true;
+        reload();
     }
     // РАЗВЕРНУТЬ АРХИВНЫЕ СТАБЫ прежних сборок: тело из журнала — обратно в
     // файл. Пока они стабы, у них нет ни ссылок на вложения (по ним считается,
@@ -529,7 +530,7 @@ QStringList ZStorage::migrate() {
     if (unfolded < 0) notes << QStringLiteral("archived stubs did not unfold: %1").arg(why);
     else if (unfolded > 0) {
         notes << QStringLiteral("archived stubs unfolded: %1 notes").arg(unfolded);
-        changed = true;
+        reload();
     }
     notes << leftAlone;
 
@@ -538,7 +539,7 @@ QStringList ZStorage::migrate() {
     if (filed < 0) notes << QStringLiteral("lost & found not set up: %1").arg(why);
     else if (filed > 0) {
         notes << QStringLiteral("notes filed into lost & found: %1").arg(filed);
-        changed = true;
+        reload();
     }
 
     // ЖУРНАЛЫ ПЕРЕИМЕНОВЫВАЮТСЯ ЭНЕРГИЧНО (решение владельца, 28.08.2026):
@@ -573,7 +574,6 @@ QStringList ZStorage::migrate() {
         if (renamed > 0)
             notes << QStringLiteral("journals renamed to .zm: %1").arg(renamed);
     }
-    if (changed) reload();
     return notes;
 }
 
