@@ -30,7 +30,11 @@ namespace zametti {
 struct EmbeddedFace {
     const char* path;
     const char* family;
+    // The style of a static face, or the DEFAULT INSTANCE of a variable one
+    // (what nameID 2 of the file says); a variable file brings every weight
+    // of its axis as named instances — Regular … Bold, SemiBold among them.
     const char* style;
+    bool variable;
 };
 
 std::span<const EmbeddedFace> embeddedFaces();

@@ -104,6 +104,7 @@
         <file alias="zametti.txt">../LICENSE</file>
         <file alias="ibm-plex.txt">fonts/LICENSE</file>
         <file alias="source-serif-4.txt">fonts/LICENSE-SourceSerif4</file>
+        <file alias="source-code-pro.txt">fonts/LICENSE-SourceCodePro</file>
         <file alias="lucide.txt">icons/LICENSE</file>
         <file alias="md4c.txt">../3rdparty/md4c/LICENSE.md</file>
         <file alias="blake3.txt">../3rdparty/blake3/LICENSE</file>
@@ -122,24 +123,31 @@
         <file alias="microtex.txt">../3rdparty/microtex/upstream/LICENSE</file>
     </qresource>
 
-    <!-- IBM Plex, OFL 1.1. Почему именно эти двенадцать — resources/fonts/README.md. -->
+    <!-- The embedded faces, all OFL 1.1: IBM Plex Mono and Sans (static;
+         Mono with SemiBold for inline code), and the VARIABLE Source Serif 4
+         and Source Code Pro (07.09.2026: every weight from one file) — see
+         resources/fonts/README.md. -->
     <qresource prefix="/fonts">
         <file alias="IBMPlexMono-Regular.ttf">fonts/IBMPlexMono-Regular.ttf</file>
         <file alias="IBMPlexMono-Italic.ttf">fonts/IBMPlexMono-Italic.ttf</file>
+        <file alias="IBMPlexMono-SemiBold.ttf">fonts/IBMPlexMono-SemiBold.ttf</file>
+        <file alias="IBMPlexMono-SemiBoldItalic.ttf">fonts/IBMPlexMono-SemiBoldItalic.ttf</file>
         <file alias="IBMPlexMono-Bold.ttf">fonts/IBMPlexMono-Bold.ttf</file>
         <file alias="IBMPlexMono-BoldItalic.ttf">fonts/IBMPlexMono-BoldItalic.ttf</file>
         <file alias="IBMPlexSans-Regular.ttf">fonts/IBMPlexSans-Regular.ttf</file>
         <file alias="IBMPlexSans-Italic.ttf">fonts/IBMPlexSans-Italic.ttf</file>
+        <file alias="IBMPlexSans-SemiBold.ttf">fonts/IBMPlexSans-SemiBold.ttf</file>
+        <file alias="IBMPlexSans-SemiBoldItalic.ttf">fonts/IBMPlexSans-SemiBoldItalic.ttf</file>
         <file alias="IBMPlexSans-Bold.ttf">fonts/IBMPlexSans-Bold.ttf</file>
         <file alias="IBMPlexSans-BoldItalic.ttf">fonts/IBMPlexSans-BoldItalic.ttf</file>
         <file alias="IBMPlexSans_SemiCondensed-Regular.ttf">fonts/IBMPlexSans_SemiCondensed-Regular.ttf</file>
         <file alias="IBMPlexSans_SemiCondensed-Italic.ttf">fonts/IBMPlexSans_SemiCondensed-Italic.ttf</file>
         <file alias="IBMPlexSans_SemiCondensed-Bold.ttf">fonts/IBMPlexSans_SemiCondensed-Bold.ttf</file>
         <file alias="IBMPlexSans_SemiCondensed-BoldItalic.ttf">fonts/IBMPlexSans_SemiCondensed-BoldItalic.ttf</file>
-        <file alias="SourceSerif4-Regular.ttf">fonts/SourceSerif4-Regular.ttf</file>
-        <file alias="SourceSerif4-Italic.ttf">fonts/SourceSerif4-Italic.ttf</file>
-        <file alias="SourceSerif4-Bold.ttf">fonts/SourceSerif4-Bold.ttf</file>
-        <file alias="SourceSerif4-BoldItalic.ttf">fonts/SourceSerif4-BoldItalic.ttf</file>
+        <file alias="SourceSerif4-Variable.ttf">fonts/SourceSerif4-Variable.ttf</file>
+        <file alias="SourceSerif4-VariableItalic.ttf">fonts/SourceSerif4-VariableItalic.ttf</file>
+        <file alias="SourceCodePro-Variable.ttf">fonts/SourceCodePro-Variable.ttf</file>
+        <file alias="SourceCodePro-VariableItalic.ttf">fonts/SourceCodePro-VariableItalic.ttf</file>
     </qresource>
 
     <!-- Шрифты формул: математический Euler Math 0.75 (выбор владельца —

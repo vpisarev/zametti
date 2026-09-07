@@ -24,30 +24,48 @@ static void zamettiInitResources() {
 
 namespace {
 
-// Порядок — «сначала текст, потом панели», как в настройках: Mono — текст
-// заметки, Sans — пропорциональная замена ему по выбору человека (и опора
-// вывоза в PDF на машинах без шрифтов), Sans SemiCondensed — панели. Семейства
-// взяты не из головы: это то, что Qt читает из таблицы name файлов (nameID 1).
+// The order is "text first, then panels", as in the settings: Mono — the
+// note text and code blocks, Sans — the proportional alternative a person may
+// choose (and the footing of the PDF export on machines without fonts), Sans
+// SemiCondensed — the panels; Source Serif 4 — the book; Source Code Pro —
+// code blocks in a book. The families are not invented: they are what Qt
+// reads from the name table of the files (nameID 1, or nameID 16 for the
+// instances of a variable font).
+//
+// SEMIBOLD IS EMBEDDED FOR EVERY NOTE FONT (07.09.2026): inline code is set
+// in the text's family at weight 600. Plex Mono brings it as two more static
+// faces of one version; Serif and Code Pro are VARIABLE fonts — one upright
+// and one italic file each, and Qt (6.7+) registers every named instance of
+// the weight axis as a style. Measured before embedding (`zametti-bench
+// fonts`): weights 400/500/600/700 resolve exactly, italic comes from the
+// italic file, the ink grows with the weight; Source Code Pro's default
+// instance is ExtraLight, and weight 400 still resolves to Regular. The
+// variable Plex Mono was NOT taken: its family is "IBM Plex Mono Var", and a
+// QFont substitution from "IBM Plex Mono" does not reach it (measured: the
+// substituted request falls back to another font while QFontInfo reports
+// the asked-for name).
 constexpr zametti::EmbeddedFace kFaces[] = {
-    {":/fonts/IBMPlexMono-Regular.ttf", "IBM Plex Mono", "Regular"},
-    {":/fonts/IBMPlexMono-Italic.ttf", "IBM Plex Mono", "Italic"},
-    {":/fonts/IBMPlexMono-Bold.ttf", "IBM Plex Mono", "Bold"},
-    {":/fonts/IBMPlexMono-BoldItalic.ttf", "IBM Plex Mono", "Bold Italic"},
-    {":/fonts/IBMPlexSans-Regular.ttf", "IBM Plex Sans", "Regular"},
-    {":/fonts/IBMPlexSans-Italic.ttf", "IBM Plex Sans", "Italic"},
-    {":/fonts/IBMPlexSans-Bold.ttf", "IBM Plex Sans", "Bold"},
-    {":/fonts/IBMPlexSans-BoldItalic.ttf", "IBM Plex Sans", "Bold Italic"},
-    {":/fonts/IBMPlexSans_SemiCondensed-Regular.ttf", "IBM Plex Sans SemiCondensed", "Regular"},
-    {":/fonts/IBMPlexSans_SemiCondensed-Italic.ttf", "IBM Plex Sans SemiCondensed", "Italic"},
-    {":/fonts/IBMPlexSans_SemiCondensed-Bold.ttf", "IBM Plex Sans SemiCondensed", "Bold"},
+    {":/fonts/IBMPlexMono-Regular.ttf", "IBM Plex Mono", "Regular", false},
+    {":/fonts/IBMPlexMono-Italic.ttf", "IBM Plex Mono", "Italic", false},
+    {":/fonts/IBMPlexMono-SemiBold.ttf", "IBM Plex Mono", "SemiBold", false},
+    {":/fonts/IBMPlexMono-SemiBoldItalic.ttf", "IBM Plex Mono", "SemiBold Italic", false},
+    {":/fonts/IBMPlexMono-Bold.ttf", "IBM Plex Mono", "Bold", false},
+    {":/fonts/IBMPlexMono-BoldItalic.ttf", "IBM Plex Mono", "Bold Italic", false},
+    {":/fonts/IBMPlexSans-Regular.ttf", "IBM Plex Sans", "Regular", false},
+    {":/fonts/IBMPlexSans-Italic.ttf", "IBM Plex Sans", "Italic", false},
+    {":/fonts/IBMPlexSans-SemiBold.ttf", "IBM Plex Sans", "SemiBold", false},
+    {":/fonts/IBMPlexSans-SemiBoldItalic.ttf", "IBM Plex Sans", "SemiBold Italic", false},
+    {":/fonts/IBMPlexSans-Bold.ttf", "IBM Plex Sans", "Bold", false},
+    {":/fonts/IBMPlexSans-BoldItalic.ttf", "IBM Plex Sans", "Bold Italic", false},
+    {":/fonts/IBMPlexSans_SemiCondensed-Regular.ttf", "IBM Plex Sans SemiCondensed", "Regular", false},
+    {":/fonts/IBMPlexSans_SemiCondensed-Italic.ttf", "IBM Plex Sans SemiCondensed", "Italic", false},
+    {":/fonts/IBMPlexSans_SemiCondensed-Bold.ttf", "IBM Plex Sans SemiCondensed", "Bold", false},
     {":/fonts/IBMPlexSans_SemiCondensed-BoldItalic.ttf", "IBM Plex Sans SemiCondensed",
-     "Bold Italic"},
-    // The book face (brief 18, books2): a serif of its own instead of the
-    // system's "serif", so that a book looks the same on every machine.
-    {":/fonts/SourceSerif4-Regular.ttf", "Source Serif 4", "Regular"},
-    {":/fonts/SourceSerif4-Italic.ttf", "Source Serif 4", "Italic"},
-    {":/fonts/SourceSerif4-Bold.ttf", "Source Serif 4", "Bold"},
-    {":/fonts/SourceSerif4-BoldItalic.ttf", "Source Serif 4", "Bold Italic"},
+     "Bold Italic", false},
+    {":/fonts/SourceSerif4-Variable.ttf", "Source Serif 4", "Regular", true},
+    {":/fonts/SourceSerif4-VariableItalic.ttf", "Source Serif 4", "Italic", true},
+    {":/fonts/SourceCodePro-Variable.ttf", "Source Code Pro", "ExtraLight", true},
+    {":/fonts/SourceCodePro-VariableItalic.ttf", "Source Code Pro", "ExtraLight Italic", true},
 };
 
 constexpr const char* kIcons[] = {
@@ -89,6 +107,7 @@ constexpr zametti::EmbeddedLicense kLicenses[] = {
     {":/licenses/zametti.txt", "zametti", "the program itself", "GPL-3.0"},
     {":/licenses/ibm-plex.txt", "IBM Plex", "UI and text fonts", "OFL 1.1"},
     {":/licenses/source-serif-4.txt", "Source Serif 4", "the book font", "OFL 1.1"},
+    {":/licenses/source-code-pro.txt", "Source Code Pro", "code in a book", "OFL 1.1"},
     {":/licenses/lucide.txt", "Lucide", "toolbar and tree icons", "ISC"},
     {":/licenses/md4c.txt", "md4c", "markdown parsing", "MIT"},
     {":/licenses/blake3.txt", "BLAKE3", "hashes of notes and attachments", "CC0 / Apache-2.0"},

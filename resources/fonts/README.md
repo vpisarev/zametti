@@ -79,3 +79,61 @@ Roman на маке и DejaVu Serif на Linux.
 
 **Проверяется** набором `resources_test`: каждый файл списка обязан приниматься
 Qt и отдавать ровно то семейство, которое ждут умолчания настроек.
+
+## SemiBold для inline-кода: Mono 2.005, переменные Serif и Code Pro (07.09.2026)
+
+**Зачем.** Inline-код набирается шрифтом текста весом 600
+(`fonts.inlineCodeWeight`), без плашки и без смены семейства; SemiBold нужен
+каждому шрифту заметки. Заодно блоки кода в книге получили компаньона серифа —
+Source Code Pro.
+
+| файлы | семейство в файле | что это | кто просит |
+|---|---|---|---|
+| `IBMPlexMono-{Regular,Italic,SemiBold,SemiBoldItalic,Bold,BoldItalic}.ttf` | IBM Plex Mono, **Version 2.005** (сборка апреля 2026, 1207 глифов) | шесть статических начертаний одной версии | текст заметки, блоки кода в редакторе, inline-код весом 600 |
+| `IBMPlexSans-{SemiBold,SemiBoldItalic}.ttf` | IBM Plex Sans, Version 3.201 (как вшитые четыре) | два статических начертания | inline-код весом 600, когда шрифт заметки — Plex Sans |
+| `SourceSerif4-Variable.ttf`, `-VariableItalic.ttf` | Source Serif 4, Version 4.004 | переменные, wght 200–900, opsz 8–60 | текст книги |
+| `SourceCodePro-Variable.ttf`, `-VariableItalic.ttf` | Source Code Pro, Version 1.026 | переменные, wght 200–900 | блоки кода в книге (`reading.codeFamily`) |
+
+**Откуда.** Sans SemiBold — `~/ai/work/IBM_Plex_Sans/static`, той же сборки,
+что и вшитые четыре. Mono — `~/ai/work/ibm-plex-mono/fonts/complete/ttf` (пакет IBM
+`plex-mono`; прежние четыре файла «Version 2.3» 2021 года с 1028 глифами
+заменены: у IBM версии перенумерованы, 2.005 — новее и полнее). Serif и Code
+Pro — `~/ai/work/Source_Serif_4`, `~/ai/work/Source_Code_Pro` (сборки Google
+Fonts). Файлы кладутся байт в байт; у переменных переименован только сам файл
+(без запятых в имени), не таблица `name`: OFL запрещает производные под
+зарезервированным именем.
+
+**Переменный шрифт под Qt.** Qt (с 6.7) регистрирует каждое именованное
+начертание оси веса как обычный стиль: Regular … Bold, SemiBold среди них.
+Проверено пробником `zametti-bench fonts <ttf>…` (CoreText, 07.09.2026):
+веса 400/500/600/700 разрешаются точно (`QFontInfo::exactMatch`), курсив
+берётся из курсивного файла, чернильное покрытие строки растёт с весом; у
+Source Code Pro начертание по умолчанию — ExtraLight (nameID 2), но вес 400
+даёт именованный Regular. FreeType (Linux) — прогнать тот же пробник при
+следующей сборке там.
+
+**Почему Plex Mono не переменный.** У IBM есть переменный крой, но семейство
+в нём называется «IBM Plex Mono Var», а настройки, документы и конфиги говорят
+«IBM Plex Mono». `QFont::insertSubstitution` до него не дотягивается
+(замерено тем же пробником: подставленный запрос уезжает в чужой шрифт, а
+`QFontInfo` при этом называет запрошенное имя). Переименовать таблицу `name`
+нельзя (OFL), переименовать умолчание — сломать чужие конфиги. Статика
+одной версии решает всё без подстановок.
+
+**Оптический размер Serif.** Ось `opsz` по умолчанию 20 — ровно тот крой, что
+был вшит статикой (`SourceSerif4-Regular`, не `_18pt`); программа ось не
+трогает.
+
+**Source Code Pro** — компаньон Source Serif 4: x-height 478 против 475 у
+серифа, поэтому блоки кода в книге стоят вровень с прозой на ступени 0
+(`reading.codeStep` 0); у IBM Plex Mono x-height 516, и он смотрелся крупнее
+при любой ступени.
+
+**Цена.** На диске: Mono 1 062 760 байт (шесть файлов 2.005) вместо 554 624
+(четыре файла 2.3); Sans SemiBold 451 872 новых; Serif 2 040 252 вместо
+1 076 668; Code Pro 381 624 новых. Итого шрифтов — 5 744 116 байт против
+3 438 932 до замены (замер 07.09.2026).
+
+**Лицензия.** Все три — SIL OFL 1.1: `LICENSE` (Plex), `LICENSE-SourceSerif4`,
+`LICENSE-SourceCodePro`; в About — `:/licenses/ibm-plex.txt`,
+`:/licenses/source-serif-4.txt`, `:/licenses/source-code-pro.txt`.
