@@ -1,5 +1,7 @@
 #include "settings.h"
 
+#include <QTextCharFormat>
+
 #include "doc_model.h"
 #include "theme.h"
 
@@ -159,6 +161,17 @@ const std::vector<Key>& keys() {
         ZM_KEY_INT("fonts", "codeStep",
                    "size of code INSIDE a note, as a step from the note font (-2..+4)",
                    style(), codeStep, CodeStep),
+        ZM_KEY_STR("fonts", "inlineCodeFamily",
+                   "font of inline code; empty = the note font itself (heavier, in the theme's "
+                   "inlineCode colour)",
+                   style(), inlineCodeFamily, InlineCodeFamily),
+        ZM_KEY_BOOL("fonts", "inlineCodePlate",
+                    "inline code on a grey plate, at codeStep, as before 07.09.2026; false = no plate",
+                    style(), inlineCodePlate, InlineCodePlate),
+        ZM_KEY_INT("fonts", "inlineCodeWeight",
+                   "weight of inline code: 600 = semibold (embedded for the note fonts), 700 = bold, "
+                   "400 = as the text; a family without that weight gets Qt's nearest",
+                   style(), inlineCodeWeight, InlineCodeWeight),
         ZM_KEY_INT("fonts", "footnoteStep",
                    "size of a footnote's text, as a step from the note font (-2..+4)",
                    style(), footnoteStep, FootnoteStep),
@@ -334,6 +347,8 @@ const std::vector<Key>& keys() {
         ZM_KEY_COLOR("pdf", "quote", "quotes on paper", pdf(), quote, Quote),
         ZM_KEY_COLOR("pdf", "codeBackground", "behind code on paper", pdf(), codeBackground,
                      CodeBackground),
+        ZM_KEY_COLOR("pdf", "inlineCode", "inline code on paper (without the plate)", pdf(),
+                     inlineCode, InlineCode),
         ZM_KEY_STR("pdf", "pageSize", "A4, Letter, A5...", pdf(), pageSize, PageSize),
         ZM_KEY_REAL("pdf", "marginMm", "page margins, in millimetres", pdf(), marginMm, MarginMm),
         ZM_KEY_INT("pdf", "imageDpi", "resolution of pictures on paper", pdf(), imageDpi,
@@ -348,8 +363,15 @@ const std::vector<Key>& keys() {
         ZM_KEY_REAL("reading", "fontSize", "size of the book font, in points; 0 = the note font",
                     reading(), fontPoint, FontPoint),
         ZM_KEY_INT("reading", "codeStep",
-                   "size of code in a book, as a step from the book text; -1 = one step under",
+                   "size of code blocks in a book, as a step from the book text; 0 = level with it",
                    reading(), codeStep, CodeStep),
+        ZM_KEY_STR("reading", "codeFamily",
+                   "font of code blocks in a book; \"Source Code Pro\" is embedded; empty = "
+                   "fonts.monospaceFamily",
+                   reading(), codeFamily, CodeFamily),
+        ZM_KEY_STR("reading", "inlineCodeFamily",
+                   "font of inline code in a book; empty = the book font itself",
+                   reading(), inlineCodeFamily, InlineCodeFamily),
         ZM_KEY_REAL("reading", "lineHeightFactor", "line height of a book, as a factor of the font height",
                     reading(), lineHeightFactor, LineHeightFactor),
         ZM_KEY_REAL("reading", "maxContentWidth", "column width of a page, in widths of 'A'",
@@ -438,6 +460,11 @@ std::shared_ptr<const ZDocStyle> ZSettings::readingStyle() const {
     if (!r.fontFamily().isEmpty()) look->setFontFamily(r.fontFamily());
     if (r.fontPoint() > 0.0) look->setBaseFontPoint(r.fontPoint());
     look->setCodeStep(r.codeStep());
+    // The code families of a book (the owner, 07.09.2026): blocks in the
+    // serif's companion, inline code in the book font itself unless told
+    // otherwise. The weight, the plate and the colour are the note's.
+    if (!r.codeFamily().isEmpty()) look->setCodeFamily(r.codeFamily());
+    look->setInlineCodeFamily(r.inlineCodeFamily());
     // Code keeps the editor's line height: the reading rhythm is for prose.
     look->setCodeLineHeightFactor(style_.lineHeightFactor());
     look->setLineHeightFactor(r.lineHeightFactor());
@@ -493,6 +520,26 @@ CodePlate codePlate(const ZDocStyle& look, qreal scale) {
     plate.stripPadding = look.codeStripPadding() * charUnit;
     plate.langGap = look.codeLangGap() * charUnit;
     return plate;
+}
+
+int ZDocStyle::inlineCodeStep(int surroundingStep) const {
+    return inlineCodeFamily_.isEmpty() ? surroundingStep : surroundingStep + codeStep_;
+}
+
+void ZDocStyle::applyInlineCodeLook(QTextCharFormat& format, int surroundingWeight) const {
+    if (!inlineCodeFamily_.isEmpty()) format.setFontFamilies({inlineCodeFamily_});
+    if (inlineCodePlate_) format.setBackground(codeBackground_);
+    // Never lighter than the text around: bold stays bold, a heading stays a
+    // heading. The block's char format carries the heading's weight, and a
+    // fresh span format reports 400 — hence the weight is named by the caller.
+    format.setFontWeight(std::max({format.fontWeight(), surroundingWeight, inlineCodeWeight_}));
+    if (inlineCodeColor_.alpha() > 0) format.setForeground(inlineCodeColor_);
+}
+
+void ZDocStyle::applyInlineCode(QTextCharFormat& format, int surroundingStep,
+                                int surroundingWeight) const {
+    setFontStep(format, inlineCodeStep(surroundingStep));
+    applyInlineCodeLook(format, surroundingWeight);
 }
 
 QFont ZDocStyle::captionFont(qreal scale) const {

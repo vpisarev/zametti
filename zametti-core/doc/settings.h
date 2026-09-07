@@ -21,6 +21,8 @@
 #include <QMetaType>
 #include <QRegularExpression>
 #include <QString>
+
+class QTextCharFormat;
 #include <QStringList>
 #include <QtGlobal>
 
@@ -127,6 +129,32 @@ struct ZDocStyle {
     // Код: ступень относительно текста; 0 — вровень. Гарнитура у кода своя, и
     // при одном кегле он может выглядеть чуть иначе — это принято.
     ZM_SETTING(int, codeStep, CodeStep, 0, -20, 20)
+    // --- INLINE CODE: `code` inside a line (the owner, 07.09.2026) ---
+    // Set in the family of the text around it (empty inlineCodeFamily), at
+    // the text's own step, heavier and in its own colour, without a plate: a
+    // page full of spans stopped looking like a patchwork, and the mono
+    // x-height (516) never matched the serif's (475) at any Qt step anyway.
+    // The old look is the same four knobs the other way: the monospace
+    // family, the plate on, weight 400, a colour with alpha 0 (= the text's).
+    // A family that has no such weight gets Qt's nearest; the embedded ones
+    // (Plex Mono, Plex Sans, Source Serif 4, Source Code Pro) have SemiBold.
+    ZM_SETTING_PLAIN(QString, inlineCodeFamily, InlineCodeFamily, QString())
+    ZM_SETTING_PLAIN(bool, inlineCodePlate, InlineCodePlate, false)
+    ZM_SETTING(int, inlineCodeWeight, InlineCodeWeight, 600, 100, 900)
+    ZM_SETTING_PLAIN(QColor, inlineCodeColor, InlineCodeColor, 0x40, 0x40, 0x80)
+public:
+    // The step of an inline span inside text at surroundingStep: a family of
+    // its own needs codeStep (a foreign face has its own x-height); the text's
+    // own family keeps the text's step.
+    int inlineCodeStep(int surroundingStep) const;
+    // Everything but the size: the family (if set), the plate (if on), the
+    // weight and the colour. The weight never goes down — **bold `code`** and
+    // code in a heading stay bold — so the caller names the weight of the
+    // text around (the block's char format). ONE place for the builder, the
+    // editor's typing format and the table cells: they cannot drift apart.
+    void applyInlineCodeLook(QTextCharFormat& format, int surroundingWeight) const;
+    // The look plus the step (FontSizeAdjustment).
+    void applyInlineCode(QTextCharFormat& format, int surroundingStep, int surroundingWeight) const;
     // The step of a footnote definition's body (`[^id]: …`, brief 18): one
     // step under the text, like a caption — a note, not the text itself.
     ZM_SETTING(int, footnoteStep, FootnoteStep, -1, -20, 20)
@@ -1246,6 +1274,8 @@ struct ZSettings {
         ZM_SETTING_PLAIN(QColor, link, Link, 0x32, 0x5c, 0xc0)
         ZM_SETTING_PLAIN(QColor, quote, Quote, 0x5a, 0x62, 0x6a)
         ZM_SETTING_PLAIN(QColor, codeBackground, CodeBackground, 0xf4, 0xf4, 0xf2)
+        // Inline code without the plate: its own colour on paper too.
+        ZM_SETTING_PLAIN(QColor, inlineCode, InlineCode, 0x40, 0x40, 0x80)
 
         ZM_SETTING_PLAIN(QString, pageSize, PageSize, QStringLiteral("A4"))
         ZM_SETTING(qreal, marginMm, MarginMm, 15.0, 0.0, 100.0)
@@ -1286,13 +1316,21 @@ struct ZSettings {
         ZM_SETTING_PLAIN(QString, fontFamily, FontFamily, QStringLiteral("Source Serif 4"))
         // Zero = the note font's size.
         ZM_SETTING(qreal, fontPoint, FontPoint, 0.0, 0.0, 96.0)
-        // The step of code relative to the book text (the same ladder as
-        // fonts.codeStep). A monospace has a taller x-height than a serif
-        // (IBM Plex Mono 0.516 em, Source Serif 4 0.475, Times 0.447), so at
-        // the same step the code looks larger than the prose; one step under
-        // (0.8×) is the owner's default. Qt gives no finer ratio: the step is
-        // what lets a zoom stay one setDefaultFont.
-        ZM_SETTING(int, codeStep, CodeStep, -1, -20, 20)
+        // The step of CODE BLOCKS relative to the book text (the same ladder as
+        // fonts.codeStep; Qt gives no finer ratio, and the step is what lets a
+        // zoom stay one setDefaultFont). Level with the prose (the owner,
+        // 07.09.2026): the block's family is Source Code Pro by default, whose
+        // x-height (478) is the serif's (475), so the sizes agree at step 0;
+        // one step under (0.8×) made listings small next to the prose. Inline
+        // code is no longer monospace at all (ZDocStyle::inlineCodeFamily).
+        ZM_SETTING(int, codeStep, CodeStep, 0, -20, 20)
+        // The family of code blocks in a book; empty = fonts.monospaceFamily.
+        // Source Code Pro is embedded: the companion of Source Serif 4, with
+        // the same x-height, which IBM Plex Mono (516) is not.
+        ZM_SETTING_PLAIN(QString, codeFamily, CodeFamily, QStringLiteral("Source Code Pro"))
+        // The family of inline code in a book; empty = the book font itself
+        // (the weight and the colour of fonts.inlineCode* apply either way).
+        ZM_SETTING_PLAIN(QString, inlineCodeFamily, InlineCodeFamily, QString())
         ZM_SETTING(qreal, lineHeightFactor, LineHeightFactor, 1.5, 1.0, 3.0)
         // Column width in widths of "A" (50 ≈ 34 em) and the side margin of a page.
         ZM_SETTING(qreal, maxContentWidth, MaxContentWidth, 50.0, 20.0, 400.0)

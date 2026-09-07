@@ -159,7 +159,7 @@ int codeStepIn(int surroundingStep, const ZDocStyle& style) {
     return surroundingStep + style.codeStep();
 }
 
-void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep,
+void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep, int lineWeight,
                 const ZDocStyle& style, const QStringList* mathSources = nullptr) {
     QTextCursor cursor(&doc);
     // Смещения кусков — единицы UTF-16 от начала текста блока, те же, что и в
@@ -227,12 +227,10 @@ void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep,
             }
             fmt.setProperty(FootnoteIdProperty, id);
         }
-        if (s.code()) {
-            fmt.setBackground(style.codeBackground());
-            setFontStep(fmt, codeStepIn(lineStep, style));
-            if (!style.codeFamily().isEmpty())
-                fmt.setFontFamilies({QString(style.codeFamily())});
-        }
+        // Inline code — the style's one rule (ZDocStyle::applyInlineCode), the
+        // same the editor applies while typing. Before the link and the
+        // comment below: a link inside code keeps the link's colour.
+        if (s.code()) style.applyInlineCode(fmt, lineStep, lineWeight);
         if (!s.href.isEmpty()) {
             fmt.setAnchor(true);
             fmt.setAnchorHref(s.href);
@@ -855,7 +853,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     markBreaks(target, textStart, breaks);
     const bool object = imageObject || formulaObject || tableObject;
     if (!literal && !object && !b.runs.empty())
-        applySpans(target, textStart, b, lineStep, style, &mathSources);
+        applySpans(target, textStart, b, lineStep, charFmt.fontWeight(), style, &mathSources);
     if (!object)
         enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont, style);
     prevVSpace = vspace;

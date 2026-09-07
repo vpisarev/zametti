@@ -34,8 +34,9 @@ const Role kRoles[] = {
     {"raw", "#999fa6", "source we could not parse, kept verbatim"},
     {"caption", "#777e86", "picture captions and note-list snippets"},
     {"bookmark", "#802040", "the bookmark glyph in a book's margin"},
-    {"codeBackground", "#0e000000", "behind code, in blocks and inline"},
+    {"codeBackground", "#0e000000", "behind code blocks, and inline code on the plate look"},
     {"codeLang", "#7a8088", "language name on the code plate"},
+    {"inlineCode", "#404080", "inline code without the plate (fonts.inlineCodePlate = false)"},
 
     // --- панели ---
     {"sidebarBackground", "#fefefb", "tree and note list"},
@@ -251,6 +252,7 @@ void ZTheme::applyTo(ZSettings& settings) const {
     set([&](const QColor& c) { look.setImageCaptionColor(c); }, colour("caption"));
     set([&](const QColor& c) { look.setCodeBackground(c); }, colour("codeBackground"));
     set([&](const QColor& c) { look.setCodeLangColor(c); }, colour("codeLang"));
+    set([&](const QColor& c) { look.setInlineCodeColor(c); }, colour("inlineCode"));
     set([&](const QColor& c) { look.setDiffAdded(c); }, colour("diff.added"));
     set([&](const QColor& c) { look.setDiffRemoved(c); }, colour("diff.removed"));
     set([&](const QColor& c) { look.setDiffChanged(c); }, colour("diff.changed"));

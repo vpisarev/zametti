@@ -319,6 +319,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     onPaper(paper.link(), [&](const QColor& c) { style->setLinkColor(c); });
     onPaper(paper.quote(), [&](const QColor& c) { style->setQuoteColor(c); });
     onPaper(paper.codeBackground(), [&](const QColor& c) { style->setCodeBackground(c); });
+    onPaper(paper.inlineCode(), [&](const QColor& c) { style->setInlineCodeColor(c); });
 
     QPdfWriter writer(targetPath);
     // Формат листа — по имени; незнакомое имя — A4.

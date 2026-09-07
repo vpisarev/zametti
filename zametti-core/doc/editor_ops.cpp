@@ -661,18 +661,6 @@ std::vector<StyleRun> styleRuns(const QTextDocument& doc, int from, int to,
     return runs;
 }
 
-// Как выглядит встроенный код: семейство, ступень кегля, подложка. Одно место
-// на всех — правило кавычек и набор с клавиатуры красят одинаково.
-//
-// Ступень отсчитывается от окружения — от того, что стоит в формате самого
-// блока: код внутри заголовка обязан ехать вместе с заголовком, ровно как у
-// сборщика.
-void applyCodeLook(QTextCharFormat& format, int surroundingStep, const ZDocStyle& style) {
-    setFontStep(format, surroundingStep + style.codeStep());
-    if (!style.codeFamily().isEmpty()) format.setFontFamilies({QString(style.codeFamily())});
-    format.setBackground(style.codeBackground());
-}
-
 // Оформление, отвечающее набору признаков. Ставим все три явно: снимать
 // начертание — это тоже назначить его, только обычным.
 QTextCharFormat formatForStyle(int style) {
@@ -1078,7 +1066,11 @@ static bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     edit.setPosition(block.position() + open);
     edit.setPosition(block.position() + end - 2, QTextCursor::KeepAnchor);
     QTextCharFormat code = formatForStyle(SpanCode);
-    applyCodeLook(code, blockFontStep(cursor.block()), styleOf(*cursor.document()));
+    // The look of inline code is the style's one rule, shared with the builder;
+    // the step and the weight come from the block — code inside a heading
+    // rides with the heading.
+    styleOf(*cursor.document())
+        .applyInlineCode(code, blockFontStep(cursor.block()), cursor.block().charFormat().fontWeight());
     edit.mergeCharFormat(code);
     edit.endEditBlock();
 
@@ -1184,7 +1176,9 @@ static QTextCharFormat inlineStyleForTyping(const QTextBlock& block, const QText
     // заголовке он крупнее, в пункте обычный. Дальше кладём на него признаки.
     QTextCharFormat format = block.charFormat();
     format.merge(formatForStyle(next));
-    if ((next & SpanCode) != 0) applyCodeLook(format, blockFontStep(block), styleOf(*block.document()));
+    if ((next & SpanCode) != 0)
+        styleOf(*block.document())
+            .applyInlineCode(format, blockFontStep(block), block.charFormat().fontWeight());
     return format;
 }
 

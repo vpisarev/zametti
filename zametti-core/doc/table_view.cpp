@@ -19,7 +19,7 @@ namespace {
 // кегля текста. Таблицу рисуем мы сами, ступеней у QPainter нет, поэтому
 // множитель ступени берём числом.
 qreal codePointFor(qreal scale, const ZDocStyle& style) {
-    return style.baseFontPoint() * fontStepFactor(style.codeStep()) * scale;
+    return style.baseFontPoint() * fontStepFactor(style.inlineCodeStep(0)) * scale;
 }
 
 // Разобранная ячейка: текст и куски разметки, БЕЗ шрифтов и размеров.
@@ -93,9 +93,10 @@ std::shared_ptr<QTextLayout> layoutOfCell(const CellMarkup& markup, const QFont&
         if (piece.italic) fmt.setFontItalic(true);
         if (piece.strike) fmt.setFontStrikeOut(true);
         if (piece.code) {
-            fmt.setBackground(style.codeBackground());
+            // The style's one rule for inline code; the size is absolute here
+            // because the cell is laid out by hand, without the step ladder.
+            style.applyInlineCodeLook(fmt, fmt.fontWeight());
             fmt.setFontPointSize(codePointFor(scale, style));
-            if (!style.codeFamily().isEmpty()) fmt.setFontFamilies({QString(style.codeFamily())});
         }
         if (piece.link) {
             fmt.setForeground(style.linkColor());
