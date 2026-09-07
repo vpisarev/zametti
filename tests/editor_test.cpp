@@ -1651,12 +1651,22 @@ void checkCodeAtEdge() {
         cursor.movePosition(QTextCursor::End);
         editor.setTextCursor(cursor);
     };
-    const QString mono = zametti::settings().style().codeFamily();
+    const zametti::ZDocStyle& style = zametti::settings().style();
 
     toEnd();
     check((editor.currentCharFormat().intProperty(zametti::SpanStyleProperty) &
            zametti::SpanCode) != 0,
           "у правой кромки формат набора — код, иначе случай не тот");
+    // The look of inline code (07.09.2026): the text's own family, the style's
+    // weight and colour, no plate — the same at the caret as in the builder.
+    check(editor.currentCharFormat().fontFamilies().toStringList().isEmpty(),
+          "у кромки кода семейство — семейство текста (своего не задано)");
+    check(editor.currentCharFormat().fontWeight() == style.inlineCodeWeight(),
+          "у кромки кода вес — inlineCodeWeight");
+    check(editor.currentCharFormat().foreground().color() == style.inlineCodeColor(),
+          "у кромки кода цвет — inlineCodeColor");
+    check(editor.currentCharFormat().background().style() == Qt::NoBrush,
+          "у кромки кода плашки нет");
 
     QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
     editor.insertPlainText(QStringLiteral("хвост"));
@@ -1668,8 +1678,10 @@ void checkCodeAtEdge() {
     tail.setPosition(editor.textCursor().position() - 1);
     tail.setPosition(editor.textCursor().position(), QTextCursor::KeepAnchor);
     const QTextCharFormat after = tail.charFormat();
-    check(after.fontFamilies().toStringList().value(0) != mono,
+    check(after.fontFamilies().toStringList().value(0) != style.codeFamily(),
           "набранное после Ctrl+E не должно остаться моноширинным");
+    check(after.fontWeight() == QFont::Normal, "и вес после Ctrl+E — обычный, не кодовый");
+    check(after.foreground().style() == Qt::NoBrush, "и цвет после Ctrl+E — цвет текста");
     check(after.background().style() == Qt::NoBrush,
           "подложка кода после Ctrl+E остаться не должна");
 
@@ -1685,6 +1697,10 @@ void checkCodeAtEdge() {
     QTest::qWait(10);
     checkEqual(QStringLiteral("## Тема` код`\n"), text(),
                "Ctrl+E на чистом месте начинает встроенный код");
+    // Code inside a heading is never lighter than the heading: the weight
+    // of the block wins over the inline-code weight.
+    check(editor.currentCharFormat().fontWeight() >= QFont::Bold,
+          "код в заголовке — не легче заголовка");
     QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
     check(qAbs(editor.currentCharFormat().fontPointSize() - headingSize) < 0.01,
           "после выхода из кода кегль возвращается заголовочный");

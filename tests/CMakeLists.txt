@@ -232,6 +232,7 @@ add_executable(zametti-bench
     matrix_probe.cpp
     open_probe.cpp
     start_bench.cpp
+    font_probe.cpp
     zoom_probe.cpp
     md4c_spaces_probe.cpp
     ui_metrics_probe.cpp

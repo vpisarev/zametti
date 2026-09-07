@@ -18,6 +18,8 @@
 #include "note_view.h"
 #include "settings.h"
 #include "test_util.h"
+#include <QFontInfo>
+#include "settings_hook.h"
 
 #include <vector>
 #include "testdata.h"
@@ -122,6 +124,27 @@ ls -la | grep zametti
 ```ficus
 fun solve(n: int) = fold(s=0) for i <- 0:n {s + i*i}
 ```
+)";
+
+// Dense inline code in prose, with the cases that decide the look: a heading
+// with code, bold with code, a link inside code, a list item, a table cell.
+const char* kInline = R"(# Типы
+
+Числа: `i32` и `i64` — целые, `f32` и `f64` — с плавающей точкой, `bool` — логический тип
+со значениями `true` и `false`; `string` — строка, `char` — один знак.
+
+## Заголовок с `кодом` внутри
+
+Ещё абзац, где `fp16` — это 16-битное число (IEEE 754 half precision), а `bf16` — «brain»
+формат; литералы имеют суффикс `h` и `bf`. **Жирный с `кодом`** и [`ссылка`](https://example.org).
+
+- пункт списка с `val x = 1`
+- ещё пункт: `nz_x :> int`
+
+| тип | литерал |
+|---|---|
+| `float` | `1.0f` |
+| `double` | `1.0` |
 )";
 
 Peek* open(Peek& editor, int width, int height, const QString& name) {
@@ -710,6 +733,61 @@ void shots(int width, int height, const QString& tag, bool checks) {
     shoot(editor, tag);
 }
 
+// INLINE CODE, FOUR SHOTS (07.09.2026): the editor (IBM Plex Mono) and a book
+// (Source Serif 4), with the new look and with the plate of before. The look
+// is also asked in numbers: the fragment's resolved font has weight 600 and
+// the family of the text, not the monospace one.
+void inlineShots() {
+    const auto shootInline = [](const QString& tag, bool book) {
+        Peek editor;
+        const QString header = book ? QStringLiteral("<!-- zametti\nrole: book\n-->\n\n") : QString();
+        const QString note = writeNote(tag + QStringLiteral(".md"), header + QString::fromUtf8(kInline));
+        editor.resize(900, 700);
+        editor.show();
+        QTest::qWait(20);
+        editor.openFile(note);
+        QTest::qWait(60);
+        shoot(editor, tag);
+        return editor.document()->findBlockByNumber(2);
+    };
+    const bool plateWas = zametti::settings().style().inlineCodePlate();
+    zametti::mutableSettingsForTests().style().setInlineCodePlate(false);
+    {
+        Peek editor;
+        const QString note = writeNote(QStringLiteral("inline-editor.md"), QString::fromUtf8(kInline));
+        editor.resize(900, 700);
+        editor.show();
+        QTest::qWait(20);
+        editor.openFile(note);
+        QTest::qWait(60);
+        shoot(editor, QStringLiteral("inline-редактор"));
+        const QTextBlock line = editor.document()->findBlockByNumber(2);
+        int coded = 0;
+        for (auto it = line.begin(); !it.atEnd(); ++it) {
+            const QTextCharFormat f = it.fragment().charFormat();
+            if ((f.intProperty(zametti::SpanStyleProperty) & zametti::SpanCode) == 0) continue;
+            ++coded;
+            const QFont resolved = editor.document()->defaultFont().resolve(f.font());
+            const QFontInfo info(resolved);
+            check(info.weight() == zametti::settings().style().inlineCodeWeight(),
+                  "inline-код разрешён в вес " + std::to_string(info.weight()));
+            check(info.family() == editor.document()->defaultFont().family(),
+                  "inline-код — семейством текста: " + info.family().toStdString());
+            check(f.background().style() == Qt::NoBrush, "без плашки");
+        }
+        check(coded >= 4, "во второй строке не меньше четырёх вставок кода: " + std::to_string(coded));
+    }
+    shootInline(QStringLiteral("inline-книга"), true);
+    zametti::mutableSettingsForTests().style().setInlineCodePlate(true);
+    zametti::mutableSettingsForTests().style().setInlineCodeFamily(zametti::settings().style().codeFamily());
+    zametti::mutableSettingsForTests().style().setInlineCodeWeight(400);
+    shootInline(QStringLiteral("inline-редактор-плашка"), false);
+    shootInline(QStringLiteral("inline-книга-плашка"), true);
+    zametti::mutableSettingsForTests().style().setInlineCodePlate(plateWas);
+    zametti::mutableSettingsForTests().style().setInlineCodeFamily(QString());
+    zametti::mutableSettingsForTests().style().setInlineCodeWeight(600);
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -727,6 +805,7 @@ static int ztRunSuite(int argc, char** argv) {
     // класс расхождений был невидим.
     shots(1000, 700, QStringLiteral("код-широкое"), true);
     shots(640, 700, QStringLiteral("код-узкое"), false);
+    inlineShots();
 
     std::printf("снимки: %s\n", qPrintable(g_shots));
     std::printf("блоки кода: %d проверок, %s\n", zt::g_checks,

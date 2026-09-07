@@ -14,6 +14,7 @@
 #include "znote.h"
 #include "test_util.h"
 
+#include <QTextBlock>
 #include <QTextBlockFormat>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -133,7 +134,7 @@ void checkReadingLookByRole() {
     ZT_EQ("блок кода книги — интерлиньяж редактора, %",
           std::to_string(int(std::lround(zametti::settings().style().lineHeightFactor() * 100.0))),
           std::to_string(int(std::lround(code.lineHeight()))));
-    ZT_EQ("блок кода книги — на ступень ниже текста",
+    ZT_EQ("блок кода книги — на ступени reading.codeStep",
           std::to_string(zametti::settings().reading().codeStep()),
           std::to_string(book.doc().caretAtBlock(10).blockCharFormat().intProperty(
               QTextFormat::FontSizeAdjustment)));
@@ -154,6 +155,14 @@ void checkReadingLookByRole() {
                     qFuzzyIsNull(fmt(plain, 12).rightMargin()) &&
                     qFuzzyIsNull(fmt(plain, 12).topMargin()));
     }
+    // The code families of a book (07.09.2026): blocks in reading.codeFamily
+    // (Source Code Pro, the serif's companion), inline code in the book font.
+    ZT_EQ("блок кода книги — семейством reading.codeFamily",
+          s(zametti::settings().reading().codeFamily()),
+          s(book.doc().caretAtBlock(10).blockCharFormat().fontFamilies().toStringList().value(0)));
+    ZT_EQ("блок кода заметки — семейством fonts.monospaceFamily",
+          s(zametti::settings().style().codeFamily()),
+          s(plain.doc().caretAtBlock(10).blockCharFormat().fontFamilies().toStringList().value(0)));
     ZT_EQ("блок кода заметки — вровень с текстом",
           std::to_string(zametti::settings().style().codeStep()),
           std::to_string(plain.doc().caretAtBlock(10).blockCharFormat().intProperty(
@@ -172,7 +181,78 @@ void checkReadingLookByRole() {
 
 }  // namespace
 
+// --- INLINE CODE: ONE RULE FOR THE BUILDER, THE CARET AND THE CELLS ----------
+// Without the plate the span is set in the text's family, at the text's step,
+// heavier and in its own colour; a link inside code keeps the link's colour;
+// bold and a heading are never lightened. The plate look is the old one:
+// the monospace family, codeStep, the grey background.
+void checkInlineCodeLook() {
+    const auto fragmentAt = [](zametti::ZDocument& doc, int block, const QString& text) {
+        QTextCharFormat out;
+        const QTextBlock b = doc.caretAtBlock(block).block();
+        for (auto it = b.begin(); !it.atEnd(); ++it)
+            if (it.fragment().text() == text) out = it.fragment().charFormat();
+        return out;
+    };
+    auto look = std::make_shared<zametti::ZDocStyle>(zametti::settings().style());
+    look->setInlineCodeFamily(QString());
+    look->setInlineCodePlate(false);
+    look->setInlineCodeWeight(600);
+    look->setInlineCodeColor(QColor(0x40, 0x40, 0x80));
+    look->setCodeStep(-1);
+    const auto build = [&](const std::shared_ptr<zametti::ZDocStyle>& style) {
+        auto doc = std::make_shared<zametti::ZDocument>();
+        doc->setStyle(style);
+        doc->loadMarkdown("a `b` c\n\n**a `b`**\n\n# t `c`\n\n[`x`](u)\n");
+        return doc;
+    };
+    {
+        auto doc = build(look);
+        const QTextCharFormat plain = fragmentAt(*doc, 0, QStringLiteral("b"));
+        ZT_TRUE("без плашки: семейство — текста", plain.fontFamilies().toStringList().isEmpty());
+        ZT_EQ("без плашки: вес 600", "600", std::to_string(plain.fontWeight()));
+        ZT_EQ("без плашки: свой цвет", "#404080", s(plain.foreground().color().name()));
+        ZT_EQ("без плашки: ступень текста", "0",
+              std::to_string(plain.intProperty(QTextFormat::FontSizeAdjustment)));
+        ZT_TRUE("без плашки: фона нет", plain.background().style() == Qt::NoBrush);
+        ZT_EQ("жирный код — жирный", std::to_string(int(QFont::Bold)),
+              std::to_string(fragmentAt(*doc, 2, QStringLiteral("b")).fontWeight()));
+        ZT_EQ("код в заголовке — не легче заголовка", std::to_string(int(QFont::Bold)),
+              std::to_string(fragmentAt(*doc, 4, QStringLiteral("c")).fontWeight()));
+        ZT_EQ("ссылка в коде — цвета ссылки", s(look->linkColor().name()),
+              s(fragmentAt(*doc, 6, QStringLiteral("x")).foreground().color().name()));
+    }
+    {
+        // The old look, knob by knob.
+        auto plate = std::make_shared<zametti::ZDocStyle>(*look);
+        plate->setInlineCodeFamily(look->codeFamily());
+        plate->setInlineCodePlate(true);
+        plate->setInlineCodeWeight(400);
+        plate->setInlineCodeColor(QColor(0, 0, 0, 0));
+        auto doc = build(plate);
+        const QTextCharFormat coded = fragmentAt(*doc, 0, QStringLiteral("b"));
+        ZT_EQ("с плашкой: семейство кода", s(look->codeFamily()),
+              s(coded.fontFamilies().toStringList().value(0)));
+        ZT_EQ("с плашкой: ступень кода", std::to_string(look->codeStep()),
+              std::to_string(coded.intProperty(QTextFormat::FontSizeAdjustment)));
+        ZT_TRUE("с плашкой: фон кода", coded.background().color() == look->codeBackground());
+        ZT_EQ("с плашкой: вес текста", std::to_string(int(QFont::Normal)), std::to_string(coded.fontWeight()));
+        ZT_TRUE("с плашкой: цвет текста", coded.foreground().style() == Qt::NoBrush);
+        ZT_EQ("с плашкой жирный код — жирный", std::to_string(int(QFont::Bold)),
+              std::to_string(fragmentAt(*doc, 2, QStringLiteral("b")).fontWeight()));
+    }
+    // The reading style carries the same knobs and its own families.
+    const auto reading = zametti::settings().readingStyle();
+    ZT_EQ("чтение: вес inline-кода — из fonts", std::to_string(zametti::settings().style().inlineCodeWeight()),
+          std::to_string(reading->inlineCodeWeight()));
+    ZT_EQ("чтение: семейство inline-кода — из reading", s(zametti::settings().reading().inlineCodeFamily()),
+          s(reading->inlineCodeFamily()));
+    ZT_EQ("чтение: семейство блоков — из reading", s(zametti::settings().reading().codeFamily()),
+          s(reading->codeFamily()));
+}
+
 TEST(DocStyle, All) {
+    checkInlineCodeLook();
     checkOwnStyle();
     checkReadingLookByRole();
     EXPECT_EQ(0, zt::freshFailures());

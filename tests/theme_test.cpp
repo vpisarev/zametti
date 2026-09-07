@@ -93,6 +93,7 @@ void checkLightIsTodaysLook() {
          {defaults.style().imageCaptionColor(), themed.style().imageCaptionColor()}},
         {"codeBackground", {defaults.style().codeBackground(), themed.style().codeBackground()}},
         {"codeLangColor", {defaults.style().codeLangColor(), themed.style().codeLangColor()}},
+        {"inlineCodeColor", {defaults.style().inlineCodeColor(), themed.style().inlineCodeColor()}},
         {"bookmark", {defaults.style().bookmarkColor(), themed.style().bookmarkColor()}},
         {"diffAdded", {defaults.style().diffAdded(), themed.style().diffAdded()}},
         {"diffRemoved", {defaults.style().diffRemoved(), themed.style().diffRemoved()}},
