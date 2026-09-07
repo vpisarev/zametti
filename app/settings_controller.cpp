@@ -1,5 +1,7 @@
 #include "settings_controller.h"
 
+#include <algorithm>
+
 namespace zametti {
 
 SettingsController::SettingsController(NoteEditor& editor, JsonEditView& view,
@@ -21,15 +23,21 @@ bool SettingsController::enter() {
         emit saved(false, error);
         return false;
     }
-    view_.setText(model_->text(), 0, 0);
+    view_.setText(model_->text(), line_, column_);
     active_ = true;
     emit modeChanged(true);
     view_.setFocus();
     return true;
 }
 
+void SettingsController::setPlace(int line, int column) {
+    line_ = std::max(0, line);
+    column_ = std::max(0, column);
+}
+
 bool SettingsController::save() {
     if (!active_) return false;
+    setPlace(view_.caretLine(), view_.caretColumn());
     model_->setText(view_.text());
     QString error;
     const bool ok = model_->save(&error);

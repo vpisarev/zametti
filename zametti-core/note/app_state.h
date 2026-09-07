@@ -116,6 +116,10 @@ public:
     // 0 — не двигали, берётся ширина средней колонки из настроек. Просьба
     // владельца: список крал место у разности, а столько ему не нужно.
     ZM_SETTING(int, historyListWidth, HistoryListWidth, 0, 0, 10000)
+    // The caret in the config editor (line and column): trying values means
+    // returning to the same key across restarts (the owner, 07.09.2026).
+    ZM_SETTING(int, configLine, ConfigLine, 0, 0, 1 << 30)
+    ZM_SETTING(int, configColumn, ConfigColumn, 0, 0, 1 << 30)
     ZM_SETTING_PLAIN(QStringList, expandedDirs, ExpandedDirs, )
 
     // --- панели ----------------------------------------------------------

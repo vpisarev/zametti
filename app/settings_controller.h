@@ -50,6 +50,15 @@ public:
 
     void refreshAppearance() { view_.refreshAppearance(); }
 
+    // WHERE THE CARET WAS (the owner, 07.09.2026): trying values means going
+    // in and out of the config many times, and scrolling to the same key
+    // every time is the cost that made it tiresome. The place is remembered
+    // on every save and leave, restored on enter, and the window keeps it
+    // across restarts in state.json (ZAppState::configLine/Column).
+    int line() const { return line_; }
+    int column() const { return column_; }
+    void setPlace(int line, int column);
+
 signals:
     void modeChanged(bool on);
     // Записан ли файл (и почему нет). Окно на этом перечитывает настройки.
@@ -60,6 +69,8 @@ private:
     JsonEditView& view_;
     std::shared_ptr<ZConfigFile> model_;
     bool active_ = false;
+    int line_ = 0;
+    int column_ = 0;
 };
 
 }  // namespace zametti

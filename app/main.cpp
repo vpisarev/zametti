@@ -772,6 +772,9 @@ int main(int argc, char** argv) {
     zametti::ReadingController reading(editor, bookView);
     zametti::SettingsController settingsMode(editor, settingsView,
                                              std::make_shared<zametti::ZConfigFile>());
+    // The caret of the config editor survives a restart (state.json).
+    settingsMode.setPlace(zapp.state().configLine(), zapp.state().configColumn());
+
 
     // Облик применяется ОДНИМ местом — и на старте, и когда конфиг поправили
     // снаружи. Два места разошлись бы: половина настроек подхватывалась бы на
@@ -3465,6 +3468,8 @@ int main(int argc, char** argv) {
         // задан меткой открытой папки, и запиши мы его — чужая метка стала бы
         // общим умолчанием при следующем запуске.
         out.setTreeSort(zametti::sortOrderToString(panels.rootSort()));
+        zapp.state().setConfigLine(settingsMode.line());
+        zapp.state().setConfigColumn(settingsMode.column());
         zapp.saveState();
     });
 

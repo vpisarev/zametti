@@ -130,6 +130,8 @@ ZAppState ZAppState::load(ZStorageManager* stores) {
     session.setPanelsHidden(root.value(QStringLiteral("panelsHidden")).toBool(false));
     session.setMarkdownMode(root.value(QStringLiteral("markdownMode")).toBool(false));
     session.setHistoryListWidth(root.value(QStringLiteral("historyListWidth")).toInt(0));
+    session.setConfigLine(root.value(QStringLiteral("configLine")).toInt(0));
+    session.setConfigColumn(root.value(QStringLiteral("configColumn")).toInt(0));
     session.setExportDir(root.value(QStringLiteral("exportDir")).toString());
     session.setExportKeepMeta(root.value(QStringLiteral("exportKeepMeta")).toBool(false));
     for (const QJsonValue& v : root.value(QStringLiteral("carets")).toArray()) {
@@ -195,6 +197,8 @@ void ZAppState::save(const ZStorageManager& stores) const {
                   {QStringLiteral("panelsHidden"), session.panelsHidden()},
                   {QStringLiteral("markdownMode"), session.markdownMode()},
                   {QStringLiteral("historyListWidth"), session.historyListWidth()},
+                  {QStringLiteral("configLine"), session.configLine()},
+                  {QStringLiteral("configColumn"), session.configColumn()},
                   {QStringLiteral("exportDir"), session.exportDir()},
                   {QStringLiteral("exportKeepMeta"), session.exportKeepMeta()},
                   {QStringLiteral("expandedDirs"), expanded},
