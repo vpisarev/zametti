@@ -141,6 +141,7 @@ add_executable(zametti-tests
     export_pdf_test.cpp
     tree_view_test.cpp
     note_panels_test.cpp
+    note_commands_test.cpp
     switch_clean_test.cpp
     open_storage_test.cpp
     info_folder_test.cpp
