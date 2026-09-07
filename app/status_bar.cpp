@@ -126,7 +126,10 @@ void StatusBar::showLeft() {
     if (!chapter_.isEmpty() || !place_.isEmpty()) {
         const QFontMetrics metrics(left_->font());
         left_->setTextFormat(Qt::PlainText);
-        left_->setText(metrics.elidedText(chapter_, Qt::ElideRight, qMax(0, left_->width())));
+        // Elided on the LEFT (the owner, 07.09.2026): the path ends with the
+        // current chapter, and that is the part a reader wants to see — the
+        // ancestors are the ones to give way when the window is narrow.
+        left_->setText(metrics.elidedText(chapter_, Qt::ElideLeft, qMax(0, left_->width())));
         left_->setToolTip(chapter_);
         return;
     }
