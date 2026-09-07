@@ -66,6 +66,25 @@ QString writeFile(const QString& name, const QString& text) {
     return path;
 }
 
+// THE PATH OF CHAPTERS IS ELIDED ON THE LEFT (the owner, 07.09.2026): a long
+// path must end with the current chapter, the ancestors give way.
+void checkReadingElidedLeft() {
+    zametti::StatusBar bar;
+    bar.resize(360, 28);
+    bar.show();
+    QTest::qWait(20);
+    const QString path = QStringLiteral(
+        "Приключения Робинзона Крузо · Часть первая, очень длинное название части · "
+        "Глава двадцать третья, в которой всё кончается хорошо");
+    bar.setReading(path, QStringLiteral("page 45/273 · 16%"));
+    QTest::qWait(20);
+    const QString shown = leftText(bar);
+    check(shown != path, "путь укорочен: " + shown.toStdString());
+    check(shown.startsWith(QChar(0x2026)), "многоточие слева: " + shown.toStdString());
+    check(shown.endsWith(QStringLiteral("кончается хорошо")), "текущая глава видна целиком");
+    checkHas(rightText(bar), QStringLiteral("page 45/273"), "правая часть цела");
+}
+
 void checkHumanNumbers() {
     check(zametti::humanBytes(0).startsWith(QStringLiteral("0")), "ноль байт");
     check(zametti::humanBytes(847).contains(QStringLiteral("847")), "меньше килобайта — байты");
@@ -318,6 +337,8 @@ static int ztRunSuite(int argc, char** argv) {
         std::printf("не создать каталог %s\n", g_dir.toUtf8().constData());
         return 2;
     }
+
+    checkReadingElidedLeft();
 
     checkHumanNumbers();
     checkNoteLine();

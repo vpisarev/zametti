@@ -251,7 +251,42 @@ void checkInlineCodeLook() {
           s(reading->codeFamily()));
 }
 
+// THE WEIGHT OF THE TEXT (07.09.2026): fonts.noteWeight is the base font's
+// weight, the book may have its own (reading.fontWeight, 0 = the note's), and
+// the document built with a style carries it as its default font.
+void checkFontWeight() {
+    auto look = std::make_shared<zametti::ZDocStyle>(zametti::settings().style());
+    ZT_EQ("вес по умолчанию — обычный", "400", std::to_string(look->baseFont().weight()));
+    look->setFontWeight(500);
+    ZT_EQ("baseFont несёт вес", "500", std::to_string(look->baseFont().weight()));
+    ZT_TRUE("и кегль с зумом", qFuzzyCompare(look->baseFont(2.0).pointSizeF(), look->baseFontPoint() * 2.0));
+    zametti::ZDocument doc;
+    doc.setStyle(look);
+    doc.loadMarkdown("# a\n\nb `c`\n");
+    ZT_EQ("документ собран шрифтом этого веса", "500",
+          std::to_string(doc.caretAtBlock(0).block().document()->defaultFont().weight()));
+    // Inline code is never lighter than the text: a heavy text lifts it.
+    look->setFontWeight(700);
+    look->setInlineCodeWeight(600);
+    zametti::ZDocument heavy;
+    heavy.setStyle(look);
+    heavy.loadMarkdown("b `c`\n");
+    const QTextBlock b = heavy.caretAtBlock(0).block();
+    int codeWeight = 0;
+    for (auto it = b.begin(); !it.atEnd(); ++it)
+        if (it.fragment().text() == QStringLiteral("c")) codeWeight = it.fragment().charFormat().fontWeight();
+    ZT_EQ("код не легче жирного текста", "700", std::to_string(codeWeight));
+    // The book: its own weight, or the note's.
+    const int noteWeight = zametti::settings().style().fontWeight();
+    ZT_EQ("чтение без своего веса — вес заметки", std::to_string(noteWeight),
+          std::to_string(zametti::settings().readingStyle()->fontWeight()));
+    zametti::mutableSettingsForTests().reading().setFontWeight(600);
+    ZT_EQ("чтение со своим весом", "600", std::to_string(zametti::settings().readingStyle()->fontWeight()));
+    zametti::mutableSettingsForTests().reading().setFontWeight(0);
+}
+
 TEST(DocStyle, All) {
+    checkFontWeight();
     checkInlineCodeLook();
     checkOwnStyle();
     checkReadingLookByRole();

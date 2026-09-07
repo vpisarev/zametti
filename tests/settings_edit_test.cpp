@@ -82,6 +82,31 @@ struct Rig {
 };
 
 // Конфига нет — открылся шаблон; и он разбирается в пустой объект.
+// THE CARET SURVIVES LEAVE AND ENTER (the owner, 07.09.2026): trying values
+// means going in and out many times, and the same key must be under the
+// caret on return; the window carries the place across restarts as well.
+void checkCaretRemembered() {
+    Rig rig(QStringLiteral("caret.json"));
+    ZT_TRUE("вошли", rig.controller.enter());
+    ZT_TRUE("шаблон длинный", rig.view.document()->blockCount() > 20);
+    rig.putCaret(12, 4);
+    ZT_TRUE("записали", rig.controller.save());
+    ZT_EQ("контроллер запомнил строку", "12", std::to_string(rig.controller.line()));
+    ZT_EQ("и колонку", "4", std::to_string(rig.controller.column()));
+    ZT_TRUE("вышли", rig.controller.leave());
+    ZT_TRUE("вошли снова", rig.controller.enter());
+    ZT_EQ("каретка на той же строке", "12", std::to_string(rig.view.caretLine()));
+    ZT_EQ("и в той же колонке", "4", std::to_string(rig.view.caretColumn()));
+    rig.putCaret(3, 1);
+    ZT_TRUE("вышли без Ctrl+S", rig.controller.leave());
+    ZT_EQ("выход тоже запоминает", "3", std::to_string(rig.controller.line()));
+    // The place handed in from outside (state.json) is where the next enter lands.
+    rig.controller.setPlace(7, 2);
+    ZT_TRUE("вошли с места из состояния", rig.controller.enter());
+    ZT_EQ("строка из состояния", "7", std::to_string(rig.view.caretLine()));
+    rig.controller.leave();
+}
+
 void checkOpensTemplate() {
     Rig rig(QStringLiteral("шаблон/config.json"));
     ZT_TRUE("вошли в режим", rig.controller.enter());
@@ -406,6 +431,7 @@ void checkMenuFollowsSelectionColours() {
 
 TEST(SettingsEdit, All) {
     g_dir = zt::TestData::outDir(QStringLiteral("settings-edit"));
+    checkCaretRemembered();
     checkOpensTemplate();
     checkTabAndEnter();
     checkCommentToggle();

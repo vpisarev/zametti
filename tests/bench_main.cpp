@@ -52,6 +52,7 @@ int ztMatrixProbe(int argc, char** argv);
 int ztOpenProbe(int argc, char** argv);
 int ztStartBench(int argc, char** argv);
 int ztFontProbe(int argc, char** argv);
+int ztPagesProbe(int argc, char** argv);
 int ztZoomProbe(int argc, char** argv);
 int ztMdSpacesProbe(int argc, char** argv);
 int ztUiMetricsProbe(int argc, char** argv);
@@ -89,6 +90,7 @@ const Bench kBenches[] = {
     {"open", ztOpenProbe},
     {"start", ztStartBench},
     {"fonts", ztFontProbe},
+    {"pages", ztPagesProbe},
     {"zoom", ztZoomProbe},
     {"md-spaces", ztMdSpacesProbe},
     {"ui-metrics", ztUiMetricsProbe},

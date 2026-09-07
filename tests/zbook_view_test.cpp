@@ -136,19 +136,21 @@ void checkPagesAndKeys() {
     ZT_TRUE("начало — первая строка", rig.left().start() == PageStart{});
 
     const QTextDocument& doc = *rig.left().document();
-    // Turn forward: the second page is the first chapter — a heading of the
-    // chapters' level turns the page (books2), so the title stays alone on
-    // the first one.
-    rig.book->pageStep(+1);
-    const PageStart second = rig.left().start();
-    ZT_TRUE("вторая страница дальше первой", PageStart{} < second);
+    // The first chapter follows the title at once, and headings in a row
+    // share a page (the owner, 07.09.2026): the chapter is on the title's
+    // page, not alone on the second one; the second page starts by the
+    // geometric rule.
     {
         int chapter = -1;
         for (const ZDocument::OutlineEntry& entry : rig.left().note()->outline())
             if (entry.level == 2) { chapter = entry.block; break; }
-        const PageStart chapterStart{chapter, 0};
-        ZT_TRUE("вторая страница начинается первой главой", second == chapterStart);
+        rig.book->showBlock(chapter);
+        ZT_TRUE("первая глава — на странице заголовка", rig.left().start() == PageStart{});
+        rig.book->showBlock(0);
     }
+    rig.book->pageStep(+1);
+    const PageStart second = rig.left().start();
+    ZT_TRUE("вторая страница дальше первой", PageStart{} < second);
     // One more: the third page starts by the geometric rule — the first line
     // that did not fit whole on the chapter's page.
     rig.book->pageStep(+1);
@@ -546,6 +548,29 @@ void checkChapterPages() {
         const LineSpan own = lineSpanOf(*doc.documentLayout(), doc.findBlockByNumber(page.start().block), 0);
         ZT_TRUE("собственный текст страницы на месте", inkIn(own.top, own.bottom));
     }
+    // HEADINGS IN A ROW SHARE A PAGE (the owner, 07.09.2026): «## Volume 1»
+    // directly followed by «### Chapter 1» keeps the chapter with the volume;
+    // the next chapter, after text, turns the page as before.
+    rig.open(note(QStringLiteral("# Book\n\nIntro.\n\n## Volume 1\n\n### Chapter 1\n\nText one.\n\n"
+                                 "### Chapter 2\n\nText two.\n\n## Volume 2\n\n### Chapter 3\n\nText three.\n")));
+    {
+        int volume1 = -1, chapter1 = -1, chapter2 = -1, volume2 = -1, chapter3 = -1;
+        for (const ZDocument::OutlineEntry& entry : rig.left().note()->outline()) {
+            if (entry.text == QStringLiteral("Volume 1")) volume1 = entry.block;
+            if (entry.text == QStringLiteral("Chapter 1")) chapter1 = entry.block;
+            if (entry.text == QStringLiteral("Chapter 2")) chapter2 = entry.block;
+            if (entry.text == QStringLiteral("Volume 2")) volume2 = entry.block;
+            if (entry.text == QStringLiteral("Chapter 3")) chapter3 = entry.block;
+        }
+        ZT_TRUE("заголовки найдены", volume1 > 0 && chapter1 > 0 && chapter2 > 0 && volume2 > 0 && chapter3 > 0);
+        ZT_TRUE("том начинает страницу", startsOwnPage(volume1));
+        ZT_TRUE("глава сразу за томом страницу НЕ рвёт", !startsOwnPage(chapter1));
+        rig.book->showBlock(chapter1);
+        ZT_TRUE("и стоит на странице тома", (rig.left().start() == PageStart{volume1, 0}));
+        ZT_TRUE("глава после текста — на своей странице", startsOwnPage(chapter2));
+        ZT_TRUE("второй том начинает страницу", startsOwnPage(volume2));
+        ZT_TRUE("и его первая глава остаётся с ним", !startsOwnPage(chapter3));
+    }
     // Many H1 parts with H3 sections and H4 parts inside: headings down to
     // reading.pageBreakLevel (3) turn the page, the H4 right after an H3
     // shares its page (a novel's parts inside chapters).
@@ -832,6 +857,51 @@ void checkBookmarks() {
 }
 
 }  // namespace
+
+// A PICTURE TALLER THAN THE PAGE (owner's report, 07.09.2026: blank pages in
+// the middle of Robinson Crusoe): the page that began with it painted paper
+// only — the cut-line mask took the page's own first line. Now the picture is
+// laid out no taller than the page, and a page never masks its first line.
+void checkTallPictureFitsPage() {
+    Rig rig;
+    QString error;
+    const QString root = rig.storage->root();
+    QImage tall(1200, 4000, QImage::Format_RGB32);
+    tall.fill(QColor(40, 90, 160));
+    ZT_TRUE("картинка записана", tall.save(root + QStringLiteral("/tallpic.jpg"), "JPG"));
+    const QString id = rig.storage->createNote(QString(), false, &error);
+    const QString path = rig.storage->pathOf(id);
+    QString text = QStringLiteral("<!-- zametti\nrole: book\n-->\n\n# Pictures\n\n");
+    for (int i = 0; i < 3; ++i) text += QStringLiteral("A paragraph before the picture, number %1.\n\n").arg(i);
+    text += QStringLiteral("![](tallpic.jpg)\n\nA paragraph after the picture.\n\n");
+    for (int i = 0; i < 30; ++i) text += QStringLiteral("More text %1.\n\n").arg(i);
+    writeFile(path, text);
+    rig.storage->reload();
+    rig.open(path);
+    ZT_TRUE("книга открылась", rig.controller.active());
+    const QTextDocument& doc = *rig.left().document();
+    int pictureBlock = -1;
+    for (QTextBlock b = doc.begin(); b.isValid(); b = b.next())
+        if (b.text().startsWith(QChar(0xFFFC))) { pictureBlock = b.blockNumber(); break; }
+    ZT_TRUE("блок картинки найден", pictureBlock > 0);
+    rig.book->showBlock(pictureBlock);
+    QTest::qWait(120);
+    BookPage& page = rig.left();
+    const LineSpan span = lineSpanOf(*doc.documentLayout(), doc.findBlockByNumber(pictureBlock), 0);
+    ZT_TRUE("строка картинки не выше страницы: " + std::to_string(int(span.bottom - span.top)) + " из " +
+                std::to_string(int(page.pageHeight())),
+            span.bottom - span.top <= page.pageHeight() + 0.5);
+    const QImage shot = page.viewport()->grab().toImage();
+    const QRgb paper = page.palette().color(QPalette::Base).rgb();
+    qint64 ink = 0;
+    for (int y = 0; y < shot.height(); ++y)
+        for (int x = 0; x < shot.width(); ++x)
+            if (shot.pixel(x, y) != paper) ++ink;
+    const double share = double(ink) / double(shot.width() * shot.height());
+    ZT_TRUE("страница с картинкой не пустая: чернил " + std::to_string(share), share > 0.01);
+}
+
+TEST(BookView, TallPicture) { checkTallPictureFitsPage(); }
 
 TEST(BookView, ChapterPages) {
     checkChapterPages();

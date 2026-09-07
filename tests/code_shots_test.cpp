@@ -17,6 +17,7 @@
 #include "lang_editor.h"
 #include "note_view.h"
 #include "settings.h"
+#include "resources.h"
 #include "test_util.h"
 #include <QFontInfo>
 #include "settings_hook.h"
@@ -767,7 +768,7 @@ void inlineShots() {
             const QTextCharFormat f = it.fragment().charFormat();
             if ((f.intProperty(zametti::SpanStyleProperty) & zametti::SpanCode) == 0) continue;
             ++coded;
-            const QFont resolved = editor.document()->defaultFont().resolve(f.font());
+            const QFont resolved = f.font().resolve(editor.document()->defaultFont());
             const QFontInfo info(resolved);
             check(info.weight() == zametti::settings().style().inlineCodeWeight(),
                   "inline-код разрешён в вес " + std::to_string(info.weight()));
@@ -797,6 +798,9 @@ static int ztRunSuite(int argc, char** argv) {
     }
     g_shots = QString::fromLocal8Bit(argv[1]);
     QDir().mkpath(g_shots);
+    // The shots are of the embedded fonts, not of whatever the machine has:
+    // alone in a filtered run the suite drew tofu (07.09.2026).
+    zametti::loadEmbeddedFonts();
     g_store = QDir(g_shots).filePath(QStringLiteral("хранилище"));
     zt::dropTree(g_store);
     QDir().mkpath(g_store);
