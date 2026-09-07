@@ -57,12 +57,7 @@ namespace {
 
 
 
-QFont baseFontFor(qreal zoom, const ZDocStyle& style) {
-    QFont font{QString(style.fontFamily())};
-    font.setPointSizeF(style.baseFontPoint() * zoom);
-    font.setStyleHint(QFont::Monospace);
-    return font;
-}
+QFont baseFontFor(qreal zoom, const ZDocStyle& style) { return style.baseFont(zoom); }
 
 // Отбивка после фотографии (и перед ней, когда виден текст строки).
 qreal imageGap(qreal zoom) { return 6.0 * zoom; }
@@ -217,6 +212,10 @@ qreal NoteView::displayScale() const {
 }
 
 QFont NoteView::zoomedBaseFont(qreal zoom) const { return baseFontFor(zoom, docStyle()); }
+
+qreal NoteView::tallestImageHeight() const {
+    return 4.0 * (viewport()->height() > 0 ? viewport()->height() : 1000);
+}
 
 void NoteView::setZoom(qreal zoom) {
     zoom_ = zoom;
@@ -902,7 +901,7 @@ QSizeF NoteView::imageDisplaySize(QSize natural_, qreal widthHint,
     // Ужимаем ОБЕ стороны сразу — картинка остаётся собой, только мельче, и
     // пропорции целы. Правило одно на фотографию и на рамку-заглушку: иначе
     // вёрстка прыгала бы при смене потолка разжатия.
-    const qreal tallest = 4.0 * (viewport()->height() > 0 ? viewport()->height() : 1000);
+    const qreal tallest = tallestImageHeight();
     if (height > tallest) {
         width *= tallest / height;
         height = tallest;

@@ -109,6 +109,17 @@ struct ZDocStyle {
     // --- шрифт ---
     ZM_SETTING_PLAIN(QString, fontFamily, FontFamily, QStringLiteral("IBM Plex Mono"))
     ZM_SETTING(qreal, baseFontPoint, BaseFontPoint, 11.0, 4.0, 96.0)
+    // The weight of the text (the owner, 07.09.2026): a light serif reads
+    // thin in a book, and the embedded families carry every weight — Plex
+    // Mono 400/600/700, Source Serif 4 and Source Code Pro the whole axis.
+    // Bold stays 700 on top of it; inline code is never lighter than this.
+    ZM_SETTING(int, fontWeight, FontWeight, 400, 100, 900)
+public:
+    // THE ONE BASE FONT of a note at this look: family, size × zoom, weight.
+    // The builder's default font, the view's zoom and the book page all take
+    // it here — three copies of the same QFont used to drift by a style hint,
+    // and a font that differed only by the hint forced a relayout.
+    QFont baseFont(qreal zoom = 1.0) const;
     // Нужен только шрифтовым вариантам чекбокса: в IBM Plex Mono нет U+2610.
     ZM_SETTING_PLAIN(QString, symbolFamily, SymbolFamily, QStringLiteral("DejaVu Sans Mono"))
     // Код — блоки и вставки в строке. Гарнитура отдельная: основной шрифт может
@@ -1316,6 +1327,9 @@ struct ZSettings {
         ZM_SETTING_PLAIN(QString, fontFamily, FontFamily, QStringLiteral("Source Serif 4"))
         // Zero = the note font's size.
         ZM_SETTING(qreal, fontPoint, FontPoint, 0.0, 0.0, 96.0)
+        // The weight of the book text; zero = the note's (fonts.noteWeight).
+        // IBM Plex Serif at 400 reads thin as a book — 500 is the owner's cure.
+        ZM_SETTING(int, fontWeight, FontWeight, 0, 0, 900)
         // The step of CODE BLOCKS relative to the book text (the same ladder as
         // fonts.codeStep; Qt gives no finer ratio, and the step is what lets a
         // zoom stay one setDefaultFont). Level with the prose (the owner,

@@ -153,6 +153,10 @@ const std::vector<Key>& keys() {
                    style(), fontFamily, FontFamily),
         ZM_KEY_REAL("fonts", "noteSize", "size of the note font, in points", style(),
                     baseFontPoint, BaseFontPoint),
+        ZM_KEY_INT("fonts", "noteWeight",
+                   "weight of the note text: 400 = regular, 500 = medium, 600 = semibold; bold "
+                   "stays 700 on top of it",
+                   style(), fontWeight, FontWeight),
         ZM_KEY_STR("fonts", "monospaceFamily", "code, source mode, history and this editor",
                    style(), codeFamily, CodeFamily),
         ZM_KEY_REAL("fonts", "monospaceSize",
@@ -362,6 +366,9 @@ const std::vector<Key>& keys() {
                    reading(), fontFamily, FontFamily),
         ZM_KEY_REAL("reading", "fontSize", "size of the book font, in points; 0 = the note font",
                     reading(), fontPoint, FontPoint),
+        ZM_KEY_INT("reading", "fontWeight",
+                   "weight of the book text: 0 = the note's, 500 = medium for a light serif",
+                   reading(), fontWeight, FontWeight),
         ZM_KEY_INT("reading", "codeStep",
                    "size of code blocks in a book, as a step from the book text; 0 = level with it",
                    reading(), codeStep, CodeStep),
@@ -459,6 +466,7 @@ std::shared_ptr<const ZDocStyle> ZSettings::readingStyle() const {
     const Reading& r = reading_;
     if (!r.fontFamily().isEmpty()) look->setFontFamily(r.fontFamily());
     if (r.fontPoint() > 0.0) look->setBaseFontPoint(r.fontPoint());
+    if (r.fontWeight() > 0) look->setFontWeight(r.fontWeight());
     look->setCodeStep(r.codeStep());
     // The code families of a book (the owner, 07.09.2026): blocks in the
     // serif's companion, inline code in the book font itself unless told
@@ -522,6 +530,16 @@ CodePlate codePlate(const ZDocStyle& look, qreal scale) {
     return plate;
 }
 
+QFont ZDocStyle::baseFont(qreal zoom) const {
+    QFont font{QString(fontFamily_)};
+    font.setPointSizeF(baseFontPoint_ * (zoom > 0.0 ? zoom : 1.0));
+    font.setWeight(QFont::Weight(fontWeight_));
+    // The hint only matters when the family is missing: a monospace note font
+    // falls back to a monospace, anything else to the platform's default.
+    font.setStyleHint(fontFamily_ == codeFamily_ ? QFont::Monospace : QFont::AnyStyle);
+    return font;
+}
+
 int ZDocStyle::inlineCodeStep(int surroundingStep) const {
     return inlineCodeFamily_.isEmpty() ? surroundingStep : surroundingStep + codeStep_;
 }
@@ -532,7 +550,8 @@ void ZDocStyle::applyInlineCodeLook(QTextCharFormat& format, int surroundingWeig
     // Never lighter than the text around: bold stays bold, a heading stays a
     // heading. The block's char format carries the heading's weight, and a
     // fresh span format reports 400 — hence the weight is named by the caller.
-    format.setFontWeight(std::max({format.fontWeight(), surroundingWeight, inlineCodeWeight_}));
+    format.setFontWeight(
+        std::max({format.fontWeight(), surroundingWeight, fontWeight_, inlineCodeWeight_}));
     if (inlineCodeColor_.alpha() > 0) format.setForeground(inlineCodeColor_);
 }
 

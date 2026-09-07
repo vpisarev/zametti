@@ -23,12 +23,7 @@
 namespace zametti {
 
 namespace {
-QFont baseFontOf(qreal zoom, const ZDocStyle& style) {
-    QFont font{QString(style.fontFamily())};
-    font.setPointSizeF(style.baseFontPoint() * zoom);
-    font.setStyleHint(QFont::Serif);
-    return font;
-}
+QFont baseFontOf(qreal zoom, const ZDocStyle& style) { return style.baseFont(zoom); }
 }  // namespace
 
 BookPage::BookPage(QWidget* parent)
@@ -482,6 +477,7 @@ void BookPage::paintEvent(QPaintEvent* event) {
             end_->line < endBlock.layout()->lineCount())
             maskTop = std::min(maskTop, lineSpanOf(layout, endBlock, end_->line).top);
     }
+    const qreal startTop = startTopY();
     if (maskTop >= bottom) {
         QTextBlock block = blockAtHeight(bottom);
         if (block.isValid() && block.layout() != nullptr) {
@@ -495,6 +491,12 @@ void BookPage::paintEvent(QPaintEvent* event) {
             }
         }
     }
+    // BUT NEVER THE PAGE'S OWN FIRST LINE (owner's report, 07.09.2026: empty
+    // pages in the middle of Robinson Crusoe). A picture taller than the page
+    // is the line that crosses the bottom, and its top is the page's top:
+    // masking it painted a blank leaf. The top of the picture is shown — a
+    // cropped illustration beats an empty page.
+    if (maskTop <= startTop + 0.5) maskTop = bottom;
     QPainter painter(viewport());
     if (maskTop < bottom)
         painter.fillRect(QRectF(0.0, maskTop - scroll, viewport()->width(),
@@ -505,9 +507,16 @@ void BookPage::paintEvent(QPaintEvent* event) {
     // showed the tail of the page before above its own first line (owner's
     // report, 07.09.2026: the picture twice, on both pages of the spread).
     // Whatever lies above the start is paper too.
-    const qreal startTop = startTopY();
     if (startTop - scroll > 0.5)
         painter.fillRect(QRectF(0.0, 0.0, viewport()->width(), startTop - scroll), pageColour());
+}
+
+qreal BookPage::tallestImageHeight() const {
+    // Before the page has a size (a widget not shown yet) the editor's rule
+    // holds; otherwise the picture, its caption and the air above must fit.
+    if (viewport()->height() <= 0) return NoteView::tallestImageHeight();
+    const qreal caption = 3.0 * QFontMetricsF(font()).height();
+    return std::max(64.0, pageHeight() - pagePadding() - caption);
 }
 
 qreal BookPage::startTopY() const {

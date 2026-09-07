@@ -346,12 +346,7 @@ void applyEmptyLineHeight(QTextBlockFormat& format, qreal linePoint, const QFont
     else applyLineHeight(format, factor, linePoint, base, style);
 }
 
-QFont layoutBaseFont(const ZDocStyle& style) {
-    QFont base{QString(style.fontFamily())};
-    base.setPointSizeF(style.baseFontPoint());
-    base.setStyleHint(QFont::Monospace);
-    return base;
-}
+QFont layoutBaseFont(const ZDocStyle& style) { return style.baseFont(); }
 
 qreal layoutLineUnit(const ZDocStyle& style) {
     return QFontMetricsF(layoutBaseFont(style)).height();
