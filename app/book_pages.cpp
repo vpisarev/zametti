@@ -94,17 +94,24 @@ bool BookPages::extend() {
     const QAbstractTextDocumentLayout* layout = doc_->documentLayout();
     QTextBlock block = doc_->findBlockByNumber(last.block);
     bool first = true;
+    // HEADINGS IN A ROW SHARE A PAGE (the owner, 07.09.2026): «## Volume 1»
+    // followed by «### Chapter 1» must not leave the volume alone on a page.
+    // While the page holds nothing but headings and the blank lines between
+    // them, a heading does not turn it — whatever its level.
+    bool onlyHeadings = last.line == 0;
     for (; block.isValid(); block = block.next(), first = false) {
         // A chapter begins a page of its own (books2): the heading that is
         // not already the page's first line turns the page. The collapsed
         // blank line before it stays at the foot of the previous page.
-        if (!first && breakLevel_ > 0 && kindOf(block) == Kind::Heading) {
+        const Kind kind = kindOf(block);
+        if (!first && breakLevel_ > 0 && kind == Kind::Heading && !onlyHeadings) {
             const int level = block.blockFormat().headingLevel();
             if (level > 0 && level <= breakLevel_) {
                 starts_.push_back({block.blockNumber(), 0});
                 return true;
             }
         }
+        if (kind != Kind::Heading && kind != Kind::VSpace) onlyHeadings = false;
         (void)layout->blockBoundingRect(block);   // lays the block out
         const QTextLayout* tl = block.layout();
         if (tl == nullptr) continue;
