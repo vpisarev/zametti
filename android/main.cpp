@@ -23,6 +23,8 @@
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QTimer>
 #include <QStandardPaths>
 #include <QStyleFactory>
 
@@ -83,6 +85,29 @@ int main(int argc, char* argv[]) {
     zametti::MobileWindow window(storage, root);
     window.show();
     zametti::perfLog("window shown", clock.elapsed());
+
+    // THE PROBE DOOR for the measurements (brief §9): a file next to the
+    // store naming a note id — `adb shell run-as … sh -c 'echo <id> > files/probe-open'`
+    // — opens that note as soon as the list is on screen, so that "open →
+    // paint" of a NAMED note (the Karamazovs, the formulas) is measured on
+    // the real path, without hunting for its row by coordinates. Read once,
+    // never written by the program.
+    if (storage != nullptr) {
+        QFile probe(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                    QStringLiteral("/probe-open"));
+        if (probe.open(QIODevice::ReadOnly)) {
+            const QString id = QString::fromUtf8(probe.readAll()).trimmed();
+            const QString file = storage->pathOf(id);
+            qCInfo(lcZametti) << "probe-open" << id << (file.isEmpty() ? "(unknown id)" : "");
+            // After the window has settled: opened at once, the pages would
+            // be laid out for the pre-safe-area size and the first spread
+            // would come out wider than the screen (seen: 1233 pages instead
+            // of 1332, the right edge clipped). The delay is not measured —
+            // the [perf] clock starts inside open().
+            if (!file.isEmpty())
+                QTimer::singleShot(300, &window, [&window, file] { window.openNote(file); });
+        }
+    }
 
     const auto saveAll = [&] {
         window.rememberPlaces();
