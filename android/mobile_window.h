@@ -37,6 +37,7 @@ public:
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     NotePanels panels_;
@@ -44,6 +45,7 @@ private:
     NoteListPage* list_;
     NotePage* note_;
     bool choosingFolder_ = false;
+    bool safeAreaWired_ = false;
 };
 
 }  // namespace zametti

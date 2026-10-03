@@ -39,7 +39,9 @@ case "$cmd" in
         # unpacks and the name is fixed afterwards. Binary-safe, one pipe.
         tar -C "$parent" -cf - "$name" | adb exec-in run-as "$PKG" tar -xf - -C files
         [ "$name" = vpnotes ] || adb shell run-as "$PKG" mv "files/$name" files/vpnotes
-        adb shell run-as "$PKG" sh -c 'ls files/vpnotes | wc -l; du -sk files/vpnotes'
+        # Counted on the mac: a quoted `sh -c` does not survive `adb shell`.
+        echo "entries: $(adb shell run-as "$PKG" ls files/vpnotes | wc -l | tr -d ' ')"
+        adb shell run-as "$PKG" du -sk files/vpnotes
         ;;
     start)
         adb shell am start -W -n "$ACTIVITY" | grep -E 'TotalTime|WaitTime|Status'
