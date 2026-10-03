@@ -140,15 +140,18 @@ cmake --install .
 echo "=== 16 KB check over $ZANDROID_PREFIX ==="
 check16k "$ZANDROID_PREFIX"/lib/libQt6*.so "$ZANDROID_PREFIX"/plugins/*/*.so
 
-# OpenSSL must be INSIDE libQt6Network: its symbols defined there, none
-# imported. Otherwise the APK would need loose libssl/libcrypto and TLS would
-# fail at the first connection.
-net="$ZANDROID_PREFIX/lib/libQt6Network_$ZANDROID_ABI.so"
-[ -f "$net" ] || { echo "no $net" >&2; exit 1; }
-if "$ZNDK_BIN/llvm-nm" -D "$net" | grep -q ' U SSL_new'; then
-    echo "OpenSSL is NOT linked into libQt6Network (SSL_new imported)" >&2; exit 1
+# OpenSSL must be INSIDE the TLS plugin. In Qt 6 the TLS backend is a plugin
+# (plugins/tls/libplugins_tls_qopensslbackend), and -openssl-linked links the
+# static archives into THAT library, not into libQt6Network: SSL_new defined
+# there, none imported. Otherwise the APK would need loose libssl/libcrypto
+# and TLS would fail at the first connection.
+tls="$ZANDROID_PREFIX/plugins/tls/libplugins_tls_qopensslbackend_$ZANDROID_ABI.so"
+[ -f "$tls" ] || { echo "no OpenSSL TLS plugin: $tls" >&2; exit 1; }
+if "$ZNDK_BIN/llvm-nm" -D "$tls" | grep -q ' U SSL_new'; then
+    echo "OpenSSL is NOT linked into the TLS plugin (SSL_new imported)" >&2; exit 1
 fi
-"$ZNDK_BIN/llvm-nm" -D --defined-only "$net" | grep -q ' SSL_new' || {
-    echo "OpenSSL is NOT linked into libQt6Network (no SSL_new at all)" >&2; exit 1
+"$ZNDK_BIN/llvm-nm" -D --defined-only "$tls" | grep -q ' SSL_new' || {
+    echo "OpenSSL is NOT linked into the TLS plugin (no SSL_new at all)" >&2; exit 1
 }
+echo "TLS plugin: $(strings "$tls" | grep -m1 -E 'OpenSSL 3\.' || echo 'OpenSSL version string not found')"
 echo "=== Qt for Android ready: $ZANDROID_PREFIX ==="

@@ -77,11 +77,16 @@ check16k "$tmp"/lib/*/*.so
 abis="$(ls "$tmp/lib")"
 [ "$abis" = "$ZANDROID_ABI" ] || { echo "unexpected ABIs in the APK: $abis" >&2; exit 1; }
 
-# OpenSSL lives inside libQt6Network; a loose copy would mean the Qt build
-# went the dlopen way and TLS would depend on what else is in the APK.
+# OpenSSL lives inside the TLS plugin; a loose copy would mean the Qt build
+# went the dlopen way and TLS would depend on what else is in the APK. And
+# the plugin itself must have come along — without it QNetworkAccessManager
+# has no TLS at all and https fails quietly.
 if ls "$tmp/lib/$ZANDROID_ABI" | grep -q -E '^lib(ssl|crypto)'; then
     echo "loose OpenSSL libraries in the APK" >&2; exit 1
 fi
+[ -f "$tmp/lib/$ZANDROID_ABI/libplugins_tls_qopensslbackend_$ZANDROID_ABI.so" ] || {
+    echo "the OpenSSL TLS plugin is not in the APK" >&2; exit 1
+}
 
 # NEEDED of our own library: the system's, the NDK's libc++, Qt's — nothing
 # else, because nothing else gets packaged (androiddeployqt copies Qt and
