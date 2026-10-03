@@ -826,6 +826,15 @@ int totalMemoryMb() {
 // Запаса на зум не даём — колонка текста и так заметно уже экрана. Слабая
 // машина опускает предел ещё: там дороже каждая копия.
 int derivedImageSizeLimit() {
+#if defined(Q_OS_ANDROID)
+    // THE PHONE (the owner's number, 03.10.2026): 800 — about 640 K pixels per
+    // picture. The screen is smaller both physically and in pixels than any
+    // desktop, the memory of the process is counted against the device, and
+    // an illustrated book (the Karamazovs, 32 pictures) took 286 MB of PSS
+    // with the desktop rule. Not a floor of 1024 as below: that floor is the
+    // desktop's.
+    return 800;
+#else
     int screenSide = 0;
     for (const QScreen* screen : QGuiApplication::screens()) {
         const QSize size = screen->size() * screen->devicePixelRatio();
@@ -840,6 +849,7 @@ int derivedImageSizeLimit() {
     if (memory > 0 && memory < 4096) limit = qMin(limit, 1600);
     else if (memory > 0 && memory < 8192) limit = qMin(limit, 2560);
     return qBound(1024, limit, 4096);
+#endif
 }
 
 int g_loadedImageSizeLimit = 0;

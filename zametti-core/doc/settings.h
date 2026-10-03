@@ -907,7 +907,16 @@ struct ZSettings {
         // Потолок мягкий: картинки ОТКРЫТОЙ заметки не вытесняются никогда, так
         // что на одну заметку кэша хватает всегда, даже если она одна больше
         // бюджета. Это правило владельца, а не следствие реализации.
+        // ON THE PHONE the budgets are smaller by default (the owner, 03.10.2026:
+        // limit the cache of recent notes and the pictures). The numbers are
+        // the first guess, not a measured threshold: 128 MB of pictures is a
+        // screenful of 800-pixel copies forty times over, 16 MB of documents is
+        // a few recent notes; the config overrides both as on the desktop.
+#if defined(Q_OS_ANDROID)
+        ZM_SETTING(int, imageCacheSizeMb, ImageCacheSizeMb, 128, 8, 8192)
+#else
         ZM_SETTING(int, imageCacheSizeMb, ImageCacheSizeMb, 1024, 8, 8192)
+#endif
         // Предел стороны картинки в памяти, пиксели. Прочитанная с диска картинка
         // сразу ужимается так, чтобы ни одна сторона его не превышала; пропорции
         // сохраняются. ВВЕРХ не растягиваем никогда: картинка мельче предела
@@ -945,7 +954,11 @@ struct ZSettings {
         //
         // Картинки в оценку не входят: в документах лежат общие копии из кэша
         // картинок, и считает их imageCacheSizeMb.
+#if defined(Q_OS_ANDROID)
+        ZM_SETTING(int, documentCacheSizeMb, DocumentCacheSizeMb, 16, 1, 4096)
+#else
         ZM_SETTING(int, documentCacheSizeMb, DocumentCacheSizeMb, 64, 1, 4096)
+#endif
     };
 
 
