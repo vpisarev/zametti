@@ -174,7 +174,13 @@ target_link_libraries(zametti-core
 #
 # Воплощение ровно одно на сборку — файлы взаимоисключающие, и общий у них
 # только заголовок keyring_secrets.h.
-if(UNIX AND NOT APPLE)
+# ANDROID FIRST: in CMake Android is UNIX, and without this branch the phone
+# would be handed the Secret Service over QDBus — a bus it does not have. The
+# stub is the honest answer until the Keystore brief: available() == false,
+# the sync asks the password per session and keeps the key in memory.
+if(ANDROID)
+    target_sources(zametti-core PRIVATE sync/keyring_secrets_stub.cpp)
+elseif(UNIX AND NOT APPLE)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
     target_sources(zametti-core PRIVATE sync/keyring_secrets_dbus.cpp)
     target_link_libraries(zametti-core PRIVATE Qt6::DBus)
@@ -209,7 +215,12 @@ target_link_libraries(zametti-core PRIVATE libheif libgav1)
 # параллелятся даром. OpenMP берём, ТОЛЬКО если компилятор его даёт: на macOS с
 # AppleClang он требует отдельной libomp, а зависеть от неё нельзя (правило
 # владельца — компилятор, CMake и Qt, и ничего больше).
-find_package(OpenMP QUIET COMPONENTS CXX)
+# Not on Android: the NDK's OpenMP is libomp.so, and androiddeployqt packages
+# Qt and libc++_shared.so only — the library would load on the mac and be
+# missing on the phone.
+if(NOT ANDROID)
+    find_package(OpenMP QUIET COMPONENTS CXX)
+endif()
 if(OpenMP_CXX_FOUND)
     target_link_libraries(zametti-core PRIVATE OpenMP::OpenMP_CXX)
     set(ZAMETTI_HAVE_OPENMP ON PARENT_SCOPE)

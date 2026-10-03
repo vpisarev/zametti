@@ -190,6 +190,10 @@ target_include_directories(zametti-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(zametti-ui PUBLIC zametti-core Qt6::Widgets Qt6::Svg)
 target_link_libraries(zametti-ui PRIVATE zametti-code-rules)
 
+# THE DESKTOP PROGRAM. On Android only the window layer above is built: the
+# phone has its own shell (android/), which links zametti-ui as a library.
+if(NOT ANDROID)
+
 # qt_add_executable, а не add_executable: при СТАТИЧЕСКОМ Qt программе нужен
 # ещё и плагин платформы (cocoa, xcb, windows), а он такой же статический
 # архив, и вписать его в компоновку должен кто-то знающий. Знает Qt — этим
@@ -282,3 +286,5 @@ install(FILES ${CMAKE_SOURCE_DIR}/resources/${ZAMETTI_ICON}
         ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${zametti_icon_dir}x${zametti_icon_dir}/apps)
 
 endif()
+
+endif()  # NOT ANDROID — the desktop program

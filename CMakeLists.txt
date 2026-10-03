@@ -325,7 +325,12 @@ add_subdirectory(3rdparty/libde265)
 add_subdirectory(3rdparty/libgav1)
 add_subdirectory(3rdparty/libheif)
 add_subdirectory(3rdparty/libsodium)
-add_subdirectory(3rdparty/gtest)
+# gtest serves the suites only, and the suites do not go to the phone (there
+# is no ctest on Android; qt_add_executable would turn every suite into an
+# APK of its own).
+if(NOT ANDROID)
+    add_subdirectory(3rdparty/gtest)
+endif()
 
 # Дальше — то, что мы отлаживаем: microtex и всё своё.
 if(NOT MSVC)
@@ -336,7 +341,15 @@ endif()
 add_subdirectory(3rdparty/microtex)
 add_subdirectory(zametti-core)
 add_subdirectory(app)
-add_subdirectory(tests)
+# ANDROID: the window layer (zametti-ui) is built as is, the desktop program
+# and the suites are not; the phone gets its own shell in android/. Everything
+# Android-specific sits behind if(ANDROID) — the desktop build must not change
+# by a single byte of output (brief android0, §2).
+if(ANDROID)
+    add_subdirectory(android)
+else()
+    add_subdirectory(tests)
+endif()
 
 # --- сводка ---------------------------------------------------------------
 #
@@ -451,6 +464,8 @@ function(zametti_summary)
     # означало лишь, что не упало, — а собралось при этом одно ядро.
     if(TARGET zametti)
         zametti_row("the program: " "`build`")
+    elseif(TARGET zametti-android)
+        zametti_row("the program: " "`zametti-android (apk)`")
     else()
         zametti_row("the program: " "`SKIP` — ${ZAMETTI_APP_SKIPPED}")
     endif()
