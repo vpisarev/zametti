@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -126,8 +127,16 @@ bool NotePage::eventFilter(QObject* watched, QEvent* event) {
     switch (event->type()) {
     case QEvent::Paint:
         if (awaited_ != nullptr) {
-            perfLog(QByteArray(awaited_) + " → paint", clock_.elapsed());
+            // Two marks: when the paint STARTS (the layout is done) and when
+            // the event loop gets its turn back (the paint — formulas, images,
+            // glyphs — is on screen). The second is the brief's "first page
+            // on screen".
+            const QByteArray what = awaited_;
             awaited_ = nullptr;
+            perfLog(what + " → paint begins", clock_.elapsed());
+            QTimer::singleShot(0, this, [this, what] {
+                perfLog(what + " → painted", clock_.elapsed());
+            });
         }
         return false;
     case QEvent::MouseButtonPress: {
