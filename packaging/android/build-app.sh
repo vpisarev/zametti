@@ -49,8 +49,12 @@ echo "=== configure → $OUT ==="
     -DCMAKE_BUILD_TYPE=Release \
     -DQT_HOST_PATH="$ZHOSTQT" \
     -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" \
-    -DQT_ANDROID_DEPLOYMENT_TYPE=DEBUG \
-    -DQT_ANDROID_SDK_BUILD_TOOLS_REVISION="$ZANDROID_BUILD_TOOLS"
+    -DQT_ANDROID_DEPLOYMENT_TYPE=DEBUG
+# The build-tools revision is NOT passed as -DQT_ANDROID_SDK_BUILD_TOOLS_REVISION:
+# in Qt 6.10.3 that variable makes _qt_internal_android_get_sdk_build_tools_revision
+# skip the lookup without setting its result, and gradle gets an empty
+# buildToolsVersion ("Invalid revision"). Qt picks the newest installed one
+# itself, and build-qt.sh demands that exactly $ZANDROID_BUILD_TOOLS is installed.
 
 # Two explicit targets, not a bare `cmake --build`: the global apk target is
 # part of ALL for user projects, and a bare build would run gradle for every
