@@ -1,0 +1,11 @@
+{
+    "fonts": {
+        "appSize": 16,
+        "noteSize": 22,
+        "monospaceSize": 22
+    },
+    "reading": {
+        "fontSize": 22,
+        "sideMargin": 1.5
+    }
+}

@@ -24,6 +24,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QTimer>
 #include <QStandardPaths>
 #include <QStyleFactory>
@@ -62,6 +63,22 @@ int main(int argc, char* argv[]) {
     }
     zametti::perfLog("formulas", clock.elapsed());
 
+    // THE PHONE'S OWN DEFAULT CONFIG (the owner, 03.10.2026): the desktop's
+    // numbers are for a desktop — on a 6-inch screen the fonts need to be
+    // about twice the size. The file travels inside the APK and is copied to
+    // the config directory on the first start only; from then on it is the
+    // user's config, edited on the device, read by the same loader as on the
+    // desktop. (The cache budgets are not config keys; their Android defaults
+    // sit in zametti-core/doc/settings.h.)
+    {
+        const QString path = zametti::configPath();
+        if (!QFile::exists(path)) {
+            QDir().mkpath(QFileInfo(path).absolutePath());
+            if (QFile::copy(QStringLiteral(":/android/config.json"), path))
+                QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
+            qCInfo(lcZametti) << "default config written to" << path;
+        }
+    }
     zametti::ZApp zapp;
     {
         QString error;
@@ -71,6 +88,14 @@ int main(int argc, char* argv[]) {
         for (const QString& key : unknown) qCWarning(lcZametti) << "unknown setting:" << key;
     }
     QApplication::setFont(zapp.uiStyle().appFont());
+    // The budgets the phone runs with, for the logcat and the report: the
+    // picture side limit (0 in the config = derived, 800 on Android), the
+    // picture cache and the cache of recent notes.
+    qCInfo(lcZametti).noquote()
+        << QStringLiteral("limits: image side %1 px, image cache %2 MB, document cache %3 MB")
+               .arg(zapp.images().sideLimit())
+               .arg(zametti::settings().cache().imageCacheSizeMb())
+               .arg(zametti::settings().cache().documentCacheSizeMb());
 
     const QString root = expectedStoreRoot();
     std::shared_ptr<zametti::ZStorage> storage;

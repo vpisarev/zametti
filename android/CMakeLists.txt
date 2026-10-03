@@ -20,6 +20,7 @@
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg Network)
 
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 qt_add_executable(zametti-android MANUAL_FINALIZATION
     main.cpp
@@ -33,6 +34,7 @@ qt_add_executable(zametti-android MANUAL_FINALIZATION
     note_page.cpp
     perf_log.h
     perf_log.cpp
+    android.qrc
 )
 
 # Qt6::Network is linked by the program itself and not only through the core

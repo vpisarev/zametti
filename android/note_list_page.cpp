@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QListView>
 #include <QMenu>
+#include <QResizeEvent>
 #include <QScroller>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -36,27 +37,37 @@ NoteListPage::NoteListPage(NotePanels& panels, QWidget* parent)
       folder_(toolButton(QStringLiteral("All notes"), this)),
       sort_(toolButton(QStringLiteral("Sort"), this)),
       sortMenu_(new QMenu(this)),
-      newFolder_(toolButton(QStringLiteral("+ folder"), this)),
-      newNote_(toolButton(QStringLiteral("+ note"), this)),
+      newFolder_(toolButton(QStringLiteral("+"), this)),
+      newNote_(toolButton(QStringLiteral("+"), this)),
       hint_(new QLabel(this)) {
     clock_.start();
 
     folder_->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    folder_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    // Ignored, not Expanding: a button's minimum is its text, and a long
+    // folder name must not push the toolbar — and the page — past the screen
+    // (the same trap as the note title, see note_page.cpp).
+    folder_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     connect(folder_, &QToolButton::clicked, this, &NoteListPage::folderRequested);
 
     sort_->setMenu(sortMenu_);
     sort_->setPopupMode(QToolButton::InstantPopup);
+    // Same as the folder button: the sort title is long ("By modified date,
+    // newest first") and must not dictate the width either.
+    sort_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     rebuildSortMenu();
 
-    // Present, as the brief asks, and disabled: step 0 does not edit.
+    // Present, as the brief asks, and disabled: step 0 does not edit. Short
+    // labels — the full ones do not fit a phone's toolbar next to the folder
+    // and the sort order; the tooltips carry the names.
+    newFolder_->setToolTip(QStringLiteral("New folder"));
+    newNote_->setToolTip(QStringLiteral("New note"));
     newFolder_->setEnabled(false);
     newNote_->setEnabled(false);
 
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(4, 0, 4, 0);
-    bar->addWidget(folder_, 1);
-    bar->addWidget(sort_);
+    bar->addWidget(folder_, 2);
+    bar->addWidget(sort_, 3);
     bar->addWidget(newFolder_);
     bar->addWidget(newNote_);
 
@@ -89,9 +100,22 @@ NoteListPage::NoteListPage(NotePanels& panels, QWidget* parent)
             [this](const QModelIndex&, const QModelIndex&) { syncFolderButton(); });
     connect(&panels_, &NotePanels::sortShown, this,
             [this](SortOrder order, bool fromMark) {
-                sort_->setText(sortOrderTitle(order) + (fromMark ? QStringLiteral(" ·") : QString()));
+                sortText_ = sortOrderTitle(order) + (fromMark ? QStringLiteral(" ·") : QString());
+                elideButtons();
             });
     syncFolderButton();
+}
+
+void NoteListPage::elideButtons() {
+    folder_->setText(folder_->fontMetrics().elidedText(folderText_, Qt::ElideRight,
+                                                        qMax(32, folder_->width() - 12)));
+    sort_->setText(sort_->fontMetrics().elidedText(sortText_, Qt::ElideRight,
+                                                    qMax(32, sort_->width() - 28)));
+}
+
+void NoteListPage::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    elideButtons();
 }
 
 void NoteListPage::showNoStore(const QString& expectedRoot) {
@@ -111,7 +135,8 @@ void NoteListPage::refreshAppearance() { panels_.refreshAppearance(); }
 void NoteListPage::syncFolderButton() {
     const QModelIndex current = panels_.tree().currentIndex();
     const QString title = current.isValid() ? panels_.model().titleOf(current) : QString();
-    folder_->setText(title.isEmpty() ? QStringLiteral("All notes") : title);
+    folderText_ = title.isEmpty() ? QStringLiteral("All notes") : title;
+    elideButtons();
 }
 
 void NoteListPage::rebuildSortMenu() {

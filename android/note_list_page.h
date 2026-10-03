@@ -39,10 +39,12 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void syncFolderButton();
     void rebuildSortMenu();
+    void elideButtons();
 
     NotePanels& panels_;
     QToolButton* folder_;
@@ -51,6 +53,8 @@ private:
     QToolButton* newFolder_;
     QToolButton* newNote_;
     QLabel* hint_;
+    QString folderText_;
+    QString sortText_;
     QElapsedTimer clock_;
     bool firstPaintLogged_ = false;
 };

@@ -56,15 +56,18 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void flip(int delta);
     // A paint of the pages is awaited after `what` (open, flip): the next
     // QEvent::Paint on a page viewport closes the measurement.
     void awaitPaint(const char* what);
+    void elideTitle();
 
     QToolButton* back_;
     QLabel* title_;
+    QString titleText_;
     QStackedWidget* stack_;
     NoteEditor* editor_;
     ZBookView* book_;

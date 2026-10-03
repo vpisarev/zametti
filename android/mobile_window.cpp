@@ -81,10 +81,21 @@ MobileWindow::MobileWindow(std::shared_ptr<ZStorage> storage, const QString& exp
 
 void MobileWindow::openNote(const QString& file) {
     if (file.isEmpty()) return;
-    if (!note_->open(file)) return;
+    // THE PAGE GETS ITS SIZE FIRST. A hidden page of the stack is never laid
+    // out (seen: 100×30 at the moment of open), the document would be built
+    // and paginated for that width, and the later resize does not reach every
+    // layer — the right edge of the Karamazovs came out clipped and the page
+    // count was 1233 instead of 1332. So: show the page, give it the stack's
+    // geometry by hand (the stacked layout would do it on the next event),
+    // and only then install the note.
+    stack_->setCurrentWidget(note_);
+    note_->setGeometry(stack_->contentsRect());
+    if (!note_->open(file)) {
+        stack_->setCurrentWidget(list_);
+        return;
+    }
     panels_.setCurrentNote(file);
     panels_.showNote(file);
-    stack_->setCurrentWidget(note_);
 }
 
 void MobileWindow::showList() {

@@ -9,6 +9,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QResizeEvent>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -39,6 +40,12 @@ NotePage::NotePage(QWidget* parent)
     back_->setAutoRaise(true);
     connect(back_, &QToolButton::clicked, this, &NotePage::backRequested);
     title_->setTextFormat(Qt::PlainText);
+    // THE TITLE MUST NOT DICTATE THE WIDTH. A QLabel's minimum width is its
+    // text, a layout honours minimums over the available space, and a long
+    // chapter name ("Братья Карамазовы · От автора · 3/1233") made the whole
+    // page 418 px wide on a 388 px screen — the right edge of every line went
+    // off-screen (found on the phone, 03.10.2026). Ignored policy + eliding.
+    title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(4, 0, 4, 0);
@@ -68,13 +75,24 @@ NotePage::NotePage(QWidget* parent)
             [this](const QString& chapter, int page, int count, int) {
                 const QString note = editor_->noteHandle() ? editor_->noteHandle()->title()
                                                            : QString();
-                QString text = chapter.isEmpty() ? note : chapter;
+                QString full = chapter.isEmpty() ? note : chapter;
                 if (count > 0)
-                    text += QStringLiteral("  ·  %1/%2").arg(page).arg(count);
+                    full += QStringLiteral("  ·  %1/%2").arg(page).arg(count);
                 else if (page > 0)
-                    text += QStringLiteral("  ·  %1").arg(page);
-                title_->setText(text);
+                    full += QStringLiteral("  ·  %1").arg(page);
+                titleText_ = full;
+                elideTitle();
             });
+}
+
+void NotePage::elideTitle() {
+    title_->setText(title_->fontMetrics().elidedText(titleText_, Qt::ElideMiddle,
+                                                     qMax(16, title_->width() - 4)));
+}
+
+void NotePage::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    elideTitle();
 }
 
 void NotePage::setStorage(std::shared_ptr<ZStorage> storage) {
