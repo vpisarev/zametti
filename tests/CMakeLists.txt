@@ -304,14 +304,14 @@ add_test(NAME core-without-widgets
 # делается методами заметки — см. правило в CLAUDE.md.
 add_test(NAME document-only-for-showing
          COMMAND ${CMAKE_COMMAND}
-                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_CURRENT_SOURCE_DIR}"
+                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_SOURCE_DIR}/android;${CMAKE_CURRENT_SOURCE_DIR}"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/get_document_check.cmake)
 
 # Окна сообщений строятся в одном месте (ZApp::messageBox / warn / inform /
 # ask) — иначе они выглядят по-разному (правило владельца в CLAUDE.md).
 add_test(NAME message-boxes-through-zapp
          COMMAND ${CMAKE_COMMAND}
-                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/app;${CMAKE_CURRENT_SOURCE_DIR}"
+                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/app;${CMAKE_SOURCE_DIR}/android;${CMAKE_CURRENT_SOURCE_DIR}"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/message_box_check.cmake)
 
 # ТАБ'У: разрушительное — только через ZSystem (правило владельца, первые
@@ -320,7 +320,7 @@ add_test(NAME message-boxes-through-zapp
 # происшествия.
 add_test(NAME file-ops-only-through-guard
          COMMAND ${CMAKE_COMMAND}
-                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_SOURCE_DIR}/tools;${CMAKE_CURRENT_SOURCE_DIR}"
+                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_SOURCE_DIR}/android;${CMAKE_SOURCE_DIR}/tools;${CMAKE_CURRENT_SOURCE_DIR}"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/file_ops_check.cmake)
 
 # The program never thins journals on its own (the owner, 07.09.2026): the
@@ -328,7 +328,7 @@ add_test(NAME file-ops-only-through-guard
 # gone, and the guard keeps it from coming back.
 add_test(NAME thinning-only-by-hand
          COMMAND ${CMAKE_COMMAND}
-                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app"
+                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_SOURCE_DIR}/android"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/thin_check.cmake)
 
 # ПАДЕНИЙ НЕ БЫВАЕТ. НИКОГДА (правило владельца в CLAUDE.md).
